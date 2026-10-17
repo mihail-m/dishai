@@ -1,0 +1,317 @@
+"""CAI, routing, network and validation endpoints (PLAN2). Mounted by backend.main."""
+import asyncio
+import logging
+import struct
+import time
+from typing import Literal
+
+import numpy as np
+from fastapi import APIRouter, HTTPException, Query, Response
+
+from . import google_routes
+from .cai import config as C
+from .cai.features import Features, compute_features
+from .cai.areas import area_cells, summarize
+from .cai.graph import Net, get_net, has_mode
+from .cai.names import Namer, translit
+from .cai.network import compute_network
+from .cai.routing import Router, RouteError, douglas_peucker, road_group
+from .cai.score import CaiModel, HourCtx
+from .cai.validate import leave_one_out
+
+log = logging.getLogger("inversion_watch")
+MODEL_TTL = 300
+
+CLASS_CODE = {"major": 0, "collector": 1, "local": 2, "path": 3}
+Mode = Literal["walk", "bike"]
+
+
+def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, build_sensors_24h=None, district_at=None) -> APIRouter:
+    r = APIRouter()
+    district_at = district_at or (lambda lon, lat: None)
+    static: dict = {}
+    models: dict[tuple, tuple[float, dict, CaiModel]] = {}
+    networks: dict[tuple, dict] = {}
+    locks = {"static": asyncio.Lock(), "model": asyncio.Lock(), "network": asyncio.Lock()}
+
+    async def get_static(mode: str = "walk") -> tuple[Net, Features, Router]:
+        if mode == "bike" and not has_mode("bike"):
+            raise HTTPException(503, "The cycling network has not been baked yet (make graph/bake with --bike)")
+        async with locks["static"]:
+            if ("v", mode) not in static:
+                def build():
+                    net = get_net(mode)
+                    return net, compute_features(net), Router(net, mode)
+                static[("v", mode)] = await asyncio.to_thread(build)
+                static[("namer", mode)] = await asyncio.to_thread(Namer, static[("v", mode)][0], district_at)
+        return static[("v", mode)]
+
+    async def get_model(scenario: str | None, mode: str = "walk") -> tuple[CaiModel, dict, Router, Net]:
+        net, feats, router = await get_static(mode)
+        async with locks["model"]:
+            hit = models.get((scenario, mode))
+            if hit and time.time() - hit[0] < MODEL_TTL:
+                return hit[2], hit[1], router, net
+            fc = await build_forecast(scenario)
+            sens = await build_sensors(scenario)
+            model = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens["sensors"])
+            models[(scenario, mode)] = (time.time(), fc, model)
+            networks.clear() if len(networks) > 12 else None
+            return model, fc, router, net
+
+    def hour_of(h: int | None, fc: dict) -> int:
+        n = len(fc["hours"])
+        return fc["now_index"] if h is None else max(0, min(int(h), n - 1))
+
+    # ---------------------------------------------------------------------------------------
+    @r.get("/api/cai/geometry")
+    async def geometry():
+        """Static street geometry, binary: u32 n, u32 P, u32 offsets[n+1], f32 lonlat[2P], u8 class[n]."""
+        if "geom" not in static:
+            net, _, _ = await get_static("walk")
+            rep = net.und_rep
+            parts = [net.geometry(int(e)) for e in rep]
+            offs = np.concatenate([[0], np.cumsum([len(p) for p in parts])]).astype("<u4")
+            coords = np.concatenate(parts).astype("<f4")
+            cls = np.array([CLASS_CODE[road_group(net.hw_names[int(net.e_hw[e])])] for e in rep], dtype="u1")
+            static["geom"] = struct.pack("<II", len(rep), len(coords)) + offs.tobytes() + coords.tobytes() + cls.tobytes()
+        return Response(static["geom"], media_type="application/octet-stream", headers={"Cache-Control": "public, max-age=3600"})
+
+    @r.get("/api/cai/values")
+    async def values(hour: int | None = None, scenario: str | None = scenario_query):
+        model, fc, _, net = await get_model(parse_scenario(scenario))
+        i = hour_of(hour, fc)
+        h = model.hour(i)
+        rep = net.und_rep
+        return {
+            "hour": i, "time": h["ctx"].time, "scenario": parse_scenario(scenario),
+            "cai": h["cai"][rep].tolist(), "pm25": np.round(h["pm"][rep], 1).tolist(),
+            "background": round(h["B"], 1), "bias": round(model.bias, 2),
+            "heat_weight": round(h["ctx"].g, 2), "stagnation": round(h["ctx"].stagnation, 1),
+        }
+
+    @r.get("/api/cai/edge")
+    async def edge(id: int, hour: int | None = None, scenario: str | None = scenario_query):
+        model, fc, _, net = await get_model(parse_scenario(scenario))
+        if not 0 <= id < len(net.und_rep):
+            raise HTTPException(404, "unknown segment")
+        e = int(net.und_rep[id])
+        out = model.explain(e, hour_of(hour, fc))
+        out.update({
+            "id": id, **static[("namer", "walk")].edge(e),
+            "road_class": net.hw_names[int(net.e_hw[e])], "length_m": round(float(net.e_len[e]), 1),
+            "geometry": [[round(float(a), 5), round(float(b), 5)] for a, b in net.geometry(e)],  # so the UI can highlight it
+        })
+        return out
+
+    @r.get("/api/cai")
+    async def cai(hour: int | None = None, bbox: str | None = None, limit: int = Query(20000, le=60000), scenario: str | None = scenario_query):
+        """Segment GeoJSON (LineStrings) with CAI and the PM decomposition. bbox = west,south,east,north."""
+        model, fc, _, net = await get_model(parse_scenario(scenario))
+        i = hour_of(hour, fc)
+        h = model.hour(i)
+        rep = net.und_rep
+        sel = np.arange(len(rep))
+        if bbox:
+            try:
+                w, s, e, n = (float(x) for x in bbox.split(","))
+            except ValueError as exc:
+                raise HTTPException(422, "bbox must be west,south,east,north") from exc
+            lon, lat = net.e_mid_lon[rep], net.e_mid_lat[rep]
+            sel = np.flatnonzero((lon >= w) & (lon <= e) & (lat >= s) & (lat <= n))
+        rank = np.array([CLASS_CODE[road_group(net.hw_names[int(net.e_hw[rep[k]])])] for k in sel])
+        sel = sel[np.argsort(rank, kind="stable")][:limit]
+        feats = []
+        for k in sel:
+            e_ = int(rep[k])
+            ex = model.explain(e_, i)
+            feats.append({
+                "type": "Feature",
+                "properties": {"id": int(k), "cai": ex["cai"], "pm25": ex["pm25"], **ex["components_ugm3"], "heat_points": ex["heat_points"],
+                               "road_class": net.hw_names[int(net.e_hw[e_])]},
+                "geometry": {"type": "LineString", "coordinates": [[round(float(a), 5), round(float(b), 5)] for a, b in net.geometry(e_)]},
+            })
+        return {"type": "FeatureCollection", "meta": {"hour": i, "time": h["ctx"].time, "count": len(feats), "scenario": parse_scenario(scenario)}, "features": feats}
+
+    def _extremes(cells: dict, mode: str, higher_is_better: bool, key: str = "mean", n: int = 5) -> dict:
+        """Name the n best and n worst areas (cells with >= 600 m of street, so tiny fringes do not win)."""
+        idx = [i for i, m in enumerate(cells["street_m"]) if m >= 600]
+        order = sorted(idx, key=lambda i: cells[key][i], reverse=True)
+        best, worst = (order[:n], order[::-1][:n]) if higher_is_better else (order[::-1][:n], order[:n])
+        namer = static[("namer", mode)]
+        row = lambda i: {"lon": cells["lon"][i], "lat": cells["lat"][i], "value": cells[key][i], "street_m": cells["street_m"][i],
+                         "place": namer.point(cells["lat"][i], cells["lon"][i])}
+        return {"best": [row(i) for i in best], "worst": [row(i) for i in worst]}
+
+    # ---------------------------------------------------------------------------------------
+    @r.get("/api/cai/areas")
+    async def areas(hour: int | None = None, mode: Mode = "walk", metric: Literal["air", "heat"] = "air",
+                    cell: int = Query(int(C.AREA_CELL_M), ge=100, le=1000), scenario: str | None = scenario_query):
+        """Area cells (square, `cell` m) with the length-weighted mean of the streets inside.
+        metric=air: Clean Air Index (and modelled PM2.5) for the hour. metric=heat: Landsat surface temperature (summer snapshot)."""
+        sc = parse_scenario(scenario)
+        model, fc, _, net = await get_model(sc, mode)
+        i = hour_of(hour, fc)
+        h = model.hour(i)
+        feats = model.feats
+        if metric == "heat":
+            if feats.median_lst is None:
+                raise HTTPException(503, "No surface-temperature raster (run make lst)")
+            cells = await asyncio.to_thread(area_cells, net, feats.lst, None, float(cell))
+            med = feats.median_lst
+            anomaly = [round(v - med, 1) for v in cells["mean"]]
+            cells["anomaly"] = anomaly
+            thr = {"hot": round(float(np.percentile(anomaly, 90)), 1), "cool": round(float(np.percentile(anomaly, 10)), 1)}
+            return {"metric": "heat", "mode": mode, "cell_m": cell, "unit": "°C", "reference": round(med, 1), "thresholds": thr,
+                    "stats": summarize(cells["mean"]), "cells": cells, "extremes": _extremes(cells, mode, higher_is_better=False),
+                    "note": "Summer snapshot (Landsat 8/9 surface temperature, Jun-Sep 2026), not live. Surface, not air, temperature."}
+        cells = await asyncio.to_thread(area_cells, net, h["cai"].astype(float), {"pm25": h["pm"]}, float(cell))
+        cut = {"clean": round(float(np.percentile(cells["mean"], 90)), 1), "dirty": round(float(np.percentile(cells["mean"], 10)), 1)}
+        return {"metric": "air", "mode": mode, "cell_m": cell, "unit": "CAI", "hour": i, "time": h["ctx"].time, "scenario": sc,
+                "thresholds": cut, "stats": summarize(cells["mean"]), "cells": cells, "extremes": _extremes(cells, mode, higher_is_better=True),
+                "note": "Length-weighted mean Clean Air Index of the streets in each cell. Indicative screening model."}
+
+    # ---------------------------------------------------------------------------------------
+    def _pt(s: str, name: str) -> tuple[float, float]:
+        try:
+            a, b = (float(x) for x in s.split(","))
+        except ValueError as exc:
+            raise HTTPException(422, f"{name} must be 'lat,lng'") from exc
+        if not (-90 <= a <= 90 and -180 <= b <= 180):
+            raise HTTPException(422, f"{name} out of range")
+        return a, b
+
+    def _score_ext(router: Router, pts_latlng, h) -> dict:
+        arr = np.array([(lng, lat) for lat, lng in pts_latlng])
+        return router.score_polyline(arr, h["pm"], h["cai"], h["B"])
+
+    @r.get("/api/route")
+    async def route(
+        from_: str = Query(alias="from"), to: str = Query(...), lam: float | None = Query(None, alias="lambda", ge=0, le=3),
+        hour: int | None = None, mode: Mode = "walk", scenario: str | None = scenario_query,
+    ):
+        o, d = _pt(from_, "from"), _pt(to, "to")
+        model, fc, router, net = await get_model(parse_scenario(scenario), mode)
+        i = hour_of(hour, fc)
+        h = model.hour(i)
+        try:
+            res = await asyncio.to_thread(router.routes, o, d, h["cr"], h["pm"], h["cai"], lam)
+        except RouteError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        routes = {k: {kk: vv for kk, vv in v.items() if kk != "edges"} for k, v in res.items()}
+        clean = routes["cleanest"]["polyline"]
+
+        out = {
+            "from": o, "to": d, "hour": i, "time": h["ctx"].time, "scenario": parse_scenario(scenario), "mode": mode,
+            "from_label": static[("namer", mode)].point(*o), "to_label": static[("namer", mode)].point(*d),
+            "routes": routes, "google_status": "no_key", "google_baseline": None,
+            "snapped": {"used": False, "polyline": clean, "eta_min": None, "waypoints": []},
+            "open_in_google_maps": google_routes.maps_url(o, d),
+            "note": "Indicative: modelled PM2.5; " + ("cycling at 15 km/h with an assumed 2x breathing rate" if mode == "bike" else "walking at 4.8 km/h") + "; routes follow OpenStreetMap data.",
+        }
+        wp = douglas_peucker(np.array(clean), C_MAX_WAYPOINTS + 2)[1:-1]
+        wp_latlng = [(float(p[1]), float(p[0])) for p in wp]
+        out["snapped"]["waypoints"] = [[a, b] for a, b in wp_latlng]
+        out["open_in_google_maps_clean"] = google_routes.maps_url(o, d, wp_latlng)
+        if mode == "bike":
+            out["google_status"] = "n/a"  # Routes API cycling is a higher billing tier: not used
+        elif google_routes.enabled():
+            base = await google_routes.walk(o, d)
+            if base:
+                try:
+                    sc = _score_ext(router, base["polyline"], h)
+                    sc.update({
+                        "eta_min": round(base["duration_s"] / 60, 1), "polyline": [[lng, lat] for lat, lng in base["polyline"]],
+                        "dose_change_pct": round(100 * (sc["dose"] / routes["fastest"]["dose"] - 1), 1) if routes["fastest"]["dose"] else 0.0,
+                    })
+                    out["google_baseline"], out["google_status"] = sc, "ok"
+                except RouteError:
+                    out["google_status"] = "error"
+            else:
+                out["google_status"] = "error"
+            snapped = await google_routes.walk(o, d, wp_latlng)
+            if snapped:  # on any error we keep our own polyline and snapped.used = False
+                out["snapped"] = {**out["snapped"], "used": True, "eta_min": round(snapped["duration_s"] / 60, 1),
+                                  "polyline": [[lng, lat] for lat, lng in snapped["polyline"]]}
+        return out
+
+    # ---------------------------------------------------------------------------------------
+    @r.get("/api/network")
+    async def network(hour: int | None = None, mode: Mode = "walk", scenario: str | None = scenario_query):
+        sc = parse_scenario(scenario)
+        model, fc, router, net = await get_model(sc, mode)
+        i = hour_of(hour, fc)
+        key = (sc, i, mode)
+        async with locks["network"]:
+            if key not in networks:
+                h = model.hour(i)
+                feats = static[("v", mode)][1]
+                networks[key] = await asyncio.to_thread(compute_network, net, router, h["cr"], h["pm"], h["cai"], feats)
+        if "named" not in networks[key]:
+            kept = []
+            for c in networks[key]["chokepoints"]:  # Latin name for the UI, Cyrillic kept, plus the district
+                c["street_bg"], c["street"] = c["street"], translit(c["street"])
+                c["district"] = district_at(c["lon"], c["lat"])
+                if c["district"]:  # the walkable bbox spills into neighbouring municipalities Sofia cannot act on
+                    kept.append(c)
+            networks[key]["chokepoints"] = kept[: C.CHOKEPOINT_TOP]
+            for i, c in enumerate(networks[key]["chokepoints"], start=1):
+                c["rank"] = i
+            networks[key]["named"] = True
+        out = dict(networks[key])
+        out.update({"hour": i, "time": model.ctxs[i].time, "scenario": sc, "mode": mode})
+        return out
+
+    def _daily_ctx(model: CaiModel, now_idx: int) -> HourCtx:
+        """Context for a 24 h-mean target: today's mean CAMS / stagnation / rush."""
+        cs = model.ctxs[: now_idx + 1]
+        cams = [c.cams for c in cs if c.cams is not None]
+        weekend = cs[-1].weekend
+        return HourCtx(
+            time="24 h mean", cams=float(np.mean(cams)) if cams else None, stagnation=float(np.mean([c.stagnation for c in cs])),
+            apparent=float(np.mean([c.apparent for c in cs])), daylight=0.3, hour=12, weekend=weekend,
+            rush_override=float(np.mean(C.RUSH)) * (C.WEEKEND_FACTOR if weekend else 1.0),
+        )
+
+    @r.get("/api/validation")
+    async def validation(scenario: str | None = scenario_query):
+        """Leave-one-out validation against outdoor citizen sensors: latest snapshot and 24 h means."""
+        sc = parse_scenario(scenario)
+        model, fc, _, _ = await get_model(sc)
+        ctx = model.ctxs[fc["now_index"]]
+        out = await asyncio.to_thread(leave_one_out, model.feats, model.sensors, ctx)
+        alt_mode = "background" if C.RESIDUAL_AGAINST == "model" else "model"
+        alt = await asyncio.to_thread(leave_one_out, model.feats, model.sensors, ctx, alt_mode)
+        out["other_residual_variant"] = {k: alt.get(k) for k in ("residual_mode", "spearman", "median_abs_error")}
+        out["scenario"] = sc
+        out["daily_mean"] = None
+        if sc:
+            out["warning"] = "Demo scenario: sensor values are simulated from live positions, so this is not a real validation."
+        elif build_sensors_24h:
+            try:
+                s24 = await build_sensors_24h()
+                dctx = _daily_ctx(model, fc["now_index"])
+                daily = await asyncio.to_thread(leave_one_out, model.feats, s24, dctx)
+                daily["traffic_gain_sensitivity"] = [
+                    {k: v for k, v in (await asyncio.to_thread(leave_one_out, model.feats, s24, dctx, None, g)).items() if k in ("traffic_gain", "spearman", "median_abs_error")}
+                    for g in (0.0, 0.25, 0.5, 1.0, 2.0)
+                ]
+                out["daily_mean"] = daily
+            except Exception as exc:  # noqa: BLE001
+                log.warning("24 h validation unavailable: %r", exc)
+        out["traffic_gain"] = C.TRAFFIC_GAIN
+        return out
+
+    async def warmup():
+        try:
+            await get_static()
+            await get_model(None)
+            log.info("CAI engine warm")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("CAI warm-up failed: %r", exc)
+
+    r.warmup = warmup  # type: ignore[attr-defined]
+    return r
+
+
+C_MAX_WAYPOINTS = google_routes.MAX_INTERMEDIATES

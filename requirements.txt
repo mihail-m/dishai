@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+httpx
+pytest
+# CAI / routing
+numpy
+scipy
+shapely
+networkx
+osmnx
+pyproj
+# data prep (satellite rasters)
+rasterio
+pystac-client
+planetary-computer

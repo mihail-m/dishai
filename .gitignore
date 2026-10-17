@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+frontend/dist/
+.env
+*.pyc
+.DS_Store
+# large raw downloads; the baked data/net.npz is what the app loads
+data/graph.graphml
+data/roads.graphml
+data/.osmnx_cache/
+data/.trees_progress.npz
+data/graph_bike.graphml

@@ -1,0 +1,12 @@
+.venv
+.git
+.env
+node_modules
+frontend/node_modules
+frontend/dist
+**/__pycache__
+.pytest_cache
+data/*.graphml
+data/.osmnx_cache
+data/.trees_progress.npz
+backend/tests

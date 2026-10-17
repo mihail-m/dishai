@@ -1,0 +1,8 @@
+# Runtime-only dependencies (the Docker image). requirements.txt adds the one-off data-prep and test tooling.
+fastapi
+uvicorn[standard]
+httpx
+numpy
+scipy
+pyproj
+rasterio
