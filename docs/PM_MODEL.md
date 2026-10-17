@@ -514,3 +514,48 @@ What is predictable is the hour-to-hour spatial structure after the offsets: nei
 - The chain stays: calibrated level, kriging with offsets removed, neighbourhood-level display, honest intervals. The direct model and the ML-on-kriging step are kept as experiments (`direct_model.py`, `stack_eval.py`), not shipped.
 - To make street-level claims possible, the instrument part of the offsets has to be separated from the place part. That needs data not available here: side-by-side runs of a few citizen sensors next to a reference station (or each other) to calibrate each sensor individually, or sensor metadata (inlet height, enclosure, location type). With per-sensor calibration, the sensors' remaining differences would be the place's, and the local inputs pulled here would have something to explain.
 - The local weather grid and the sensors' temperatures are still the right inputs for the *level* forecast (boundary-layer height 20 vs 220 m on the same night); that has not been tested yet and is the next experiment: city level from local rather than central weather.
+
+
+## More datasets: the Kaggle Sofia archive and the others
+
+Six sources were offered. Only one of them can inform a Sofia model.
+
+| Source | What it is | Verdict |
+|---|---|---|
+| `air-quality-dataset_Sofia.zip` (Kaggle, Sensor.Community Sofia) | 50 monthly CSVs, July 2017 to July 2019: SDS011 PM readings and BME280 weather every few minutes, 15 GB uncompressed | **Used.** 4.5 M sensor-hours, 487 sensors inside the model box (77 in July 2017, ~380 from 2019), winters with raw PM2.5 up to 327 µg/m³ (p99, Jan 2018). Stream-reduced to hourly means with `backend/data_prep/kaggle_sofia.py` (read as data only, nothing extracted to disk). 83 sensor ids are also in today's network. No indoor flag; the BME280 winter-night temperature (median 1.7 °C, 1 of 394 locations above 12 °C) shows they are outdoors. |
+| `air-quality-dataset_1.ipynb` (Kaggle notebook) | analysis of a 500-row table (PM2.5, PM10, NOx, NO2, SO2, VOCs, CO, CO2, CH4, temperature, humidity, wind direction, location type, source label) | **Not usable.** No coordinates, no timestamps, 500 rows; values look generated. It was read as text, never executed. |
+| `air-quality-dataset_2.zip` | `dataset.csv`, 7 unlabelled numeric columns, ~50 kB | **Not usable.** No labels, location or time (it looks like a gas-sensor-array readout). |
+| `air-quality-dataset_3.zip` | `Air Quality.csv`: the UCI Air Quality set, one multi-sensor device in an Italian city, March 2004 to April 2005, 9,357 hours | **Not usable.** One place, no PM, 2004. |
+| Hugging Face `neuralsorcerer/air-quality` | 100 M rows, 1,000 sites | **Not usable.** Its own card says it is **fully synthetic** ("inspired by Kolkata", coordinates and event effects are constructs) and "not a reconstruction of historical measurements". Training on it would teach the generator's rules. |
+| Hugging Face `DeadCardassian/PM25Vision` | 11,114 street-level photos (Mapillary) labelled with WAQI PM2.5 AQI at 3,261 stations worldwide, 2014–2025; image models reach R² 0.23–0.55 | **Not used.** Photos, not hourly place-level concentrations; matching Sofia sensors would need Mapillary imagery at each, and the label is a daily AQI. |
+
+### What the 2017–2019 Sofia data say (`python -m backend.ml.old_sofia`)
+Both eras on the raw sensor scale, no terrain trend, same procedure:
+
+| | 2017–2019 | 2024–2026 |
+|---|---|---|
+| sensors with ≥ 100 h / hours with ≥ 40 sensors | 482 / 18,097 | 261 / 3,115 |
+| SD of the persistent offset (log1p) | 0.29 | 0.57 |
+| semivariance of the residual after offsets: below 300 m / at 1 km / at 13 km | 0.10–0.12 / 0.11 / 0.21 | 0.07–0.11 / 0.11 / 0.26 |
+| variogram fit: nugget / partial sill | 0.092 / 0.242 | 0.090 / 0.327 |
+| correlation of neighbouring sensors' offsets: 0–150 m (pairs) / 150–300 m / 0.6–1.2 km | +0.20 (93) / +0.09 / +0.07 | +0.38 (17) / +0.09 / +0.00 |
+
+- **The spatial structure replicates**: the same shape, small short-range structure and a slow rise to city scale, in a different era with a different, larger set of sensors.
+- **Offsets are not completely independent between close neighbours**, as the raw-scale numbers show (+0.20 at 0–150 m in 2017–19). This softens the earlier statement ("uncorrelated"; +0.05 for 17 pairs, after removing the terrain trend and calibrating): at most a fifth of the offset covariance is shared at under 150 m, and it is gone beyond a few hundred metres, so the offsets remain mostly sensor-specific. Part of the short-range correlation is plausibly the terrain trend (removed in the earlier test) and neighbours installed together.
+- **Offsets are stable for months and fade over years.** Correlation of a sensor's offset between calendar quarters: 0.73 (next quarter) → 0.47 (two quarters) → 0.5 (a year) → 0.3 (1½–2 years) in 2017–19; 0.87 → 0.75 → 0.67 → 0.7 in the current era. For the 83 sensor ids present in both eras (7 years apart) the correlation is 0.15; for the 47 that stayed within 100 m it is **0.06**. So a sensor's offset is not a property of its place: at the same address, seven years later, it is unrelated. It is not a lifelong property of the device either (devices drift or are replaced under the same id).
+- **Time-local offsets**: using offsets from ±90 days around the test hour (not just the whole history) improves hidden-sensor ranking on the untouched folds (0.249 → 0.271 all hours; 0.316 → 0.336 polluted winter hours; error −0.2 % to −2 %). But it needs future data. The deployment-like version (offsets from the W days *before* the hour only, W = 60, 120, 240) gives **no gain** (0.249 → 0.264 / 0.256 / 0.242; polluted winter 0.316 → 0.317 / 0.322 / 0.321, errors within ±0.5 %). Nothing changed in the app; an app that keeps accumulating live readings could re-estimate offsets continuously (`offset_window_eval.py`).
+
+### Does training on the old data help? (`python -m backend.ml.pool_eval`)
+A weather-free local model that works in both eras: kriged backbone (offsets removed) plus trees on static features of the place (terrain, canopy, NDVI, surface heat, construction, low-rise housing, GHSL buildings and population), the four nearest neighbours' residuals and distances, kriging variance, hour, month. Coordinates are not features. Tested on 2024–26 sensors and weeks never trained on (folds 2–4; folds 0–1 gave the same picture). Median error (raw µg/m³) / within-hour Spearman:
+
+| 2024–26 hidden sensors | kriging alone | trees trained on 2024–26 | trees trained on 2017–19 only | trees trained on both |
+|---|---|---|---|---|
+| all hours | 1.830 / 0.237 | 1.823 / 0.230 | 1.851 / 0.226 | 1.828 / 0.234 |
+| heating | 3.157 / 0.328 | 3.169 / 0.313 | 3.191 / 0.320 | 3.146 / 0.320 |
+| summer | 0.967 / 0.097 | 0.960 / 0.100 | 0.973 / 0.078 | 0.959 / 0.099 |
+| polluted heating (city > 15) | 7.991 / 0.413 | 8.101 / 0.403 | 8.030 / 0.408 | 8.064 / 0.408 |
+
+**No variant beats kriging, and adding 487 sensors from another era does not help.** Two years of other sensors, ten times the rows, and the correction still adds nothing: the limit is what the inputs can say about a place, not the number of training rows. (No reference data exist for 2017–19 in this repository: the EEA API serves AirBase only to 2012, the verified dataset is empty for Bulgaria, and the old download endpoint now needs authorisation; so these years could not be used to calibrate or to extend the level model, which also needs CAMS, not available for 2017–19.)
+
+### Against the place's own variation
+Scored against the sensors' readings with their own persistent offset removed (the place's hour-to-hour variation, without the instrument bias), the same kriging predictions look much better: within-hour Spearman 0.455 in the heating season and 0.462 in polluted winter hours (0.330 / 0.350 against the raw readings), median error 4.6 µg/m³ in polluted winter hours (vs 8.6). The ML correction still does not beat kriging on that target (0.432). So a model of *local* variation exists and works moderately; the raw-reading scores understate it because each sensor carries an instrument bias that no input can predict.

@@ -99,7 +99,7 @@ def main() -> int:
         sc = float(np.clip((ctr * y_tr).sum() / max((ctr * ctr).sum(), 1e-9), 0.0, 1.0))
         df = pd.DataFrame({"t": te.t.to_numpy(), "sensor": te.i.to_numpy(), "obs": np.expm1(d.U[te.i.to_numpy(), te.t.to_numpy()]), "fold": k,
                            "krige": np.expm1(te.base_u + te.kappa), "ml": np.expm1(te.base_u + te.kappa + corr), "ml_half": np.expm1(te.base_u + te.kappa + 0.5 * corr),
-                           "trend": np.expm1(te.base_u), "oracle": np.expm1(te.base_u + te.kappa + off_all[te.i.to_numpy()]), "month": d.month[te.t.to_numpy()], "city": d.city[te.t.to_numpy()]})
+                           "trend": np.expm1(te.base_u), "obs_deb": np.expm1(d.U[te.i.to_numpy(), te.t.to_numpy()] - off_all[te.i.to_numpy()]), "oracle": np.expm1(te.base_u + te.kappa + off_all[te.i.to_numpy()]), "month": d.month[te.t.to_numpy()], "city": d.city[te.t.to_numpy()]})
         df["rk"], df["rs"] = y_te, y_te - corr
         parts.append(df)
         print(f"fold {k}: train {len(tr):,} rows / test {len(te):,}; correction std {corr.std():.3f} vs residual std {y_te.std():.3f}; in-fold shrink {sc:.2f}; "
@@ -109,6 +109,17 @@ def main() -> int:
     cuts = {"all": np.ones(len(ev), bool), "heating": np.isin(ev.month, HEATING), "summer": ~np.isin(ev.month, HEATING),
             "polluted heating (city>15)": np.isin(ev.month, HEATING) & (ev.city > 15), "city>25": np.isin(ev.month, HEATING) & (ev.city > 25)}
     table = {}
+    deb = {}
+    for name, s_ in cuts.items():
+        s = ev[s_]
+        if s.t.nunique() < 5:
+            continue
+        sd = s.assign(obs=s.obs_deb)  # the truth with each sensor's persistent offset removed: the place's own hourly variation
+        deb[name] = {"trend_mae": round(float((s.trend - sd.obs).abs().median()), 3), "krige_mae": round(float((s.krige - sd.obs).abs().median()), 3),
+                     "ml_mae": round(float((s.ml - sd.obs).abs().median()), 3), "trend_rho": round(hour_rho(sd, "trend"), 3),
+                     "krige_rho": round(hour_rho(sd, "krige"), 3), "ml_rho": round(hour_rho(sd, "ml"), 3)}
+    print("\nagainst the offset-removed truth (what the place itself does, without the instrument's stable bias):", file=sys.stderr)
+    print(pd.DataFrame(deb).T.to_string(), file=sys.stderr)
     for name, s_ in cuts.items():
         s = ev[s_]
         if s.t.nunique() < 5:
