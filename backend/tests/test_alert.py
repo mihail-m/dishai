@@ -167,3 +167,22 @@ def test_level_band_is_ordered_and_follows_the_nowcast():
     lo2, mid2, hi2 = alert.level_band(hours(), 12, [3.0] * 30, m)
     assert mid[12:36].sum() > mid2[12:36].sum()
     assert alert.level_band(hours(), 12, [3.0], None) is None
+
+
+# ---- districts ------------------------------------------------------------------------------------------------------------
+def test_district_ratio_uses_adjusted_readings_and_shrinks_with_few_sensors():
+    sens = [{"district": "A", "pm25": 10.0}] * 40 + [{"district": "B", "pm25": 20.0, "pm25_adjusted": 10.0}] * 40 + [{"district": "C", "pm25": 40.0}] * 2
+    r = alert.district_log_ratios(sens)
+    assert r["B"][0] == pytest.approx(r["A"][0], abs=1e-9)  # B's high readings are its sensors' offsets: not a dirty district
+    assert 0 < r["C"][0] < np.log1p(40.0) - np.log1p(10.0)  # two sensors only move it part of the way
+    assert alert.district_log_ratios([{"district": None, "pm25": 5.0}]) == {}
+
+
+def test_district_forecast_shifts_the_band_and_fades_with_lead():
+    hrs = [{"pm25_model": 20.0, "pm25_p10": 12.0, "pm25_p90": 30.0} for _ in range(48)]
+    fc = {"now_index": 0, "hours": hrs}
+    series, band = alert.district_forecast(fc, 0.4, lambda lead: 1.0 if lead == 0 else 0.0)
+    assert series[0] > 20.0 and series[5] == pytest.approx(20.0, abs=0.1)
+    assert band is not None and (band[0] <= band[1]).all() and (band[1] <= band[2]).all()
+    s2, b2 = alert.district_forecast({"now_index": 0, "hours": [{"pm25_model": 20.0}] * 3}, 0.4)
+    assert b2 is None and len(s2) == 3

@@ -532,6 +532,22 @@ async def api_districts(scenario: str | None = ScenarioQ, hour: int | None = Non
                     "peak_24h_label": label_for(peak),
                     "sensor_count": len(vals),
                     "median_pm25": round(statistics.median(vals), 1) if vals else None,
+def district_alert(fc: dict, sens: dict, name: str) -> dict:
+    """The banner's alert recomputed for one district: the city forecast moved by the district's sensors (see alert.district_forecast)."""
+    from .cai import krige
+    p = krige.get_params()
+    lr, n = alert_mod.district_log_ratios(sens["sensors"]).get(name, (0.0, 0))
+    series, band = alert_mod.district_forecast(fc, lr, p.rho_at if p else None)
+    base = fc["alert"]
+    if base["basis"] != "model":
+        return {**base, "district_sensors": n}
+    times, scores = [h["time"] for h in fc["hours"]], [h["score"] for h in fc["hours"]]
+    pm_model = alert_mod.get_model()
+    a = alert_mod.build_alert(times, series, scores, fc["now_index"], datetime.strptime(fc["generated_at"], "%Y-%m-%dT%H:%M"), "model",
+                              base["scale"] == "reference", band, alert_mod.alert_settings(pm_model))
+    return {**a, "district_sensors": n}
+
+
                     "centroid": list(d["centroid"]),
                 },
                 "geometry": d["geometry"],
@@ -544,9 +560,10 @@ async def api_districts(scenario: str | None = ScenarioQ, hour: int | None = Non
             "hour_index": idx,
             "scenario": sc,
             "source": fc["source"],
-            "note": "District shading is indicative: city-wide score times an elevation factor.",
+            "note": "District shading is indicative: city-wide score times an elevation factor. level_pm / p_episode are the PM2.5 alert for the district.",
         },
         "features": feats,
+        da = district_alert(fc, sens, d["name"])
     }
 
 
@@ -558,6 +575,8 @@ async def api_districts(scenario: str | None = ScenarioQ, hour: int | None = Non
 @app.get("/api/advice")
 async def api_advice(
     profile: Literal["driver", "wood_heater", "vulnerable"],
+                    # the PM2.5 view: city forecast moved by this district's sensors; `label` above stays the stagnation index shading
+                    "level_pm": da["level"], "p_episode": da["probability"], "peak_pm25": da.get("peak_pm25"),
     district: str,
     scenario: str | None = ScenarioQ,
     toggles: list[Literal["pollen_allergy", "asthma", "heat_sensitive", "outdoor_exercise", "kids_or_elderly"]] = Query(
@@ -566,10 +585,10 @@ async def api_advice(
 ):
     sc = Scenario(scenario)
     d = get_district(district)
-    fc = await build_forecast(sc)
+    fc, sens = await asyncio.gather(build_forecast(sc), build_sensors(sc))
     series = _district_scores(fc, d["factor"])  # stagnation score scaled by the district's elevation factor: supporting context
     ni = fc["now_index"]
-    alert = fc["alert"]  # the same object the banner shows
+    alert = district_alert(fc, sens, d["name"])  # the banner's alert, moved to this district by its sensors
     best = fc["best_window"]
     peak = max(series[ni : ni + 24]) if series else 0
     level = alert["level"]
@@ -701,7 +720,7 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
             {
                 "district": d["name"],
                 "peak_24h": round(peak, 1),
-                "level": fc["alert"]["level"],  # city-level PM2.5 alert; districts are ranked by score x leads
+                "level": da["level"], "p_episode": da["probability"],  # the district's PM2.5 alert; districts are ranked by score x leads
                 "leads": leads,
                 "sample_leads": seed,
                 "submitted_leads": real,
@@ -721,6 +740,7 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
                     "street": street,
                     "district_rank": rank,
                     "peak_24h": h["peak_24h"],
+        da = district_alert(fc, sens, d["name"])
                     "sample": True,
                 }
             )

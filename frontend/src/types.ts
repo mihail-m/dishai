@@ -43,6 +43,8 @@ export interface DistrictProps {
 export type DistrictsFC = GeoJSON.FeatureCollection<GeoJSON.Geometry, DistrictProps> & {
   meta: { time: string; hour_index: number; scenario: string | null; source: string; note: string };
 };
+  /** PM2.5 alert for the district (city forecast moved by its sensors) */
+  level_pm?: Level; p_episode?: number | null; peak_pm25?: number | null;
 export interface Card {
   id: string; title: string; body: string; severity: "info" | "action"; cta?: string;
   measure: { id: string; label: string } | null;  // null: advice with no Sofia climate-plan measure behind it
@@ -63,7 +65,7 @@ export interface Advice {
   cards: Card[]; grant_note: string;
 }
 export interface DistrictRow {
-  district: string; peak_24h: number; level: Level; leads: number; sample_leads: number; submitted_leads: number;
+  district: string; peak_24h: number; level: Level; p_episode?: number | null; leads: number; sample_leads: number; submitted_leads: number;
   eligible_submitted: number; hotspot_index: number; sensors: number;
 }
 export interface Dashboard {

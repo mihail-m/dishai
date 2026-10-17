@@ -124,6 +124,41 @@ def alert_settings(model: PmModel | None) -> dict:
     return {"p_red": a.get("p_red", C.ALERT_P), "p_watch": a.get("p_watch", C.ALERT_P_WATCH), "phi": a.get("phi", C.ALERT_PHI)}
 
 
+DISTRICT_SHRINK_N = 5  # a district with n sensors counts n/(n+5) of its own deviation from the city, the rest is the city value
+
+
+def district_log_ratios(sensors: list[dict]) -> dict[str, tuple[float, int]]:
+    """district -> (log1p ratio of the district's typical sensor to the city's, number of sensors). Uses the offset-adjusted readings
+    (a persistently over-reading unit must not make its district look dirty) and shrinks toward the city value for few sensors."""
+    by: dict[str, list[float]] = {}
+    for s in sensors:
+        if s.get("district"):
+            by.setdefault(s["district"], []).append(float(s.get("pm25_adjusted", s["pm25"])))
+    if not by:
+        return {}
+    city = float(np.median([v for vs in by.values() for v in vs]))
+    out = {}
+    for d, vs in by.items():
+        n = len(vs)
+        out[d] = (n / (n + DISTRICT_SHRINK_N) * (np.log1p(float(np.median(vs))) - np.log1p(city)), n)
+    return out
+
+
+def district_forecast(fc: dict, log_ratio: float, rho_fn=None) -> tuple[list, tuple | None]:
+    """The city's hourly p50 and p10..p90 band moved to a district: shift in log1p space by the district's deviation, which fades with the
+    lead like the street-level correction does (rho_fn(lead) from the spatial file). Returns (p50 series, band or None)."""
+    now = fc["now_index"]
+    hs = fc["hours"]
+    shift = np.array([log_ratio * (rho_fn(max(0, i - now)) if rho_fn else 1.0) for i in range(len(hs))])
+    mv = lambda key: np.array([np.nan if h.get(key) is None else h[key] for h in hs], dtype=float)
+    mv_u = lambda key: np.expm1(np.log1p(mv(key)) + shift).clip(0)
+    mid = mv_u("pm25_model")
+    series = [None if np.isnan(v) else round(float(v), 1) for v in mid]
+    if np.isnan(mv("pm25_p10")).any() or np.isnan(mv("pm25_p90")).any():
+        return series, None
+    return series, (mv_u("pm25_p10"), mid, mv_u("pm25_p90"))
+
+
 def level_band(hours: list[dict], now_idx: int, sensor_pm25: list[float], model: PmModel | None):
     """(p10, p50, p90) of the city PM2.5 per forecast hour as arrays in ug/m3, or None when the model has no interval models."""
     if model is None or model.q_lo is None or not hours:
