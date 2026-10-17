@@ -172,7 +172,7 @@ export interface TrafficCorridor {
 }
 export interface TrafficResp {
   enabled: boolean; google: boolean; tomtom: boolean; ready: boolean; measured_profile: boolean; updated: string | null;
-  corridors: TrafficCorridor[]; profile: { wk: number[]; we: number[] } | null;
+  corridors: TrafficCorridor[]; profile: { wk: number[]; we: number[] } | null; volume_profile?: VolumeProfile | null;
   usage: { day: string; google_requests: number; tomtom_requests: number }; note: string; sources: string[];
 }
 export interface Incident {
@@ -195,4 +195,10 @@ export interface GoogleAir {
 export interface ObservedTraffic {
   corridor: string; live_index: number; typical_index: number | null; vs_typical: number | null;
   google_min: number | null; tomtom_index: number | null; jam_share: number | null;
+}
+
+/** Measured typical vehicle volume by local hour, as a share of the weekday peak (BGTOLL open data, CC BY 4.0). */
+export interface VolumeProfile {
+  source: string; points: { scp: number; name: string }[]; from: string; to: string; hours_used: number;
+  weekday: number[]; weekend: number[]; heavy_share: { weekday: number; weekend: number }; note: string;
 }

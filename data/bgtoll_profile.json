@@ -1,0 +1,113 @@
+{
+ "source": "BGTOLL open data, traffic intensity (15-minute vehicle counts at control points), CC BY 4.0, https://bgtoll.bg/en/open-data",
+ "points": [
+  {
+   "scp": 10191,
+   "name": "Chepintsi"
+  },
+  {
+   "scp": 10192,
+   "name": "Chepintsi"
+  },
+  {
+   "scp": 10181,
+   "name": "between road 18 and junction Iliyantsi"
+  },
+  {
+   "scp": 10182,
+   "name": "between road 18 and junction Iliyantsi"
+  },
+  {
+   "scp": 20401,
+   "name": "Sofia"
+  },
+  {
+   "scp": 20402,
+   "name": "Sofia"
+  },
+  {
+   "scp": 10201,
+   "name": "Voluyak"
+  },
+  {
+   "scp": 10202,
+   "name": "Voluyak"
+  },
+  {
+   "scp": 20011,
+   "name": "Sofia (kompleks Chernata kotka)"
+  },
+  {
+   "scp": 20012,
+   "name": "Sofia (kompleks Chernata kotka)"
+  },
+  {
+   "scp": 20421,
+   "name": "Tunnel Malo Buchino"
+  },
+  {
+   "scp": 20422,
+   "name": "Tunnel Malo Buchino"
+  }
+ ],
+ "from": "2026-03-05 17:00:00",
+ "to": "2026-10-16 23:00:00",
+ "hours_used": 5220,
+ "weekday": [
+  0.092,
+  0.068,
+  0.058,
+  0.062,
+  0.08,
+  0.142,
+  0.337,
+  0.854,
+  0.986,
+  0.798,
+  0.707,
+  0.678,
+  0.674,
+  0.69,
+  0.713,
+  0.745,
+  0.863,
+  1.0,
+  0.821,
+  0.554,
+  0.369,
+  0.243,
+  0.176,
+  0.131
+ ],
+ "weekend": [
+  0.107,
+  0.086,
+  0.072,
+  0.072,
+  0.085,
+  0.115,
+  0.2,
+  0.316,
+  0.413,
+  0.506,
+  0.59,
+  0.64,
+  0.656,
+  0.647,
+  0.639,
+  0.631,
+  0.627,
+  0.618,
+  0.588,
+  0.515,
+  0.393,
+  0.285,
+  0.214,
+  0.154
+ ],
+ "heavy_share": {
+  "weekday": 0.159,
+  "weekend": 0.104
+ },
+ "note": "Share of the weekday peak hour. Control points are on the national network around Sofia (ring road and motorway approaches), not city streets."
+}

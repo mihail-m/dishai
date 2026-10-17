@@ -4,9 +4,9 @@ import { trafficColor, trafficWord } from "../map/layers";
 const css = (r: number | null) => `rgb(${trafficColor(r).join(",")})`;
 
 /** Typical travel-time index by hour (weekday and weekend, mean of the corridors) with the current hour marked. */
-function Profile({ p, hour, weekend }: { p: { wk: number[]; we: number[] }; hour: number; weekend: boolean }) {
+function Profile({ p, hour, weekend, share }: { p: { wk: number[]; we: number[] }; hour: number; weekend: boolean; share?: boolean }) {
   const W = 240, H = 44;
-  const all = [...p.wk, ...p.we], lo = Math.min(...all), span = Math.max(Math.max(...all) - lo, 0.02);
+  const all = [...p.wk, ...p.we], lo = share ? 0 : Math.min(...all), span = share ? 1 : Math.max(Math.max(...all) - lo, 0.02);
   const yy = (v: number) => H - 3 - ((v - lo) / span) * (H - 8);
   const pts = (v: number[]) => v.map((y, h) => `${(h / 23) * W},${yy(y)}`).join(" ");
   return (
@@ -57,7 +57,18 @@ export default function TrafficCard({ t, inc, show, setShow, hour, weekend }: Pr
               </li>
             ))}
           </ul>
-          {t.profile && (
+          {t.volume_profile ? (
+            <div className="mt-3">
+              <div className="flex justify-between text-xs"><span className="font-semibold">Vehicles on Sofia&apos;s ring road, by hour (counted)</span>
+                <span className="faint"><span style={{ color: "var(--warn)" }}>━</span> weekday <span>┅</span> weekend</span></div>
+              <Profile p={{ wk: t.volume_profile.weekday, we: t.volume_profile.weekend }} hour={hour} weekend={weekend} share />
+              <p className="faint text-[11px] leading-snug">
+                Share of the weekday peak, from real counts at {t.volume_profile.points.length} control points ({t.volume_profile.from.slice(0, 10)} to {t.volume_profile.to.slice(0, 10)}).
+                Heavy vehicles: {Math.round(t.volume_profile.heavy_share.weekday * 100)}% on weekdays, {Math.round(t.volume_profile.heavy_share.weekend * 100)}% at weekends.
+                Contains data of the Bulgarian road toll authority (BGTOLL), CC BY 4.0.
+              </p>
+            </div>
+          ) : t.profile && (
             <div className="mt-3">
               <div className="flex justify-between text-xs"><span className="font-semibold">Typical travel time by hour (Google)</span>
                 <span className="faint"><span style={{ color: "var(--warn)" }}>━</span> weekday <span>┅</span> weekend</span></div>

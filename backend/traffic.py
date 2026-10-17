@@ -34,6 +34,7 @@ from .cai.names import translit
 log = logging.getLogger("inversion_watch")
 TZ = ZoneInfo("Europe/Sofia")
 PROFILE_PATH = DATA / "traffic_profile.json"
+BGTOLL_PROFILE_PATH = DATA / "bgtoll_profile.json"  # measured vehicle volume by hour (backend/data_prep/bgtoll.py)
 PROFILE_MAX_AGE_D = 7
 CENTER = (23.3219, 42.6977)  # lon, lat
 N_SPOKES, R_IN, R_OUT = 12, 1500.0, 6000.0
@@ -411,6 +412,14 @@ def edge_reading(net: Net, e: int, now: dt.datetime | None = None) -> dict | Non
             "tomtom_index": c.get("tomtom", {}).get("tti"), "jam_share": c.get("google", {}).get("jam_share")}
 
 
+def volume_profile() -> dict | None:
+    """Measured typical vehicle volume by local hour (share of the weekday peak) around Sofia, from BGTOLL open data; None if not built."""
+    try:
+        return json.loads(BGTOLL_PROFILE_PATH.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def snapshot() -> dict:
     now = dt.datetime.now(TZ)
     rows = []
@@ -428,7 +437,7 @@ def snapshot() -> dict:
         "enabled": enabled(), "google": bool(google_key()), "tomtom": bool(tomtom_key()),
         "ready": bool(_state and _state.corridors), "measured_profile": bool(_profile),
         "updated": dt.datetime.fromtimestamp(_state.updated, TZ).isoformat(timespec="seconds") if _state and _state.updated else None,
-        "corridors": rows, "profile": _profile, "usage": usage(),
+        "corridors": rows, "profile": _profile, "volume_profile": volume_profile(), "usage": usage(),
         "note": "Index = travel time / quietest-hour travel time (1.0 = free flow); vs typical = live index / typical index for this hour. "
                 "Measured on arterial corridors only. Observed data: it is not an input to the PM2.5 estimate.",
         "sources": ["Google Routes API (typical and live travel time)", "TomTom Flow Segment Data (current vs free-flow)"],

@@ -113,3 +113,25 @@ def test_snapshot_never_contains_keys(monkeypatch, world):
     _inject(np.array([0, 1]), tti_google=1.1)
     s = str(traffic.snapshot())
     assert "AIzaSECRET" not in s and "TOMSECRET" not in s
+
+
+# ---- BGTOLL measured volume profile ----------------------------------------------------------------------
+def test_bgtoll_profile_is_a_share_of_the_weekday_peak(tmp_path):
+    import pandas as pd
+
+    from backend.data_prep import bgtoll
+
+    rows = []
+    for scp in bgtoll.PROFILE_POINTS[:10]:
+        for day in range(14):  # 2026-03-02 (Mon) .. 03-15
+            for h in range(24):
+                weekend = (day % 7) >= 5
+                level = (900 if h in (5, 14) else 100 + 40 * h) * (0.7 if weekend else 1.0)  # UTC hours; peak shape does not matter, scaling does
+                rows.append({"scp": scp, "name": "x", "lat": 42.7, "lon": 23.3, "km_from_center": 8, "hour_utc": pd.Timestamp("2026-03-02") + pd.Timedelta(days=day, hours=h),
+                             "snapshots": 4, "vehicles_per_hour": level, "heavy_share": 0.15 if not weekend else 0.1, "mean_speed_kmh": 40})
+    csv = tmp_path / "h.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+    p = bgtoll.build_profile(csv, tmp_path / "p.json")
+    assert len(p["weekday"]) == 24 and len(p["weekend"]) == 24
+    assert max(p["weekday"]) == 1.0 and max(p["weekend"]) < 1.0  # weekends are lower on the same scale
+    assert p["heavy_share"]["weekday"] > p["heavy_share"]["weekend"]
