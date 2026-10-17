@@ -1,0 +1,65 @@
+{
+ "heating, city > 15": {
+  "hours": 930,
+  "rows": 198912,
+  "coverage80": 0.779,
+  "cell_hours": 504,
+  "trend_only": 0.2,
+  "street_level": 0.349,
+  "cell_250m": 0.347,
+  "cell_500m": 0.348,
+  "cell_1000m": 0.348,
+  "cell_2000m": 0.34
+ },
+ "heating, city > 25": {
+  "hours": 436,
+  "rows": 91090,
+  "coverage80": 0.773,
+  "cell_hours": 230,
+  "trend_only": 0.177,
+  "street_level": 0.355,
+  "cell_250m": 0.354,
+  "cell_500m": 0.355,
+  "cell_1000m": 0.355,
+  "cell_2000m": 0.349
+ },
+ "heating, all": {
+  "hours": 1655,
+  "rows": 361714,
+  "coverage80": 0.798,
+  "cell_hours": 908,
+  "trend_only": 0.181,
+  "street_level": 0.322,
+  "cell_250m": 0.32,
+  "cell_500m": 0.32,
+  "cell_1000m": 0.321,
+  "cell_2000m": 0.314
+ },
+ "close_pairs": {
+  "0-250 m": {
+   "pairs": 6209,
+   "concordance": 0.549,
+   "se_if_independent": 0.0063
+  },
+  "250-500 m": {
+   "pairs": 20942,
+   "concordance": 0.511,
+   "se_if_independent": 0.0035
+  },
+  "500-1000 m": {
+   "pairs": 71395,
+   "concordance": 0.474,
+   "se_if_independent": 0.0019
+  },
+  "1000-2000 m": {
+   "pairs": 262071,
+   "concordance": 0.539,
+   "se_if_independent": 0.001
+  },
+  "2000-5000 m": {
+   "pairs": 1494849,
+   "concordance": 0.56,
+   "se_if_independent": 0.0004
+  }
+ }
+}

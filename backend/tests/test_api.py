@@ -35,7 +35,8 @@ def test_forecast_offline_uses_fixture(client):
 def test_scenario_has_strong_night_inversion(client):
     r = client.get("/api/forecast?scenario=winter_inversion").json()
     assert r["source"] == "scenario" and len(r["hours"]) == 48
-    assert r["alert"]["active"]
+    assert r["alert"]["active"] and r["alert"]["basis"] == "model" and r["alert"]["level"] == "warning"
+    assert all(h["pm25_model"] is not None and h["level"] in ("good", "watch", "warning") for h in r["hours"])
     assert max(h["score"] for h in r["hours"]) > 90
     assert max(h["pm25"] for h in r["hours"]) > 80
     assert min(h["score"] for h in r["hours"]) < 60  # daytime relief
@@ -129,7 +130,8 @@ def test_cai_geojson_and_edge_popover(client):
     assert 0 < len(fc["features"]) <= 50
     f = fc["features"][0]
     assert f["geometry"]["type"] == "LineString"
-    assert {"cai", "pm25", "background", "traffic", "ventilation", "greenery", "local_correction"} <= set(f["properties"])
+    assert {"cai", "pm25", "background", "ventilation", "greenery", "local_correction"} <= set(f["properties"])
+    assert "traffic" not in f["properties"]  # no assumed traffic term
     e = client.get(f"/api/cai/edge?id={f['properties']['id']}&scenario=winter_inversion").json()
     assert e["cai"] == f["properties"]["cai"] and e["components_ugm3"]["background"] > 0
     assert client.get("/api/cai/edge?id=99999999").status_code == 404
@@ -197,7 +199,7 @@ def test_network_endpoint_and_validation_scenario_warning(client):
     assert "not a real validation" in v["warning"]
     live = client.get("/api/validation").json()
     assert live["n"] > 50 and live["verdict"] in ("weak", "moderate", "reasonable")
-    assert live["daily_mean"] and live["daily_mean"]["traffic_gain_sensitivity"]
+    assert live["daily_mean"] and "traffic_gain_sensitivity" not in live["daily_mean"]
 
 
 def test_names_districts_and_labels_in_api(client):

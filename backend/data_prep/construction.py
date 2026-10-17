@@ -20,8 +20,9 @@ from shapely.ops import unary_union
 
 from .stac_common import BBOX, DATA, save_geotiff, target_grid
 
-MIRRORS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
-           "https://overpass.private.coffee/api/interpreter"]
+MIRRORS = ["https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter",
+           "https://overpass.kumi.systems/api/interpreter"]
+HEADERS = {"User-Agent": "dishai-inversion-watch/0.1 (research prototype)"}  # public Overpass servers reject anonymous clients
 SUPERSAMPLE = 4
 
 
@@ -37,7 +38,7 @@ def fetch(tries: int = 8) -> dict:
     for attempt in range(tries):
         url = MIRRORS[attempt % len(MIRRORS)]
         try:
-            r = httpx.post(url, data={"data": query()}, timeout=120)
+            r = httpx.post(url, data={"data": query()}, headers=HEADERS, timeout=120)
             if r.status_code == 200:
                 return r.json()
             print(f"{url}: HTTP {r.status_code}, retrying in {wait}s", file=sys.stderr)
@@ -48,7 +49,8 @@ def fetch(tries: int = 8) -> dict:
     raise SystemExit("Overpass did not answer; try again later")
 
 
-def polygons(data: dict) -> list[Polygon]:
+def polygons(data: dict) -> list[tuple[Polygon, dict]]:
+    """(footprint, OSM tags) for every closed construction area."""
     out = []
     for el in data.get("elements", []):
         rings = []
@@ -61,17 +63,18 @@ def polygons(data: dict) -> list[Polygon]:
             if len(pts) >= 4 and pts[0] == pts[-1]:
                 poly = Polygon(pts)
                 if poly.is_valid and not poly.is_empty:
-                    out.append(poly)
+                    out.append((poly, el.get("tags", {})))
     return out
 
 
 def main() -> int:
-    polys = polygons(fetch())
+    items = polygons(fetch())
+    polys = [p for p, _ in items]
     print(f"{len(polys)} construction areas", file=sys.stderr)
     if not polys:
         return 1
     (DATA / "construction.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [
-        {"type": "Feature", "properties": {}, "geometry": mapping(p)} for p in polys]}))
+        {"type": "Feature", "properties": tags, "geometry": mapping(p)} for p, tags in items]}))
     transform, w, h = target_grid()
     from rasterio.transform import Affine
     fine = Affine(transform.a / SUPERSAMPLE, 0, transform.c, 0, transform.e / SUPERSAMPLE, transform.f)

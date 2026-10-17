@@ -153,12 +153,22 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
               )}
             </tbody>
           </table>
+          {res.confidence && !res.confidence.cleaner_exists && (
+            <p className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--watch-bg)", color: "var(--watch)" }}>
+              <b>{res.confidence.message}</b> Take the fastest route, or the one you prefer.
+            </p>
+          )}
+          {res.confidence?.cleaner_exists && (
+            <p className="faint mt-2 text-[11px]">
+              Clearly cleaner than the fastest: {res.confidence.better.map((k) => `${NAMES[k]} (${Math.abs(res.confidence!.routes[k].diff_pct)}% lower mean PM2.5, uncertainty ±${res.confidence!.routes[k].sd_pct}%)`).join("; ")}.
+            </p>
+          )}
           <p className="faint mt-2 text-[11px] leading-snug">
             *Dose = modelled PM2.5 × minutes × relative breathing rate (µg·min/m³; cycling assumes 2× walking), % vs the fastest route. Balanced and cleanest are capped at +30 % time.
             {res.routes.cleanest.lambda_used !== undefined && res.routes.cleanest.lambda_used < 3 ? ` The cap limited the cleanest route to setting ${res.routes.cleanest.lambda_used}.` : ""}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <a className="btn text-xs" href={res.open_in_google_maps_clean} target="_blank" rel="noreferrer">Open cleanest in Google Maps ↗</a>
+            {(!res.confidence || res.confidence.cleaner_exists) && <a className="btn text-xs" href={res.open_in_google_maps_clean} target="_blank" rel="noreferrer">Open cleanest in Google Maps ↗</a>}
             <a className="btn text-xs" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
           </div>
           <p className="faint mt-2 text-[11px]">

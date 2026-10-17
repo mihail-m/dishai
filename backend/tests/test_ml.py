@@ -6,16 +6,16 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from backend.cai.features import compute_features
 from backend.cai.graph import get_net
 from backend.cai.score import CaiModel
-from backend.ml.pm_model import DEV_CLIP, HOUR_COLS, LEVEL_FEATURES, NOW_COLS, STATIC_COLS, PmModel, hour_vector, now_vector
+from backend.ml.pm_model import DEV_CLIP, HOUR_COLS, LEVEL_FEATURES, NOW_COLS, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector, now_vector
 
 
-def toy_model(coef_T=0.0, coef_cams=1.0, coef_elev=0.0) -> PmModel:
-    """Level: log1p(pm) = coef_cams * log1p(cams). Spatial: the given log-deviation per SD of traffic / terrain."""
+def toy_model(coef_cams=1.0, coef_elev=0.0) -> PmModel:
+    """Level: log1p(pm) = coef_cams * log1p(cams). Spatial: the given log-deviation per SD of terrain height."""
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (4000, len(LEVEL_FEATURES))).astype("float32")
     X[:, LEVEL_FEATURES.index("cams25")] *= 40
     y = coef_cams * np.log1p(X[:, LEVEL_FEATURES.index("cams25")])
-    spatial = {"mean": [1.0, 600.0], "std": [1.0, 100.0], "coef": [coef_T, coef_elev, 0.0, 0.0]}
+    spatial = {"mean": [600.0], "std": [100.0], "coef": [coef_elev, 0.0]}
     return PmModel(HistGradientBoostingRegressor(max_iter=60, random_state=0).fit(X, y), spatial, {"trained": "test"})
 
 
@@ -46,19 +46,21 @@ def test_prediction_follows_cams_and_is_nonnegative():
 
 
 def test_spatial_term_direction_and_cap():
-    m = toy_model(coef_T=0.2, coef_elev=-0.3)
+    m = toy_model(coef_elev=-0.3)
     h = {"pm25": 20, "pm10": 20, "blh": 300, "wind10m": 5, "wind925": 9, "t2m": 1, "t925": 4, "cloud": 50, "rh": 80, "radiation": 0, "score": 50}
     hv, nv = hour_vector(h, hour=8, weekend=False), now_vector(0, 20, 20)
     st = np.zeros((3, len(STATIC_COLS)), "float32")
-    st[:, STATIC_COLS.index("T")] = [0.0, 3.0, 5000.0]  # quiet side street, avenue, motorway
-    st[:, STATIC_COLS.index("elev")] = 600.0
+    st[:, STATIC_COLS.index("elev")] = [600.0, 530.0, 300.0]  # typical height, a bit lower, far lower (capped)
     p = m.predict(st, hv, nv)
-    assert p[0] < p[1] < p[2]  # more traffic, more PM
-    assert p[2] / p[0] <= np.exp(2 * DEV_CLIP) + 1e-3  # a street never gets more than the capped factor
-    valley, hill = st.copy(), st.copy()
+    assert p[0] < p[1] < p[2]  # the lower the street, the more PM (valley floor)
+    assert np.log1p(p[2]) - np.log1p(p[0]) <= DEV_CLIP + 1e-3  # a street never gets more than the capped deviation
+    hill = st.copy()
     hill[:, STATIC_COLS.index("elev")] = 900.0
-    assert (m.predict(hill, hv, nv) < m.predict(valley, hv, nv)).all()  # valley floor is dirtier
-    assert np.allclose(toy_model().predict(st, hv, nv), toy_model().predict(st[:1].repeat(3, 0), hv, nv))  # no coefficients: flat
+    assert (m.predict(hill, hv, nv) < m.predict(st, hv, nv)).all()
+
+
+def test_no_traffic_column_in_the_model():
+    assert "T" not in STATIC_COLS and "T" not in SPATIAL_COLS
 
 
 def test_stale_feature_layout_is_ignored(tmp_path):
@@ -80,11 +82,11 @@ def ml_world():
 def test_cai_model_with_ml_end_to_end(ml_world):
     net, feats, hours = ml_world
     sensors = [{"id": i, "lat": 42.69 + 0.003 * i, "lon": 23.32, "pm25": 45.0 + i} for i in range(12)]
-    m = CaiModel(net, feats, hours, 8, sensors, ml=toy_model(coef_T=0.2, coef_elev=-0.1))
+    m = CaiModel(net, feats, hours, 8, sensors, ml=toy_model(coef_elev=-0.1))
     h = m.hour(10)
     assert h["pm"].shape == (net.n_edges,) and np.isfinite(h["pm"]).all()
     assert h["cai"].min() >= 0 and h["cai"].max() <= 100
-    e = int(np.argmax(feats.T))
+    e = int(np.argmax(feats.G))  # any street will do; the greenest exercises every component
     ex = m.explain(e, 10)
     parts = sum(ex["components_ugm3"].values())
     assert ex["model"] == "ml"
@@ -95,3 +97,12 @@ def test_physics_fallback_when_no_model(ml_world):
     net, feats, hours = ml_world
     m = CaiModel(net, feats, hours, 8, [], ml=False)
     assert m.ml is None and m.explain(0, 10)["model"] == "physics"
+
+
+def test_features_carry_construction_share():
+    from backend.cai.features import compute_features
+    f = compute_features(get_net("walk"))
+    c = f.construction
+    assert c.shape == f.G.shape
+    if f.sources["construction"] != "missing":
+        assert np.nanmin(c) >= 0 and np.nanmax(c) <= 1 and np.nanmax(c) > 0

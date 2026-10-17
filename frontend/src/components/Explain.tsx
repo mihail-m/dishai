@@ -4,8 +4,7 @@ import { caiCss } from "../map/cai";
 const ROWS: { key: keyof EdgeExplain["components_ugm3"]; label: string; hint: string }[] = [
   { key: "background", label: "Regional background", hint: "CAMS + weather + live-sensor nowcast, for a typical street" },
   { key: "local_correction", label: "Local sensor correction", hint: "nearby citizen sensors vs the model" },
-  { key: "traffic", label: "Traffic", hint: "road class within 150 m (learned effect vs a typical street)" },
-  { key: "ventilation", label: "Terrain / trapped air", hint: "valley floor vs slope and surface heat (learned); physics fallback: stagnation amplifier" },
+  { key: "ventilation", label: "Terrain / trapped air", hint: "valley floor vs slope and surface heat (learned)" },
   { key: "greenery", label: "Greenery shield", hint: "trees and NDVI within 50 m (capped at −30 %)" },
 ];
 const colorName = (cai: number) => (cai < 25 ? "red" : cai < 45 ? "orange" : cai < 65 ? "amber" : cai < 85 ? "light green" : "green");
@@ -58,9 +57,27 @@ export default function Explain({ e, onClose }: { e: EdgeExplain | null; onClose
           <span className="tabular-nums font-semibold">{e.drivers.heat_weight === 0 ? "off (not hot)" : `${e.heat_points > 0 ? "+" : ""}${e.heat_points} CAI points`}</span>
         </li>
       </ul>
+      {e.observed_traffic ? (
+        <p className="muted mt-2 text-xs" title="Travel time of the arterial this street belongs to: Google (live and typical) and TomTom flow">
+          Observed traffic on {e.observed_traffic.corridor}: {e.observed_traffic.vs_typical != null
+            ? `${e.observed_traffic.vs_typical < 0.95 ? "lighter than" : e.observed_traffic.vs_typical < 1.05 ? "about" : "heavier than"} usual for this hour (×${e.observed_traffic.vs_typical.toFixed(2)})`
+            : `index ${e.observed_traffic.live_index}`}
+          {e.observed_traffic.google_min != null && `, Google ${e.observed_traffic.google_min} min for the whole route`}
+          {e.observed_traffic.tomtom_index != null && `, TomTom ×${e.observed_traffic.tomtom_index.toFixed(2)} of free-flow time`}
+          {e.observed_traffic.jam_share ? `, jam on ${Math.round(e.observed_traffic.jam_share * 100)}% of the route` : ""}.
+          {" "}Shown as measured; it is not an input to the PM2.5 number.
+        </p>
+      ) : (
+        <p className="faint mt-2 text-[11px]">No traffic measurement for this street (only the main arterials are measured), and none is assumed.</p>
+      )}
+      {(e.drivers.construction_share ?? 0) >= 0.02 && (
+        <p className="muted mt-2 text-xs" title="OpenStreetMap landuse/building=construction within about 150 m">
+          Construction nearby: {Math.round((e.drivers.construction_share ?? 0) * 100)}% of the area within 150 m. Shown for context, not in the score: citizen sensors near sites do not read dirtier.
+        </p>
+      )}
       <p className="faint mt-3 text-[11px] leading-snug">
-        µg/m³ added to or removed from the street&apos;s PM2.5. Traffic term {e.drivers.traffic_term}, rush ×{e.drivers.rush}, trapping ×{e.drivers.amplifier}, greenery {e.drivers.greenery}.
-        Indicative screening model with assumed weights.
+        µg/m³ added to or removed from the street&apos;s PM2.5, relative to a typical street. There is no traffic term: road-class weights and a rush-hour curve were
+        assumptions, so they were removed. Greenery {e.drivers.greenery}. Indicative.
       </p>
     </div>
   );

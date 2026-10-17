@@ -1,4 +1,4 @@
-.PHONY: dem history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: heating reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -42,10 +42,24 @@ trees:
 	$(PY) -m backend.data_prep.trees_sofiaplan   # Sofia tree inventory -> data/tree_crown_m2.tif (~45 min, polite sequential crawl, resumable)
 bake:
 	$(PY) -m backend.cai.graph                      # data/*.graphml -> data/net.npz (what the app loads)
+construction-activity:
+	$(PY) -m backend.data_prep.construction_activity   # Sentinel-2 bare-soil/NDVI per site -> data/construction_activity.csv (~5 min)
+construction-districts:
+	$(PY) -m backend.data_prep.construction_districts  # share of each district under construction -> public/data
+heating:
+	$(PY) -m backend.data_prep.heating_osm      # OSM low-rise housing share (home-heating proxy) -> data/lowrise.tif, data/buildings.tif
+construction:
+	$(PY) -m backend.data_prep.construction   # OSM construction sites -> data/construction.tif
 dem:
 	$(PY) -m backend.data_prep.dem                  # Copernicus 30 m terrain -> data/dem.tif
 history:
 	$(PY) -m backend.data_prep.history              # Sensor.Community + Open-Meteo history -> data/history/ (~1 h, resumable)
+reference:
+	$(PY) -m backend.data_prep.reference_eea     # EEA hourly PM2.5/PM10 for Sofia -> data/history/reference.csv
+calibrate:
+	$(PY) -m backend.ml.calibrate                    # fit + evaluate the sensor calibration -> data/calibration.joblib
+spatial:
+	$(PY) -m backend.ml.spatial_fit                  # per-sensor offsets, variogram, kriging evaluation -> data/spatial.joblib
 train:
 	$(PY) -m backend.ml.train                       # fit + evaluate the PM2.5 model -> data/pm_model.joblib
 data: graph bikegraph roads ndvi lst canopy trees bake

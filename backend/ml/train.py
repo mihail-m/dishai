@@ -1,4 +1,7 @@
-"""Train and honestly evaluate the PM2.5 model against the hand-weighted physics formula.
+"""Train and honestly evaluate the PM2.5 model against simple baselines (CAMS x live-sensor bias, raw CAMS, persistence).
+
+The hand-weighted physics formula the app used before the learned model was dropped as a baseline when its traffic term (an assumption) was
+removed from the code; its last measured numbers are in docs/PM_MODEL.md.
 
     python -m backend.ml.train [--no-save]
 
@@ -30,9 +33,9 @@ from sklearn.model_selection import GroupKFold
 from ..cai import config as C
 from ..cai.features import compute_features
 from ..cai.graph import DATA, get_net
-from ..cai.score import HourCtx, hour_contexts, predict_pm
 from ..score import stagnation_score
-from .pm_model import (DEV_CLIP, FEATURES, LEVEL_FEATURES, MAX_LEAD_H, S_IDX, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector,
+from . import calibration as calibration_mod
+from .pm_model import (N_BUCKETS, DEV_CLIP, interval_bucket, FEATURES, LEVEL_FEATURES, MAX_LEAD_H, S_IDX, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector,
                        now_vector, spatial_design, static_matrix)
 
 HIST = DATA / "history"
@@ -59,8 +62,24 @@ def load_sensors() -> pd.DataFrame:
     return s
 
 
-def build_table(rng: np.random.Generator) -> tuple[pd.DataFrame, np.ndarray]:
+def calibrate_history(sens: pd.DataFrame, hrs: pd.DataFrame, cal) -> pd.DataFrame:
+    """Raw sensor-hours -> reference scale with the RH / temperature / month of that hour (Open-Meteo history, the same variables
+    the live calibration reads from the forecast). The raw value is kept as pm25_raw."""
+    wx = hrs[["relative_humidity_2m", "temperature_2m"]].rename(columns={"relative_humidity_2m": "rh", "temperature_2m": "temp"})
+    j = sens[["time"]].join(wx, on="time")
+    sens = sens.assign(pm25_raw=sens.pm25)
+    sens["pm25"] = cal.apply(sens.pm25.to_numpy(), j.rh.to_numpy(), j.temp.to_numpy(), sens.time.dt.month.to_numpy())
+    return sens
+
+
+def build_table(rng: np.random.Generator, calibrate: bool = True) -> tuple[pd.DataFrame, np.ndarray]:
     hrs, sens = load_hours(), load_sensors()
+    cal = calibration_mod.get("pm25") if calibrate else None
+    if cal is not None:
+        sens = calibrate_history(sens, hrs, cal)
+        print(f"sensor values calibrated to the reference scale ({cal.meta.get('candidate')}), median x{(sens.pm25 / sens.pm25_raw.clip(lower=0.1)).median():.2f}", file=sys.stderr)
+    else:
+        print("WARNING: training on raw sensor values (no calibration file or --raw)", file=sys.stderr)
     # outlier-robust city nowcast, same clip the live CaiModel applies
     med = sens.groupby("time").pm25.transform("median")
     sens["pm"] = sens.pm25.clip(0, 4 * med + 10)
@@ -119,16 +138,6 @@ def build_table(rng: np.random.Generator) -> tuple[pd.DataFrame, np.ndarray]:
     return out, feats.median_lst
 
 
-def physics_baseline(df: pd.DataFrame) -> np.ndarray:
-    """The pre-ML formula at each row's sensor, without the live-sensor residual (that is a separate stage)."""
-    out = np.empty(len(df))
-    bias = np.clip(df.city_med / np.maximum(df.cams_issue, C.CAMS_FLOOR), C.BIAS_MIN, C.BIAS_MAX).to_numpy()
-    for i, (T, G, c, st, ap, hr, wk, b) in enumerate(zip(df["T"], df.G, df.cams25, df.stagnation, df.t2m, df.hour, df.weekend, bias)):
-        ctx = HourCtx(time="", cams=c, stagnation=st, apparent=ap, daylight=0.0, hour=int(hr), weekend=bool(wk))
-        out[i] = predict_pm(T, G, ctx, c * b, 0.0)
-    return out
-
-
 def within_hour_rho(df: pd.DataFrame, pred: np.ndarray) -> float:
     """Mean Spearman across sensors within each hour: does it rank streets right at a given moment?"""
     d = pd.DataFrame({"t": df.time.to_numpy(), "p": pred, "o": df.pm.to_numpy()})
@@ -153,10 +162,8 @@ def metrics(df: pd.DataFrame, pred: np.ndarray, rank_score: np.ndarray | None = 
 
 def compare(df: pd.DataFrame, ml: np.ndarray, ml_dev: np.ndarray) -> dict:
     bias = np.clip(df.city_med / np.maximum(df.cams_issue, C.CAMS_FLOOR), C.BIAS_MIN, C.BIAS_MAX).to_numpy()
-    phys = physics_baseline(df)
     out = {
         "ml": metrics(df, ml, ml_dev),
-        "physics_formula": metrics(df, phys, np.log(phys + 1e-6) - np.log(df.cams25.to_numpy() * bias + 1e-6)),
         "cams_x_bias": metrics(df, df.cams25.to_numpy() * bias),
         "cams_raw": metrics(df, df.cams25.to_numpy()),
         "persistence_city_median": metrics(df, df.city_med.to_numpy()),
@@ -166,13 +173,13 @@ def compare(df: pd.DataFrame, ml: np.ndarray, ml_dev: np.ndarray) -> dict:
         sel = (df.lead >= m[0]) & (df.lead <= m[1])
         if sel.sum() > 1000:
             sub = df[sel]
-            by_lead[name] = {"ml_mae": metrics(sub, ml[sel.to_numpy()])["mae"], "physics_mae": metrics(sub, physics_baseline(sub))["mae"],
+            by_lead[name] = {"ml_mae": metrics(sub, ml[sel.to_numpy()])["mae"],
                              "persistence_mae": metrics(sub, sub.city_med.to_numpy())["mae"], "rows": int(sel.sum())}
     out["by_lead"] = by_lead
     # the hours the app exists for: CAMS forecasts an episode. bias < 0 = under-predicts.
     ep = (df.cams25 >= EPISODE_CAMS).to_numpy()
     if ep.sum() > 500:
-        preds = {"ml": ml, "physics_formula": phys, "cams_x_bias": df.cams25.to_numpy() * bias, "persistence_city_median": df.city_med.to_numpy()}
+        preds = {"ml": ml, "cams_x_bias": df.cams25.to_numpy() * bias, "persistence_city_median": df.city_med.to_numpy()}
         out["episodes"] = {"rows": int(ep.sum()), **{k: {"mae": round(float(np.mean(np.abs(v[ep] - df.pm.to_numpy()[ep]))), 2),
                                                          "bias": round(float(np.mean(v[ep] - df.pm.to_numpy()[ep])), 2)} for k, v in preds.items()}}
     return out
@@ -191,12 +198,60 @@ def level_X(df: pd.DataFrame) -> np.ndarray:
     return X.to_numpy()
 
 
-def fit_level(df: pd.DataFrame) -> HistGradientBoostingRegressor:
-    """City-level model: one row per (hour, a few random leads); target is log(1 + city median) - log(1 + anchor)."""
+QUANTILES = (0.1, 0.5, 0.9)
+
+
+def fit_level(df: pd.DataFrame, q: float = 0.5) -> HistGradientBoostingRegressor:
+    """City-level model: one row per (hour, a few random leads); target is log(1 + city median) - log(1 + anchor).
+    q = 0.5 is the median (the central estimate everywhere); 0.1 and 0.9 give the interval."""
     d = df.groupby("time").head(4)
-    est = HistGradientBoostingRegressor(max_iter=250, learning_rate=0.05, max_leaf_nodes=12, min_samples_leaf=40,
+    est = HistGradientBoostingRegressor(loss="quantile", quantile=q, max_iter=250, learning_rate=0.05, max_leaf_nodes=12, min_samples_leaf=40,
                                         l2_regularization=2.0, random_state=SEED)
     return est.fit(level_X(d), np.log1p(hour_median(df).loc[d.index]) - np.log1p(anchors(d)))
+
+
+def level_target(df: pd.DataFrame) -> np.ndarray:
+    return (np.log1p(hour_median(df)) - np.log1p(anchors(df))).to_numpy()
+
+
+def fit_level_set(df: pd.DataFrame, folds: int = 4) -> dict:
+    """p10 / p50 / p90 estimators plus split-conformal widening per bucket from week-blocked out-of-fold predictions inside `df`.
+    The raw quantile fits are over-confident out of sample (about 19 % of readings fall below the p10 instead of 10 %); the widening
+    is the empirical 90 % quantile of how far readings fall outside, per lead bucket and level class."""
+    week = ((df.day - df.day.min()).dt.days // 7).to_numpy()
+    oof = {q: np.zeros(len(df)) for q in QUANTILES}
+    for tr, te in GroupKFold(folds).split(df, groups=week):
+        for q in QUANTILES:
+            oof[q][te] = fit_level(df.iloc[tr], q).predict(level_X(df.iloc[te]))
+    y = level_target(df)
+    b = interval_bucket(df.lead.to_numpy(), np.expm1(np.log1p(anchors(df)) + oof[0.5]))
+    lo, hi = np.zeros(N_BUCKETS), np.zeros(N_BUCKETS)
+    for k in range(N_BUCKETS):
+        s = b == k
+        if s.sum() > 500:
+            lo[k], hi[k] = np.quantile(oof[0.1][s] - y[s], 0.9), np.quantile(y[s] - oof[0.9][s], 0.9)
+    return {"q10": fit_level(df, 0.1), "q50": fit_level(df, 0.5), "q90": fit_level(df, 0.9), "conf_lo": lo, "conf_hi": hi}
+
+
+def level_set_predict(ls: dict, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(u_lo, u_50, u_hi) = log1p of the city level at p10 / p50 / p90 for every row of df."""
+    X, base = level_X(df), np.log1p(anchors(df))
+    u50 = base + ls["q50"].predict(X)
+    b = interval_bucket(df.lead.to_numpy(), np.expm1(u50))
+    lo, hi = base + ls["q10"].predict(X) - ls["conf_lo"][b], base + ls["q90"].predict(X) + ls["conf_hi"][b]
+    return np.minimum(lo, u50), u50, np.maximum(hi, u50)
+
+
+def coverage(df: pd.DataFrame, u_lo, u_hi) -> dict:
+    """Share of readings below the p10 and above the p90, overall and by slice (target 0.10 each)."""
+    y = np.log1p(hour_median(df).to_numpy())
+    heating = np.isin(df.time.dt.month, [10, 11, 12, 1, 2, 3])
+    pm = np.expm1(y)
+    slices = {"all": np.ones(len(df), bool), "heating": heating, "summer": ~heating, "0-5h": (df.lead <= 5).to_numpy(),
+              "6-23h": ((df.lead >= 6) & (df.lead <= 23)).to_numpy(), "24-47h": (df.lead >= 24).to_numpy(),
+              "episode_cams50": (df.cams25 >= EPISODE_CAMS).to_numpy(), "truth_ge_25": pm >= 25, "truth_ge_15_heating": (pm >= 15) & heating}
+    return {k: {"rows": int(s.sum()), "below_p10": round(float((y[s] < u_lo[s]).mean()), 3), "above_p90": round(float((y[s] > u_hi[s]).mean()), 3)}
+            for k, s in slices.items() if s.sum() > 200}
 
 
 def anchors(df: pd.DataFrame) -> np.ndarray:
@@ -210,14 +265,12 @@ def level_predict(est, df: pd.DataFrame) -> np.ndarray:
 def spatial_stats(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     one = df.groupby("sensor")[STATIC_COLS].first()
     raw = one[SPATIAL_COLS].to_numpy(dtype="float64").copy()
-    raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
     return np.nanmean(raw, 0), np.nanstd(raw, 0)
 
 
 def design(st, stag, mean, std):
     cols = [STATIC_COLS.index(c) for c in SPATIAL_COLS]
     raw = st[:, cols].copy()
-    raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
     z = np.nan_to_num((raw - mean) / std)
     sf = np.nan_to_num(stag / 100.0)[:, None]
     return np.hstack([z, z * sf])
@@ -261,15 +314,16 @@ def fit_all(df: pd.DataFrame, alpha: float) -> PmModel:
 def predict_pm_ml(model: PmModel, df: pd.DataFrame) -> np.ndarray:
     lvl = level_predict(model.level, df)
     dev = spatial_predict(df, np.asarray(model.spatial["coef"]), np.asarray(model.spatial["mean"]), np.asarray(model.spatial["std"]))
-    return lvl * np.exp(dev)
+    return np.expm1(np.log1p(lvl) + dev).clip(0)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--raw", action="store_true", help="train on raw sensor values (ignore data/calibration.joblib); the model is then flagged uncalibrated")
     ap.add_argument("--drop", default="", help="comma-separated feature columns to blank out (ablation), e.g. rh,t2m")
     args = ap.parse_args()
-    df, _ = build_table(np.random.default_rng(SEED))
+    df, _ = build_table(np.random.default_rng(SEED), calibrate=not args.raw)
     df = df.reset_index(drop=True)
     for c in filter(None, args.drop.split(",")):
         df[c] = np.nan
@@ -291,6 +345,14 @@ def main() -> int:
     A = compare(df, lvl * np.exp(dev), dev)
     A["level_only"] = metrics(df, lvl)
 
+    # Interval check: refit the p10 / p50 / p90 set (with its conformal widening) on the other weeks, score the held-out weeks.
+    u = [np.zeros(len(df)) for _ in range(3)]
+    for tr, te in GroupKFold(5).split(df, groups=week):
+        out = level_set_predict(fit_level_set(df.iloc[tr]), df.iloc[te])
+        for k in range(3):
+            u[k][te] = out[k]
+    A["quantile_coverage"] = coverage(df, u[0], u[2])
+
     # B. unseen sensors AND unseen future days
     days = np.sort(df.day.unique())
     cut = days[int(len(days) * 0.75)]
@@ -302,12 +364,14 @@ def main() -> int:
     dev_b = spatial_predict(te, np.asarray(model_b.spatial["coef"]), np.asarray(model_b.spatial["mean"]), np.asarray(model_b.spatial["std"]))
     B = compare(te, predict_pm_ml(model_b, te), dev_b)
     B["level_only"] = metrics(te, level_predict(model_b.level, te))
+    B["quantile_coverage"] = coverage(te, *[level_set_predict(fit_level_set(tr), te)[k] for k in (0, 2)])
 
     for label, res in (("A. unseen sensors + unseen weeks (5-fold)", A), ("B. unseen sensors + future days", B)):
         print(f"\n{label}", file=sys.stderr)
         print(pd.DataFrame({k: v for k, v in res.items() if isinstance(v, dict) and "mae" in v}).T.to_string(), file=sys.stderr)
         print("by lead:", json.dumps(res["by_lead"]), file=sys.stderr)
         print("episode hours (CAMS >= 50):", json.dumps(res.get("episodes")), file=sys.stderr)
+        print("p10/p90 coverage (target 0.10 / 0.10):", json.dumps(res.get("quantile_coverage")), file=sys.stderr)
 
     from sklearn.inspection import permutation_importance
     t = te.groupby("time").head(2)
@@ -324,12 +388,16 @@ def main() -> int:
     print(f"\nepisode stress test: CAMS and sensors x5 -> predicted city level x{stress:.1f} (a model that caps would give ~x1)", file=sys.stderr)
     A["stress_x5_ratio"] = round(stress, 2)
 
+    cal = None if args.raw else calibration_mod.get("pm25")
     final = fit_all(df, alpha)
-    names = [f"{c}{suffix}" for suffix in ("", " x S/100") for c in ("z(log T)", "z(elev)")]
+    ls = fit_level_set(df)
+    final.level, final.q_lo, final.q_hi, final.conf_lo, final.conf_hi = ls["q50"], ls["q10"], ls["q90"], ls["conf_lo"], ls["conf_hi"]
+    names = [f"{c}{suffix}" for suffix in ("", " x S/100") for c in ("z(elev)",)]
     print("spatial coefficients:", dict(zip(names, np.round(final.spatial["coef"], 3))), file=sys.stderr)
     if not args.no_save:
         final.meta = {
-            "trained": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "rows": int(len(df)), "sensors": int(df.sensor.nunique()),
+            "trained": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "rows": int(len(df)),
+            "calibrated": cal is not None, "calibration_coef": cal.coef if cal is not None else None, "sensors": int(df.sensor.nunique()),
             "days": int(df.day.nunique()), "span": [str(df.day.min().date()), str(df.day.max().date())],
             "algorithm": "HistGradientBoosting (city level) x linear street deviation (traffic, terrain height)",
             "eval_unseen_sensors": A, "eval_unseen_sensors_future_days": B,

@@ -10,13 +10,14 @@ from typing import Literal
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from . import google_routes
+from . import google_routes, traffic
 from .cai import config as C
 from .cai.features import Features, compute_features
 from .cai.areas import area_cells, summarize
 from .cai.graph import Net, get_net, has_mode
 from .cai.names import Namer, translit
 from .cai.network import compute_network
+from .cai import route_confidence, trust
 from .cai.routing import Router, RouteError, douglas_peucker, road_group
 from .cai.score import CaiModel, HourCtx
 from .cai.validate import leave_one_out, leave_one_out_ml
@@ -167,6 +168,8 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
             "id": id, **static[("namer", "walk")].edge(e),
             "road_class": net.hw_names[int(net.e_hw[e])], "length_m": round(float(net.e_len[e]), 1),
             "geometry": [[round(float(a), 5), round(float(b), 5)] for a, b in net.geometry(e)],  # so the UI can highlight it
+            # measured on the arterial corridor that runs along this street (None elsewhere); observed, not part of the PM2.5 estimate
+            "observed_traffic": traffic.edge_reading(net, e) if not parse_scenario(scenario) else None,
         })
         return out
 
@@ -266,12 +269,18 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         except RouteError as exc:
             raise HTTPException(422, str(exc)) from exc
         routes = {k: {kk: vv for kk, vv in v.items() if kk != "edges"} for k, v in res.items()}
+        confidence = None  # is any alternative really cleaner than the fastest route, given the street-level uncertainty?
+        if getattr(model, "spatial", None) and "fastest" in res:
+            month = int(h["ctx"].time[5:7]) if h["ctx"].time[5:7].isdigit() else None
+            confidence = route_confidence.summarise({
+                k: route_confidence.compare(net, res["fastest"]["edges"], v["edges"], routes["fastest"]["mean_pm25"], v["mean_pm25"], model.spatial, month)
+                for k, v in res.items() if k != "fastest"})
         clean = routes["cleanest"]["polyline"]
 
         out = {
             "from": o, "to": d, "hour": i, "time": h["ctx"].time, "scenario": parse_scenario(scenario), "mode": mode,
             "from_label": static[("namer", mode)].point(*o), "to_label": static[("namer", mode)].point(*d),
-            "routes": routes, "google_status": "no_key", "google_baseline": None,
+            "routes": routes, "confidence": confidence, "google_status": "no_key", "google_baseline": None,
             "google_available": mode == "walk" and google_routes.enabled(),
             "snapped": {"used": False, "polyline": clean, "eta_min": None, "waypoints": []},
             "open_in_google_maps": google_routes.maps_url(o, d),
@@ -334,14 +343,13 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         return out
 
     def _daily_ctx(model: CaiModel, now_idx: int) -> HourCtx:
-        """Context for a 24 h-mean target: today's mean CAMS / stagnation / rush."""
+        """Context for a 24 h-mean target: today's mean CAMS / stagnation."""
         cs = model.ctxs[: now_idx + 1]
         cams = [c.cams for c in cs if c.cams is not None]
         weekend = cs[-1].weekend
         return HourCtx(
             time="24 h mean", cams=float(np.mean(cams)) if cams else None, stagnation=float(np.mean([c.stagnation for c in cs])),
             apparent=float(np.mean([c.apparent for c in cs])), daylight=0.3, hour=12, weekend=weekend,
-            rush_override=float(np.mean(C.RUSH)) * (C.WEEKEND_FACTOR if weekend else 1.0),
         )
 
     @r.get("/api/validation")
@@ -351,10 +359,8 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         model, fc, _, _ = await get_model(sc)
         ctx = model.ctxs[fc["now_index"]]
         out = await asyncio.to_thread(leave_one_out, model.feats, model.sensors, ctx)
-        alt_mode = "background" if C.RESIDUAL_AGAINST == "model" else "model"
-        alt = await asyncio.to_thread(leave_one_out, model.feats, model.sensors, ctx, alt_mode)
-        out["other_residual_variant"] = {k: alt.get(k) for k in ("residual_mode", "spearman", "median_abs_error")}
         out["ml"] = await asyncio.to_thread(leave_one_out_ml, model)
+        out["trust"] = trust.summary(getattr(model, "ml", None))
         out["scenario"] = sc
         out["daily_mean"] = None
         if sc:
@@ -364,19 +370,36 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
                 s24 = await build_sensors_24h()
                 dctx = _daily_ctx(model, fc["now_index"])
                 daily = await asyncio.to_thread(leave_one_out, model.feats, s24, dctx)
-                daily["traffic_gain_sensitivity"] = [
-                    {k: v for k, v in (await asyncio.to_thread(leave_one_out, model.feats, s24, dctx, None, g)).items() if k in ("traffic_gain", "spearman", "median_abs_error")}
-                    for g in (0.0, 0.25, 0.5, 1.0, 2.0)
-                ]
                 out["daily_mean"] = daily
             except Exception as exc:  # noqa: BLE001
                 log.warning("24 h validation unavailable: %r", exc)
-        out["traffic_gain"] = C.TRAFFIC_GAIN
         return out
+
+    @r.get("/api/traffic")
+    async def traffic_state():
+        """Corridors with live and typical travel-time index, the measured hourly profile and request counts."""
+        if traffic.enabled():
+            net, _, _ = await get_static()
+            traffic.kick(net)  # background refresh; this response shows what is known now
+        return traffic.snapshot()
+
+    @r.get("/api/traffic/incidents")
+    async def traffic_incidents():
+        return await traffic.incidents()
+
+    @r.get("/api/traffic/tiles/{z}/{x}/{y}.png")
+    async def traffic_tile(z: int, x: int, y: int):
+        t = await traffic.flow_tile(z, x, y)
+        if t is None:
+            raise HTTPException(404, "No traffic tile")
+        return Response(content=t[0], media_type=t[1], headers={"Cache-Control": "public, max-age=120"})
 
     async def warmup():
         try:
-            await get_static()
+            if traffic.enabled():
+                traffic.load_saved_profile()
+            net, _, _ = await get_static()
+            traffic.kick(net)
             await get_model(None)
             log.info("CAI engine warm")
         except Exception as exc:  # noqa: BLE001

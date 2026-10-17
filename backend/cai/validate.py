@@ -1,4 +1,5 @@
-"""Leave-one-out validation of the CAI's PM2.5 against outdoor citizen sensors.
+"""Leave-one-out validation of the CAI's PM2.5 against outdoor citizen sensors (a single snapshot: the historical, time-blocked
+evaluation of the spatial stage is in backend/ml/spatial_fit.py).
 
 For each sensor: rebuild the model without it (bias, IDW residual) and predict PM2.5 at its location, then
 compare with what it measured. Reports Spearman rank correlation and median absolute error for the full
@@ -8,10 +9,9 @@ A measured weak model is better than an unmeasured strong one.
 import numpy as np
 from scipy.stats import spearmanr
 
-from . import config as C
 from .features import Features
 from .graph import to_xy
-from .score import HourCtx, bias_factor, idw_residual, predict_pm, shield
+from .score import HourCtx, bias_factor, idw_residual
 
 
 def _rho(a, b) -> float | None:
@@ -21,9 +21,7 @@ def _rho(a, b) -> float | None:
     return None if np.isnan(r) else round(float(r), 3)
 
 
-def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str | None = None, gain: float | None = None) -> dict:
-    mode = mode or C.RESIDUAL_AGAINST
-    gain = C.TRAFFIC_GAIN if gain is None else gain
+def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx) -> dict:
     n = len(sensors)
     if n < 10:
         return {"n": n, "error": "too few sensors"}
@@ -33,8 +31,6 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
     obs_c = np.clip(obs, 0, 4 * np.median(obs) + 10)
     x, y = to_xy(lon, lat)
     xy = np.column_stack([x, y])
-    sf = feats.at(lon, lat)
-    local = gain * sf["T"] * ctx.rush * ctx.amp * shield(sf["G"])  # traffic term at each sensor
 
     pred_full = np.zeros(n)
     pred_noR = np.zeros(n)
@@ -43,9 +39,8 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
         m = np.arange(n) != i
         b = bias_factor(obs_c[m], ctx.cams)
         B = ctx.cams * b if ctx.cams is not None else float(np.median(obs_c[m]))
-        base = B + local[m] if mode == "model" else np.full(m.sum(), B)
-        R = idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base)[0]
-        pred_bg[i], pred_noR[i], pred_full[i] = B, B + local[i], B + local[i] + R
+        R = idw_residual(xy[i : i + 1], xy[m], obs_c[m] - B)[0]
+        pred_bg[i], pred_noR[i], pred_full[i] = B, B, B + R
 
     def mae(p):
         return round(float(np.median(np.abs(p - obs))), 2)
@@ -53,7 +48,7 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
     rho_full, rho_noR = _rho(pred_full, obs), _rho(pred_noR, obs)
     verdict = "weak" if (rho_full or 0) < 0.3 else "moderate" if rho_full < 0.6 else "reasonable"
     return {
-        "n": n, "residual_mode": mode, "traffic_gain": gain, "hour": ctx.time,
+        "n": n, "hour": ctx.time,
         "spearman": rho_full, "median_abs_error": mae(pred_full),
         "baselines": {
             "no_sensor_residual": {"spearman": rho_noR, "median_abs_error": mae(pred_noR)},
@@ -86,13 +81,24 @@ def leave_one_out_ml(model) -> dict | None:
     xy = np.column_stack([x, y])
     from ..ml.pm_model import static_matrix
     base = model._ml_pm(static_matrix(model.feats, model.feats.at(lon, lat)), model.now_idx).astype(float)
-    full = np.zeros(n)
+    idw = np.zeros(n)
     for i in range(n):
         m = np.arange(n) != i
-        full[i] = base[i] + idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base[m])[0]
+        idw[i] = base[i] + idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base[m])[0]
 
     def mae(p):
         return round(float(np.median(np.abs(p - obs))), 2)
 
-    return {"n": n, "spearman": _rho(full, obs), "median_abs_error": mae(full),
-            "ml_only": {"spearman": _rho(base, obs), "median_abs_error": mae(base)}, **meta}
+    out = {"n": n, "ml_only": {"spearman": _rho(base, obs), "median_abs_error": mae(base)},
+           "idw": {"spearman": _rho(idw, obs), "median_abs_error": mae(idw)}, "spatial": "idw", **meta}
+    out.update(spearman=out["idw"]["spearman"], median_abs_error=out["idw"]["median_abs_error"])
+    if getattr(model, "spatial", None):
+        from . import krige
+        p = model.spatial
+        ids = [s.get("id") for s in sensors]
+        e = np.log1p(obs_c) - np.log1p(base) - krige.sensor_offsets(ids, p)
+        W, _ = krige.kriging_weights(xy, xy, krige.sensor_noise(ids, p), p, exclude=np.arange(n))
+        kr = np.expm1(np.log1p(base) + p.rho_at(0) * (W @ e))
+        out["krige"] = {"spearman": _rho(kr, obs), "median_abs_error": mae(kr)}
+        out.update(spearman=out["krige"]["spearman"], median_abs_error=out["krige"]["median_abs_error"], spatial="krige")
+    return out

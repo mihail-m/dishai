@@ -1,6 +1,8 @@
 """Inversion Watch API."""
 import asyncio
+import json
 import logging
+import math
 import os
 import statistics
 from collections import Counter, defaultdict
@@ -17,8 +19,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import advice as advice_mod
-from . import geo, sensors as sensors_mod, waqi
+from . import alert as alert_mod
+from . import airthings, geo, google_air, sensors as sensors_mod, waqi
 from .cache import Cache
+from .cai import config as C
+from .cai import krige as krige_mod
+from .ml import calibration as calibration_mod
 from .scenario import HOURLY as SCENARIO_HOURLY, scenario_pm25
 from .score import clamp, label_for, stagnation_score
 
@@ -91,6 +97,10 @@ def _load_districts() -> list[dict]:
 
 
 DISTRICTS = _load_districts()
+try:  # share of each district under OSM construction (python -m backend.data_prep.construction_districts); optional
+    CONSTRUCTION = json.loads((DATA_DIR / "construction_districts.json").read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    CONSTRUCTION = None
 DISTRICT_BY_NAME = {d["name"].lower(): d for d in DISTRICTS}
 LEZ = geo.load_features(DATA_DIR / "lez_illustrative.geojson")
 _point_district: dict[tuple[float, float], str | None] = {}
@@ -194,55 +204,6 @@ def _hhmm(t: str) -> str:
     return t[11:16]
 
 
-def _window(times: list[str], scores: list[float], now_idx: int, now: datetime) -> dict:
-    """First contiguous warning run that starts within 24 h of now (or is already active)."""
-    n = len(scores)
-    start = None
-    for i in range(now_idx, min(now_idx + 24, n)):
-        if label_for(scores[i]) == "warning":
-            start = i
-            break
-    horizon = scores[now_idx : now_idx + 24]
-    peak_i = now_idx + max(range(len(horizon)), key=lambda k: horizon[k]) if horizon else now_idx
-    base = {"peak_score": round(scores[peak_i], 1) if n else 0, "peak_time": times[peak_i] if n else None}
-    if start is None:
-        return {"active": False, **base, "message": "No inversion warning in the next 24 hours."}
-    end = start
-    while end + 1 < n and label_for(scores[end + 1]) == "warning":
-        end += 1
-    end_time = (datetime.strptime(times[end], "%Y-%m-%dT%H:%M") + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
-    start_dt = datetime.strptime(times[start], "%Y-%m-%dT%H:%M")
-    in_progress = start == now_idx
-    if in_progress:
-        msg = f"Inversion in progress until {_hhmm(end_time)}"
-    else:
-        same_day = start_dt.date() == now.date()
-        night = start_dt.hour >= 17 or start_dt.hour < 5
-        day = ("tonight" if night else "today") if same_day else ("tomorrow night" if night else "tomorrow")
-        msg = f"Inversion expected {day} {_hhmm(times[start])} to {_hhmm(end_time)}"
-    return {
-        "active": True,
-        "in_progress": in_progress,
-        "start": times[start],
-        "end": end_time,
-        "start_hhmm": _hhmm(times[start]),
-        "end_hhmm": _hhmm(end_time),
-        "hours": end - start + 1,
-        **base,
-        "message": msg,
-    }
-
-
-def _best_window(times: list[str], scores: list[float], now_idx: int) -> dict | None:
-    """Best daytime (10:00-18:00) two-hour slot in the next 24 h: lowest score."""
-    cands = [i for i in range(now_idx, min(now_idx + 24, len(scores) - 1)) if 10 <= int(times[i][11:13]) <= 17]
-    if not cands:
-        return None
-    i = min(cands, key=lambda k: scores[k] + scores[k + 1])
-    end = (datetime.strptime(times[i], "%Y-%m-%dT%H:%M") + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
-    return {"start": times[i], "end": end, "start_hhmm": _hhmm(times[i]), "end_hhmm": _hhmm(end)}
-
-
 async def build_forecast(scenario: str | None) -> dict:
     now = sofia_now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -323,6 +284,20 @@ async def build_forecast(scenario: str | None) -> dict:
     now_key = now.strftime("%Y-%m-%dT%H:00")
     now_idx = times.index(now_key) if now_key in times else 0
     worst = max(sources.values(), key=lambda s: SOURCE_RANK.get(s, 4))
+
+    # One PM2.5 level per hour from the learned model, shared by the banner, the chart, the advice and the street map.
+    try:
+        sensor_pm = [s["pm25"] for s in (await build_sensors(scenario))["sensors"]]
+    except HTTPException:
+        sensor_pm = []
+    pm_model = alert_mod.get_model()
+    levels, basis = alert_mod.city_levels(hours, now_idx, sensor_pm, pm_model)
+    band = alert_mod.level_band(hours, now_idx, sensor_pm, pm_model) if basis == "model" else None
+    for i, (h, v) in enumerate(zip(hours, levels)):
+        h["pm25_model"] = v
+        h["pm25_p10"], h["pm25_p90"] = (round(float(band[0][i]), 1), round(float(band[2][i]), 1)) if band is not None else (None, None)
+        h["level"] = alert_mod.level_for_pm(v) if v is not None else h["label"]
+    calibrated = bool(pm_model and pm_model.meta.get("calibrated"))
     return {
         "scenario": scenario,
         "source": worst,
@@ -330,10 +305,11 @@ async def build_forecast(scenario: str | None) -> dict:
         "generated_at": now.strftime("%Y-%m-%dT%H:%M"),
         "now_index": now_idx,
         "grid": {"lat": LAT, "lon": LON},
-        "alert": _window(times, scores, now_idx, now),
-        "best_window": _best_window(times, scores, now_idx),
+        "alert": alert_mod.build_alert(times, levels, scores, now_idx, now, basis, calibrated, band, alert_mod.alert_settings(pm_model)),
+        "best_window": alert_mod.best_window(times, levels if basis != "stagnation" else scores, now_idx),
+        "pm_basis": basis,
         "hours": hours,
-        "note": "Score is our own indicative proxy, not a validated model.",
+        "note": "PM2.5 is our learned city-level estimate; the stagnation score is an indicative proxy, not a validated model.",
     }
 
 
@@ -382,6 +358,68 @@ async def build_sensors_24h() -> list[dict]:
 
 
 
+async def current_conditions(scenario: str | None) -> dict:
+    """RH (%), temperature (deg C) and month at the current Sofia hour, for the sensor calibration. Missing values stay None
+    (the calibration then uses its training median and the sensors response says so)."""
+    now = sofia_now()
+    out = {"rh": None, "temp": None, "month": now.month}
+    try:
+        if scenario:
+            h = SCENARIO_HOURLY[scenario](now.replace(hour=0, minute=0, second=0, microsecond=0))
+        else:
+            weather, src = await cache.get("open_meteo_forecast", fetch_weather)
+            h = _rebase(weather["hourly"], now) if src == "fixture" else weather["hourly"]
+        i = h["time"].index(now.strftime("%Y-%m-%dT%H:00"))
+        out["rh"], out["temp"] = h.get("relative_humidity_2m", [None] * (i + 1))[i], h["temperature_2m"][i]
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def calibrate_records(recs: list[dict], cond: dict) -> tuple[list[dict], dict]:
+    """Raw Sensor.Community readings -> reference scale. Keeps the raw values as pm25_raw / pm10_raw. When no calibration file
+    exists the readings pass through unchanged and `calibrated` is False, so every screen can say the values are uncalibrated."""
+    cal25, cal10 = calibration_mod.get("pm25"), calibration_mod.get("pm10")
+    info = {"calibrated": cal25 is not None, "pm10_calibrated": cal10 is not None, "rh_used": cond.get("rh") is not None}
+    if not recs or (cal25 is None and cal10 is None):
+        return [{**r, "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs], info
+    args = (cond.get("rh"), cond.get("temp"), cond.get("month"))
+    pm25 = cal25.apply([r["pm25"] for r in recs], *args) if cal25 else [r["pm25"] for r in recs]
+    p10 = [r.get("pm10") for r in recs]
+    ok = [i for i, v in enumerate(p10) if v is not None]
+    if cal10 and ok:
+        cal = cal10.apply([p10[i] for i in ok], *args)
+        for i, v in zip(ok, cal):
+            p10[i] = round(float(v), 1)
+    return [{**r, "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10"), "pm25": round(float(a), 1), "pm10": b} for r, a, b in zip(recs, pm25, p10)], info
+
+
+def sensor_offset(r: dict) -> dict:
+    """At a sensor's own location both numbers are shown: its reading (`pm25`) and the reading with its persistent offset removed
+    (`pm25_adjusted`, what the street map extrapolates to other places). The offset mixes calibration error and real local pollution."""
+    p = krige_mod.get_params()
+    off = p.offsets.get(r["id"]) if p else None
+    if off is None:
+        return {"offset_known": False, "pm25_adjusted": r["pm25"]}
+    return {"offset_known": True, "offset_pct": round(100 * math.expm1(off)),
+            "pm25_adjusted": round(math.expm1(max(math.log1p(r["pm25"]) - off, 0.0)), 1)}
+
+
+async def build_airthings(scenario: str | None) -> tuple[list[dict], dict]:
+    """Sofia's AIRTHINGS pilot stations as extra sensors. Never raises: a missing or changed upstream just means none this time.
+    Their values come already calibrated by the project, so they skip calibrate_records (Sensor.Community's correction)."""
+    info = {"enabled": airthings.enabled(), "count": 0, "source": None, "attribution": airthings.ATTRIBUTION}
+    if not info["enabled"]:
+        return [], info
+    try:
+        recs, src = await cache.get("airthings", airthings.fetch_sensors, persist=False)  # memory only: the site states no licence
+    except Exception:  # noqa: BLE001
+        return [], {**info, "source": "unavailable"}
+    out = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"], "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs]
+    out = [{**r, "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in out]
+    return out, {**info, "count": len(out), "source": src}
+
+
 async def build_sensors(scenario: str | None) -> dict:
     try:
         recs, src = await cache.get("sensor_community", fetch_sensors)
@@ -389,10 +427,11 @@ async def build_sensors(scenario: str | None) -> dict:
         raise HTTPException(503, "Sensors unavailable and no fixture saved yet") from exc
     if src in ("live", "cache"):
         recs = sensors_mod.fresh_only(recs)
-    out = []
-    for r in recs:
-        pm25 = scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]
-        out.append({**r, "pm25": pm25, "district": district_at(r["lon"], r["lat"])})
+    raw = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]} for r in recs]
+    recs, cal = calibrate_records(raw, await current_conditions(scenario))
+    out = [{**r, "source": "sensor_community", "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in recs]
+    extra, at_info = await build_airthings(scenario)
+    out += extra
     vals = [r["pm25"] for r in out]
     return {
         "scenario": scenario,
@@ -400,7 +439,11 @@ async def build_sensors(scenario: str | None) -> dict:
         "source": src,
         "count": len(out),
         "median_pm25": round(statistics.median(vals), 1) if vals else None,
-        "label": "Citizen sensors (Sensor.Community). Low-cost sensors drift and read high in humid air.",
+        **cal,
+        "airthings": at_info,
+        "label": ("Citizen sensors (Sensor.Community), calibrated to the EEA reference-station scale (they read about half of it raw)."
+                  if cal["calibrated"] else "Citizen sensors (Sensor.Community), NOT calibrated: they read roughly half of reference stations.")
+                 + (f" Plus {at_info['count']} stations of Sofia's Airthings pilot network (hourly, already calibrated by the project)." if at_info["count"] else ""),
         "sensors": out,
     }
 
@@ -419,8 +462,9 @@ COLLOCATION_MIN_SENSORS = 3
 
 
 def sensor_check(stations: list[dict], citizen: list[dict]) -> dict:
-    """Do the citizen sensors near each reference station read like the reference? PM10 is the only particulate
-    the stations report (no PM2.5), so that is what can be compared. Indicative: stations are hourly, sensors are now."""
+    """Do the citizen sensors near each reference station read like the reference? PM10 is the only particulate the WAQI feed
+    carries (the EEA stream has PM2.5 too, see ml/calibrate.py), so that is what can be compared live. `ratio` uses calibrated
+    sensor values when a PM10 calibration exists, `ratio_raw` the raw ones. Indicative: stations are hourly, sensors are now."""
     from .cai.graph import to_xy
 
     rows = []
@@ -434,10 +478,16 @@ def sensor_check(stations: list[dict], citizen: list[dict]) -> dict:
         if len(near) < COLLOCATION_MIN_SENSORS:
             continue
         med = statistics.median(near)
-        rows.append({"station": st["name"], "n_sensors": len(near), "citizen_pm10": round(med, 1), "reference_pm10": st["pm10"],
-                     "ratio": round(med / st["pm10"], 2) if st["pm10"] else None})
+        raw = [c.get("pm10_raw") if c.get("pm10_raw") is not None else c["pm10"] for i, c in enumerate(citizen)
+               if c.get("pm10") is not None and ((cx[i] - sx) ** 2 + (cy[i] - sy) ** 2) ** 0.5 <= COLLOCATION_RADIUS_M]
+        rows.append({"station": st["name"], "n_sensors": len(near), "citizen_pm10": round(med, 1), "citizen_pm10_raw": round(statistics.median(raw), 1),
+                     "reference_pm10": st["pm10"], "ratio": round(med / st["pm10"], 2) if st["pm10"] else None,
+                     "ratio_raw": round(statistics.median(raw) / st["pm10"], 2) if st["pm10"] else None})
     ratios = [r["ratio"] for r in rows if r["ratio"] is not None]
-    out = {"radius_m": COLLOCATION_RADIUS_M, "rows": rows, "median_ratio": round(statistics.median(ratios), 2) if ratios else None}
+    raw_ratios = [r["ratio_raw"] for r in rows if r["ratio_raw"] is not None]
+    out = {"radius_m": COLLOCATION_RADIUS_M, "rows": rows, "median_ratio": round(statistics.median(ratios), 2) if ratios else None,
+           "median_ratio_raw": round(statistics.median(raw_ratios), 2) if raw_ratios else None,
+           "calibrated": bool(calibration_mod.get("pm10"))}
     if ratios:
         m = out["median_ratio"]
         out["verdict"] = ("Citizen sensors read about the same as the reference stations" if 0.8 <= m <= 1.25
@@ -450,7 +500,7 @@ def sensor_check(stations: list[dict], citizen: list[dict]) -> dict:
 async def api_reference(scenario: str | None = ScenarioQ):
     """Municipal reference stations (PM10, NO2, O3) and how the citizen sensors compare. Live data only."""
     base = {"attribution": waqi.ATTRIBUTION, "pm25_available": False,
-            "note": "These stations report PM10, NO2, O3 and CO but not PM2.5, so they cannot calibrate the PM2.5 model directly."}
+            "note": "This live feed (WAQI) carries PM10, NO2, O3 and CO but not PM2.5. The PM2.5 calibration uses the EEA stream instead (Hipodruma, hourly)."}
     if Scenario(scenario):
         return {**base, "enabled": False, "reason": "Demo scenario: reference stations are real, so they are hidden.", "stations": []}
     if not waqi.enabled():
@@ -460,10 +510,17 @@ async def api_reference(scenario: str | None = ScenarioQ):
     except Exception as exc:  # noqa: BLE001
         return {**base, "enabled": False, "reason": f"Reference stations unavailable ({type(exc).__name__}).", "stations": []}
     try:
-        citizen = (await build_sensors(None))["sensors"]
+        # the check is about Sensor.Community specifically (the Airthings stations are not "citizen sensors")
+        citizen = [r for r in (await build_sensors(None))["sensors"] if r.get("source") != "airthings"]
     except HTTPException:
         citizen = []
     return {**base, "enabled": True, "source": src, "stations": stations, "sensor_check": sensor_check(stations, citizen)}
+
+
+@app.get("/api/google-air")
+async def api_google_air():
+    """Google Air Quality (current + 48 h) and Pollen (5 days) for central Sofia: an independent cross-check of our own estimate."""
+    return await google_air.get()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -473,6 +530,22 @@ async def api_reference(scenario: str | None = ScenarioQ):
 
 def _district_scores(fc: dict, factor: float) -> list[float]:
     return [clamp(h["score"] * factor, 0, 100) for h in fc["hours"]]
+
+
+def district_alert(fc: dict, sens: dict, name: str) -> dict:
+    """The banner's alert recomputed for one district: the city forecast moved by the district's sensors (see alert.district_forecast)."""
+    from .cai import krige
+    p = krige.get_params()
+    lr, n = alert_mod.district_log_ratios(sens["sensors"]).get(name, (0.0, 0))
+    series, band = alert_mod.district_forecast(fc, lr, p.rho_at if p else None)
+    base = fc["alert"]
+    if base["basis"] != "model":
+        return {**base, "district_sensors": n}
+    times, scores = [h["time"] for h in fc["hours"]], [h["score"] for h in fc["hours"]]
+    pm_model = alert_mod.get_model()
+    a = alert_mod.build_alert(times, series, scores, fc["now_index"], datetime.strptime(fc["generated_at"], "%Y-%m-%dT%H:%M"), "model",
+                              base["scale"] == "reference", band, alert_mod.alert_settings(pm_model))
+    return {**a, "district_sensors": n}
 
 
 @app.get("/api/districts")
@@ -490,6 +563,7 @@ async def api_districts(scenario: str | None = ScenarioQ, hour: int | None = Non
         nxt = series[fc["now_index"] : fc["now_index"] + 24]
         peak = max(nxt) if nxt else series[idx]
         vals = per.get(d["name"], [])
+        da = district_alert(fc, sens, d["name"])
         feats.append(
             {
                 "type": "Feature",
@@ -501,6 +575,8 @@ async def api_districts(scenario: str | None = ScenarioQ, hour: int | None = Non
                     "peak_24h_label": label_for(peak),
                     "sensor_count": len(vals),
                     "median_pm25": round(statistics.median(vals), 1) if vals else None,
+                    # the PM2.5 view: city forecast moved by this district's sensors; `label` above stays the stagnation index shading
+                    "level_pm": da["level"], "p_episode": da["probability"], "peak_pm25": da.get("peak_pm25"),
                     "centroid": list(d["centroid"]),
                 },
                 "geometry": d["geometry"],
@@ -513,7 +589,7 @@ async def api_districts(scenario: str | None = ScenarioQ, hour: int | None = Non
             "hour_index": idx,
             "scenario": sc,
             "source": fc["source"],
-            "note": "District shading is indicative: city-wide score times an elevation factor.",
+            "note": "District shading is indicative: city-wide score times an elevation factor. level_pm / p_episode are the PM2.5 alert for the district.",
         },
         "features": feats,
     }
@@ -535,16 +611,17 @@ async def api_advice(
 ):
     sc = Scenario(scenario)
     d = get_district(district)
-    fc = await build_forecast(sc)
-    times = [h["time"] for h in fc["hours"]]
-    series = _district_scores(fc, d["factor"])
+    fc, sens = await asyncio.gather(build_forecast(sc), build_sensors(sc))
+    series = _district_scores(fc, d["factor"])  # stagnation score scaled by the district's elevation factor: supporting context
     ni = fc["now_index"]
-    alert = _window(times, series, ni, datetime.strptime(fc["generated_at"], "%Y-%m-%dT%H:%M"))
-    best = _best_window(times, series, ni)
+    alert = district_alert(fc, sens, d["name"])  # the banner's alert, moved to this district by its sensors
+    best = fc["best_window"]
     peak = max(series[ni : ni + 24]) if series else 0
-    level = label_for(peak)
+    level = alert["level"]
     zone = zone_for(d)
-    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], series[ni : ni + 24], "pollen_allergy" in toggles)
+    # the exercise-slot picker mixes PM2.5 with heat and pollen penalties on the score scale (see C.PM_TO_SCORE)
+    penalty = [h["pm25_model"] * C.PM_TO_SCORE if h.get("pm25_model") is not None else x for h, x in zip(fc["hours"], series)]
+    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], penalty[ni : ni + 24], "pollen_allergy" in toggles)
     return {
         "profile": profile,
         "toggles": sorted(set(toggles)),
@@ -554,12 +631,14 @@ async def api_advice(
             "level": level,
             "current_score": round(series[ni], 1),
             "peak_score": round(peak, 1),
+            "peak_pm25": alert.get("peak_pm25"),
             "alert": alert,
             "best_window": best,
         },
         "zone": zone,
         "conditions": cond,
-        "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone, cond, toggles),
+        "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone,
+                                           {**cond, "construction": advice_mod.construction_context(CONSTRUCTION, d["name"])}, toggles),
         "grant_note": advice_mod.GRANT_NOTE,
     }
 
@@ -661,13 +740,14 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
     for d in DISTRICTS:
         series = _district_scores(fc, d["factor"])
         peak = max(series[ni : ni + 24]) if series else 0
+        da = district_alert(fc, sens, d["name"])
         seed, real = _lead_counts(d["name"])
         leads = seed + real
         rows.append(
             {
                 "district": d["name"],
                 "peak_24h": round(peak, 1),
-                "level": label_for(peak),
+                "level": da["level"], "p_episode": da["probability"],  # the district's PM2.5 alert; districts are ranked by score x leads
                 "leads": leads,
                 "sample_leads": seed,
                 "submitted_leads": real,
@@ -709,7 +789,7 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
 from .cai_api import make_router  # noqa: E402
 
 def refresh_forecast_sources():
-    cache.expire(("open_meteo_forecast", "open_meteo_air_quality", "sensor_community", "sensor_community_24h", "waqi_stations"))
+    cache.expire(("open_meteo_forecast", "open_meteo_air_quality", "sensor_community", "sensor_community_24h", "waqi_stations", "airthings"))
 
 
 cai_router = make_router(build_forecast, build_sensors, Scenario, ScenarioQ, build_sensors_24h, district_at,

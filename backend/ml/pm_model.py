@@ -21,22 +21,26 @@ from ..cai.graph import DATA
 
 MODEL_PATH = DATA / "pm_model.joblib"
 
-STATIC_COLS = ["T", "G", "canopy", "ndvi", "lst_anom", "elev", "rel_elev"]
+STATIC_COLS = ["G", "canopy", "ndvi", "lst_anom", "elev", "rel_elev"]  # no traffic: OSM road-class weights were an assumption
 HOUR_COLS = ["cams25", "cams10", "blh", "wind10", "wind925", "t2m", "inversion", "cloud", "rh", "radiation",
              "stagnation", "hour", "weekend"]
 NOW_COLS = ["lead", "city_med", "cams_issue", "city_ratio"]
 LEVEL_FEATURES = HOUR_COLS + NOW_COLS
 FEATURES = STATIC_COLS + LEVEL_FEATURES  # layout of the training table
-SPATIAL_COLS = ["T", "elev"]  # the only street features that survived held-out-sensor testing
+SPATIAL_COLS = ["elev"]  # the only street feature that survived held-out-sensor testing (traffic was dropped as an assumed quantity)
 MAX_LEAD_H = 47
-FORMAT = 2  # bump when the saved layout changes; older model files are then ignored
+FORMAT = 5  # bump when the saved layout changes; older model files are then ignored (3: targets on the calibrated scale, 4: quantile level, 5: no traffic column)
+LEAD_EDGES = (5, 23)  # lead buckets for the conformal interval widening: 0-5 h, 6-23 h, 24-47 h
+LEVEL_SPLIT = 15.0  # ... times two level classes: p50 below / at-or-above this (ug/m3)
+N_BUCKETS = 6
+Z80 = 1.2815515655446004
 DEV_CLIP = 0.7  # |log street deviation| cap (about x2 / x0.5)
 S_IDX = HOUR_COLS.index("stagnation")
 
 
 def static_matrix(feats, sf: dict | None = None) -> np.ndarray:
     """(n, len(STATIC_COLS)) from a Features object (all edges) or from `feats.at(...)` output `sf` (points)."""
-    d = sf if sf is not None else {"T": feats.T, "G": feats.G, "canopy": feats.canopy, "ndvi": feats.ndvi, "lst": feats.lst,
+    d = sf if sf is not None else {"G": feats.G, "canopy": feats.canopy, "ndvi": feats.ndvi, "lst": feats.lst,
                                   "elev": feats.elev, "rel_elev": feats.rel_elev}
     lst_anom = d["lst"] - (feats.median_lst if feats.median_lst is not None else np.nan)
     cols = {**d, "lst_anom": lst_anom}
@@ -72,21 +76,48 @@ def anchor(cams: float, city_med: float):
 
 
 def spatial_design(static: np.ndarray, stagnation: float, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
-    """(n, 4): z(log1p T), z(elev), and both times S/100 (S = stagnation score; NaN/missing terrain counts as typical)."""
+    """(n, 2): z(elev) and z(elev) times S/100 (S = stagnation score; NaN/missing terrain counts as typical)."""
     cols = [STATIC_COLS.index(c) for c in SPATIAL_COLS]
     raw = static[:, cols].astype("float64").copy()
-    raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
     z = np.nan_to_num((raw - mean) / std)
     sf = (stagnation / 100.0) if np.isfinite(stagnation) else 0.0
     return np.column_stack([z, z * sf])
 
 
+def interval_bucket(lead, level50) -> np.ndarray:
+    """Which conformal correction applies: lead bucket (0-5, 6-23, 24+ h) x level class (below / above LEVEL_SPLIT)."""
+    lb = np.digitize(np.asarray(lead, dtype=float), LEAD_EDGES, right=True)
+    return 2 * lb + (np.asarray(level50) >= LEVEL_SPLIT).astype(int)
+
+
 @dataclass
 class PmModel:
-    """Level estimator + spatial coefficients + the metadata the API shows next to them."""
+    """Level estimators + spatial coefficients + the metadata the API shows next to them.
+
+    `level` is the median (p50) model of the log ratio to the anchor. `q_lo`/`q_hi` are the p10/p90 models; `conf_lo`/`conf_hi` widen
+    them per bucket so that, on out-of-fold hours, 10 % of readings fall below the p10 and 10 % above the p90 (split-conformal)."""
     level: object
-    spatial: dict  # mean, std (of SPATIAL_COLS over sensors), coef (4)
+    spatial: dict  # mean, std (of SPATIAL_COLS over sensors), coef (2 per spatial column: main effect and times S/100)
     meta: dict = field(default_factory=dict)
+    q_lo: object = None
+    q_hi: object = None
+    conf_lo: np.ndarray = None  # (N_BUCKETS,) log-ratio units
+    conf_hi: np.ndarray = None
+    corr: float = 0.9  # correlation of the level error between hours of one window (back-test); used by the alert probability
+
+    def level_quantiles(self, hour_vecs, now_vecs) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(u_lo, u_50, u_hi): log1p of the city PM2.5 at p10 / p50 / p90 for each (hour, nowcast) row. Without the quantile models
+        the interval collapses to the median (callers then treat the level as exact)."""
+        hv, nv = np.atleast_2d(np.asarray(hour_vecs, dtype=float)), np.atleast_2d(np.asarray(now_vecs, dtype=float))
+        X = np.hstack([hv, nv]).astype("float32")
+        base = np.log1p([anchor(h[0], n[1]) for h, n in zip(hv, nv)])
+        f50 = self.level.predict(X)
+        u50 = base + f50
+        if self.q_lo is None or self.q_hi is None or self.conf_lo is None:
+            return u50, u50, u50
+        b = interval_bucket(nv[:, 0], np.expm1(u50))
+        lo, hi = base + self.q_lo.predict(X) - self.conf_lo[b], base + self.q_hi.predict(X) + self.conf_hi[b]
+        return np.minimum(lo, u50), u50, np.maximum(hi, u50)
 
     def level_pm(self, hour_vec: list[float], now_vec: list[float]) -> float:
         x = np.asarray([hour_vec + now_vec], dtype="float32")
@@ -97,9 +128,10 @@ class PmModel:
         return np.clip(d @ np.asarray(self.spatial["coef"]), -DEV_CLIP, DEV_CLIP)
 
     def predict(self, static: np.ndarray, hour_vec: list[float], now_vec: list[float]) -> np.ndarray:
-        """PM2.5 (ug/m3) for every row of `static` at one hour."""
+        """PM2.5 (ug/m3) for every row of `static` at one hour. The street deviation is a log1p difference (that is how it is fitted),
+        so it is applied in log1p space: the kriged sensor residuals (backend/cai/krige.py) live in the same space."""
         lvl = self.level_pm(hour_vec, now_vec)
-        return (lvl * np.exp(self.spatial_dev(static, hour_vec[S_IDX]))).astype("float32")
+        return np.expm1(np.log1p(lvl) + self.spatial_dev(static, hour_vec[S_IDX])).clip(0).astype("float32")
 
     @classmethod
     def load(cls, path: Path = MODEL_PATH) -> "PmModel | None":
@@ -109,8 +141,18 @@ class PmModel:
         blob = joblib.load(path)
         if blob.get("format") != FORMAT or blob.get("features") != LEVEL_FEATURES:
             return None  # trained against another layout; fall back to the physics model
-        return cls(blob["level"], blob["spatial"], blob["meta"])
+        meta = blob["meta"]
+        if meta.get("calibrated"):
+            # The model's inputs (live city median) and targets are on the calibrated scale. If the calibration is missing or
+            # has changed since training, its numbers would be silently wrong by a factor of ~2, so do not use it.
+            from . import calibration
+            cal = calibration.get("pm25")
+            if cal is None or cal.coef != meta.get("calibration_coef"):
+                return None
+        return cls(blob["level"], blob["spatial"], meta, blob.get("q_lo"), blob.get("q_hi"), blob.get("conf_lo"), blob.get("conf_hi"),
+                   float(blob.get("corr", 0.9)))
 
     def save(self, path: Path = MODEL_PATH) -> None:
         import joblib
-        joblib.dump({"format": FORMAT, "level": self.level, "spatial": self.spatial, "meta": self.meta, "features": LEVEL_FEATURES}, path, compress=3)
+        joblib.dump({"format": FORMAT, "level": self.level, "spatial": self.spatial, "meta": self.meta, "features": LEVEL_FEATURES,
+                     "q_lo": self.q_lo, "q_hi": self.q_hi, "conf_lo": self.conf_lo, "conf_hi": self.conf_hi, "corr": self.corr}, path, compress=3)

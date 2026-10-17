@@ -15,6 +15,11 @@ USE_ML = True
 # (the network tab runs one 400-route computation per hour), so this trades reach against load time.
 WINDOW_HOURS = 48
 
+# How the live sensors correct the learned model street by street: "krige" = regression kriging in log space with per-sensor offsets
+# removed and an uncertainty per street (backend/cai/krige.py, data/spatial.joblib); "idw" = the older inverse-distance mean of the
+# raw residuals, kept for comparison and as the fallback when the spatial file is missing.
+SPATIAL_METHOD = "krige"
+
 # --- 1. regional level: CAMS bias-corrected by live sensors, then IDW residual ---------------------
 BIAS_MIN, BIAS_MAX = 0.5, 2.0
 CAMS_FLOOR = 2.0  # ug/m3; avoid dividing by a near-zero model value
@@ -27,7 +32,11 @@ IDW_SHRINK_M = 200.0
 # "background" = sensor - B (literal PLAN2 wording). Chosen by leave-one-out validation.
 RESIDUAL_AGAINST = "model"
 
-# --- 2. traffic: OSM class weights (relative, tunable) with exp(-d/40 m) decay out to 150 m ------------
+# --- 2. traffic: NOT modelled ---------------------------------------------------------------------------------------
+# The PM2.5 estimate has no traffic term. OSM road-class weights, a hand-set rush-hour curve and a traffic gain were assumptions that did
+# not improve predictions at held-out sensors, so they were removed. Measured traffic (Google Routes, TomTom; backend/traffic.py) is shown
+# as observed data. W_CLASS below only decides which OSM classes the baker samples as drivable roads (data prep); nothing reads it at
+# serving time.
 W_CLASS = {
     "motorway": 12.0, "motorway_link": 12.0, "trunk": 12.0, "trunk_link": 12.0,
     "primary": 9.0, "primary_link": 9.0,
@@ -39,18 +48,7 @@ W_CLASS = {
     "living_street": 0.3, "pedestrian": 0.3, "footway": 0.3, "path": 0.3, "cycleway": 0.3,
 }
 DRIVABLE = {k for k, v in W_CLASS.items() if v >= 1.0}
-# Global scale on the traffic increment. PLAN2 weights (gain 1.0) overshot absolute PM2.5 on a clean autumn day
-# (24 h-mean leave-one-out median error 3.3 vs 1.7 ug/m3 for a constant). Halved; see /api/validation sensitivity.
-TRAFFIC_GAIN = 0.5
-TRAFFIC_DECAY_M = 40.0
-TRAFFIC_RADIUS_M = 150.0
-TRAFFIC_SPACING_M = 5.0  # road is sampled every 5 m; each sample carries w_class * spacing / 100 m
-TRAFFIC_GRID_M = 25.0
-
-# 24-value hour-of-day curve (index = local hour). Night 0.4, peaks 1.0 at 7-9 and 17-19.
-RUSH = [0.4, 0.4, 0.4, 0.4, 0.45, 0.6, 0.8, 1.0, 1.0, 1.0, 0.8, 0.7,
-        0.7, 0.7, 0.75, 0.85, 0.95, 1.0, 1.0, 1.0, 0.8, 0.65, 0.5, 0.4]
-WEEKEND_FACTOR = 0.75
+TRAFFIC_SPACING_M = 5.0  # baking only: road sample spacing
 
 # --- 3. ventilation amplifier from the v1 stagnation score S (0..100) ----------------------------------
 VENT_GAIN = 1.0  # A(t) = 1 + VENT_GAIN * S / 100
@@ -65,6 +63,18 @@ NDVI_LOW, NDVI_HIGH = 0.2, 0.8  # NDVI mapped to 0..1 between these
 HEAT_RANGE_K = 8.0
 HEAT_GATE_FROM_C, HEAT_GATE_RANGE_C = 26.0, 8.0  # apparent temperature
 HEAT_MAX_SHARE = 0.5  # at most half the cost can come from heat
+
+# --- alert thresholds on the city-level PM2.5 (what the banner, chart and advice use) --------------------------------
+# 15 = WHO 24 h guideline, 25 = EU 24 h limit (the same anchors as AIR_PM below), 50 = level at which even healthy people should cut
+# exertion (EAQI "poor" starts at 50 for hourly PM2.5). Applied to hourly values, so they are a screening cut, not a compliance test.
+PM_WATCH, PM_WARNING, PM_EVERYONE = 15.0, 25.0, 50.0
+ALERT_MIN_HOURS = 3  # the banner turns red only when the level stays at or above PM_WARNING this many hours in a row
+# Probabilistic alert (backend/ml/backtest.py writes the fitted values into the model file; these are the fallbacks):
+ALERT_P = 0.7  # red when P(>= PM_WARNING for ALERT_MIN_HOURS in a row, next 24 h) reaches this: maximises Peirce skill on heating season 2024/25
+ALERT_P_WATCH = 0.2  # amber ("episode possible") from here. A policy choice (a 1-in-5 chance is worth a heads-up), not fitted
+ALERT_PHI = 0.88  # lag-1 correlation of the level error between consecutive hours (back-test)
+# Maps PM2.5 onto the 0-100 stagnation-score scale for code that still mixes the two (the exercise-slot picker): PM_WARNING == 60.
+PM_TO_SCORE = 60.0 / PM_WARNING
 
 # --- 7. outputs ------------------------------------------------------------------------------------------
 # PM2.5 (ug/m3) -> air score (100 clean .. 0 worst), piecewise linear through health anchors rather than one straight line to 60:

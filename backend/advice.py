@@ -118,6 +118,14 @@ def conditions(hours: list[dict], scores: list[float], pollen_allergy: bool = Fa
     }
 
 
+def construction_context(data: dict | None, district: str) -> dict | None:
+    """Construction dust context for a district, or None when the data is missing or the district is not among the busiest third."""
+    row = (data or {}).get("districts", {}).get(district)
+    if not row or row["share_pct"] < data["high_from_pct"] or row["n_sites"] < 10:
+        return None
+    return {"share_pct": row["share_pct"], "n_sites": row["n_sites"]}
+
+
 def _profile_cards(profile: str, level: str, alert: dict | None, best: dict | None, zone: dict) -> list[dict]:
     """level: good | watch | warning for the chosen district over the next 24 h."""
     risky = level in ("watch", "warning")
@@ -326,6 +334,24 @@ def _personal_cards(
                 if pollen["available"]
                 else "The pollen feed returned nothing for Sofia. It only covers the pollen season.",
                 "measure": _measure("A.3.4"),
+                "severity": "info",
+            }
+        )
+
+    # --- construction dust: context for sensitive users in the busiest districts. Not modelled in the air score.
+    cons = cond.get("construction")
+    if cons and (asthma or carer):
+        cards.append(
+            {
+                "id": "construction_dust",
+                "title": "Many building sites in your district",
+                "body": (
+                    f"About {cons['n_sites']} sites are mapped as under construction ({cons['share_pct']:.1f}% of the district area). "
+                    "Building dust is mostly coarse particles that the PM2.5 map does not capture. On dry, windy days keep walks and play "
+                    "away from open sites and unpaved ground, and keep windows facing a site closed. "
+                    "Sites come from OpenStreetMap, are not dated and some may be finished."
+                ),
+                "measure": None,
                 "severity": "info",
             }
         )
