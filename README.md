@@ -92,16 +92,16 @@ interesting case shows even in October. In demo mode sensor values are simulated
 
 ```
 Open-Meteo forecast + CAMS PM2.5 ──► stagnation score S(t) (v1, per hour, city-wide)
-Sensor.Community ──► bias + IDW residual                                  \
-OSM roads (class weights, exp(-d/40 m) out to 150 m) ──► traffic T(e)       > PM(e,t) ──► CAI(e,t) ──► map, router, network
+Sensor.Community ──► bias + local residual                               \
+Copernicus DEM ──► terrain                                                  > PM(e,t) ──► CAI(e,t) ──► map, router, network
 Sentinel-2 NDVI + OSM canopy ──► greenery G(e);  Landsat LST ──► heat H(e) /
+Google Routes + TomTom ──► observed traffic (map and street popover only, NOT an input to PM)
 ```
 
 ```
 B(t)   = CAMS_pm25(t) * bias,  bias = median(sensors)/CAMS now, clamped 0.5..2
 R(e,t) = IDW residual of sensors vs the model (k=4, 1.5 km, shrunk toward 0)
-A(t)   = 1 + S(t)/100                       # the v1 stagnation score amplifies local sources
-PM     = B + R + gain * T * rush(t) * A * (1 - 0.30 * G)
+PM     = B + R                              # (learned model when available). No traffic term: see docs/TRAFFIC.md
 g(t)   = 0.5 * clamp((apparent_temp-26)/8) * daylight        # heat only when hot and sunny; 0 in winter
 cost_burden = (1-g) * clamp(PM/60) + g * H        CAI = round(100 * (1 - cost_burden))     # 100 = cleanest, coolest
 ```
@@ -131,10 +131,10 @@ All weights and caps are in [`backend/cai/config.py`](backend/cai/config.py); th
 | 24 h mean | 271 | **0.00** | 3.23 µg/m³ | 1.70 µg/m³ |
 
 **The street-level pattern is not confirmed by the data on this day**: rank correlation is about zero and the model is no better than
-guessing the median level. The signs of the individual terms are as expected (traffic +, heat +, greenery −) but tiny (|ρ| ≤ 0.13, n = 273).
-Sensor noise (±2 µg/m³) is as large as the signal at these concentrations. A polluted winter day with real traffic contrast would be a fairer
-test; none was available. Two parameters were set from this validation and both are one-line config changes: `TRAFFIC_GAIN` was halved to 0.5
-(plan weights overshot absolute PM2.5: 24 h median error 3.3 vs 1.7), and `IDW_SHRINK_M` is 200 m (picked by leave-one-out; differences were small).
+guessing the median level. The terms that remained were tiny (|ρ| ≤ 0.13, n = 273).
+Sensor noise (±2 µg/m³) is as large as the signal at these concentrations. The assumed traffic term (OSM road-class weights, a hand-set rush curve and a
+gain) never improved on this test and has been removed; measured traffic is shown on the map but is not used in the PM2.5 number (docs/TRAFFIC.md).
+`IDW_SHRINK_M` is 200 m (picked by leave-one-out; differences were small).
 
 ## Data
 
@@ -143,6 +143,7 @@ test; none was available. Two parameters were set from this validation and both 
 | Forecast, CAMS PM | Open-Meteo (keyless) | cached 10 min, saved to `backend/fixtures/`, timestamps rebased to today when offline |
 | Reference stations | Sofia Municipality via aqicn.org/WAQI API (`WAQI_TOKEN`, optional) | 6 live stations: PM10, NO2, O3, CO, **no PM2.5**. In-memory only (their terms forbid archiving), never in fixtures. Attribution shown on screen. |
 | Sensors | Sensor.Community (keyless) | outdoor, valid PM2.5 < 500, last 30 min; 24 h means used for validation |
+| Sensors (extra) | Sofia's **Airthings pilot network** (Interreg Balkan-Mediterranean), via the anonymous endpoints of its public map, `platform.airthings-project.com` | ~19 outdoor stations in Sofia, hourly PM2.5/PM10 already calibrated by the project, so they skip our Sensor.Community calibration. Merged into `/api/sensors` with `source: "airthings"`; shown as blue-ringed dots. **The site states no licence**: data is held in memory only (never in fixtures), two requests per refresh with an identifying User-Agent, credit shown on screen. The endpoints are undocumented and may change; any failure just means no Airthings sensors. They have no per-sensor history yet, so the spatial model treats them as new sensors (offset 0, full offset uncertainty). Switch off with `AIRTHINGS_DISABLED=1`. Ask the project/municipality for a documented feed and permission before relying on it. |
 | Walking graph, roads | OSM via osmnx | `make graph roads bake`; GraphML (112 MB) is git-ignored, `data/net.npz` (11 MB) is committed |
 | NDVI | Sentinel-2 L2A via Planetary Computer | `make ndvi`, 40 m overview, median of ≤5 scenes per tile |
 | LST | Landsat 8/9 C2 L2 `lwir11` | `make lst`, scale/offset read from asset metadata (0.00341802 / 149.0), QA-masked |
@@ -181,7 +182,7 @@ returns the full upstream series, used internally for daily validation and exist
 * **Better greenery did not improve the validation.** After switching to the tree inventory the leave-one-out result is unchanged (ρ ≈ 0): the limit is sensor noise at ~5 µg/m³, not the greenery input.
 * **Heat map = surface temperature**, a summer satellite snapshot, not live and not air temperature. Cyclist exposure assumes a 2× breathing rate.
 
-* The CAI is a **screening model with assumed weights** (traffic class weights, rush curve, 30 % greenery cap). It is not validated (see above).
+* The CAI is a **screening model**. Traffic is not modelled (observed only, see docs/TRAFFIC.md); the remaining assumed constants are the health anchors and the heat gate. It is not validated (see above).
 * Plan-spec `clamp(PM/60)` **saturates** whenever background PM2.5 exceeds 60 µg/m³ (every street gets CAI ≈ 0). The map keeps the spec but offers a
   *Relative* view (5th-95th percentile stretch); routing uses the unclamped burden. In a heavy inversion the street choice changes a cross-city
   walk's exposure by only about 5 % for ≈5 % more time; the background dominates.

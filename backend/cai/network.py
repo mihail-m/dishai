@@ -19,14 +19,19 @@ MEASURES = {
 }
 
 
-def measures_for(group: str, traffic: float, green: float, cai: float) -> list[dict]:
-    """Thresholds sit relative to the city: traffic term median 3.2 / p90 11.4, greenery median 0.18 / p10 0.01."""
+ROAD_HIERARCHY = ("motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link",
+                  "tertiary", "tertiary_link", "unclassified", "residential", "service", "living_street", "pedestrian", "footway", "path", "cycleway")
+
+
+def measures_for(group: str, road_class: str, green: float, cai: float) -> list[dict]:
+    """Thresholds sit relative to the city: greenery median 0.18 / p10 0.01. Traffic enters only through the OSM road class (a fact about
+    the street, not a modelled traffic volume)."""
     out = []
-    if traffic >= 10:
-        out.append(("C.1.1", f"very heavy traffic term ({traffic:.0f}, top ~10 % of streets): restrict the dirtiest vehicles"))
-        out.append(("A.4.7", "road dust and resuspension on a high-traffic street"))
-    elif traffic >= 4:
-        out.append(("A.4.7", f"moderate traffic term ({traffic:.0f}): wash or sweep during dry spells"))
+    if group == "major":
+        out.append(("C.1.1", f"major road ({road_class}): restrict the dirtiest vehicles"))
+        out.append(("A.4.7", "road dust and resuspension on a major road"))
+    elif group == "collector":
+        out.append(("A.4.7", f"collector road ({road_class}): wash or sweep during dry spells"))
     if green < 0.12:
         out.append(("A.4.4", f"almost no tree cover (greenery {green:.2f}): plant and protect trees"))
         if group in ("major", "collector"):
@@ -117,19 +122,19 @@ def compute_network(net: Net, router: Router, cb: np.ndarray, pm: np.ndarray, ca
             hw_len[int(code)] = hw_len.get(int(code), 0.0) + float(ln)
         # heaviest road class that makes up >= 15 % of the street's length (sidewalks share the street's name)
         total_len = sum(hw_len.values())
-        big = [c for c, l in hw_len.items() if l >= 0.15 * total_len and net.hw_names[c] in C.W_CLASS]
-        hw = net.hw_names[max(big or hw_len, key=lambda c: C.W_CLASS.get(net.hw_names[c], 0.0))]
+        rank = {h: len(ROAD_HIERARCHY) - k for k, h in enumerate(ROAD_HIERARCHY)}  # OSM road hierarchy, major first
+        big = [c for c, l in hw_len.items() if l >= 0.15 * total_len and net.hw_names[c] in rank]
+        hw = net.hw_names[max(big or hw_len, key=lambda c: rank.get(net.hw_names[c], 0))]
         length = float(net.e_len[rep[segs]].sum())
         mean_cai = float(np.average(seg_cai[segs], weights=net.e_len[rep[segs]]))
         green = float(np.average(feats.G[rep[segs]], weights=net.e_len[rep[segs]]))
-        traffic = float(np.average(feats.T[rep[segs]], weights=net.e_len[rep[segs]]))
         chokepoints.append({
             "street": net.names[nm], "road_class": hw, "score": round(tot, 1),
             "max_fast_usage": int(use_fast[segs].max()), "mean_cai": round(mean_cai, 1),
             "length_m": round(length), "lon": round(cx, 5), "lat": round(cy, 5),
             "segments": [[[round(float(a), 5), round(float(b), 5)] for a, b in net.geometry(int(r))] for r in reps[:12]],
-            "traffic_term": round(traffic, 2), "greenery": round(green, 2),
-            "measures": measures_for(road_group(hw), traffic, green, mean_cai),
+            "greenery": round(green, 2),
+            "measures": measures_for(road_group(hw), hw, green, mean_cai),
         })
     chokepoints.sort(key=lambda c: -c["score"])
     chokepoints = chokepoints[: C.CHOKEPOINT_POOL]

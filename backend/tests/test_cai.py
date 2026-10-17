@@ -12,14 +12,15 @@ from backend.cai import config as C
 from backend.cai.features import compute_features
 from backend.cai.graph import get_net
 from backend.cai.routing import Router, RouteError, douglas_peucker
-from backend.cai.score import CaiModel, HourCtx, bias_factor, hour_contexts, idw_residual, predict_pm, rush_factor, shield
+from backend.cai.graph import to_xy
+from backend.cai.score import CaiModel, HourCtx, air_score, bias_factor, hour_contexts, idw_residual, predict_pm, route_burden, shield
 
 
 # ---- pure functions ----------------------------------------------------------------------------------
-def test_rush_curve_shape():
-    assert len(C.RUSH) == 24
-    assert rush_factor(8, False) == 1.0 and rush_factor(18, False) == 1.0 and rush_factor(2, False) == 0.4
-    assert rush_factor(8, True) == pytest.approx(0.75)
+def test_no_assumed_traffic_constants_remain():
+    """The hand-set rush curve, weekend factor and traffic gain were assumptions; they must not come back as inputs."""
+    for name in ("RUSH", "WEEKEND_FACTOR", "TRAFFIC_GAIN", "RUSH_FLOOR"):
+        assert not hasattr(C, name), name
 
 
 def test_bias_correction():
@@ -62,11 +63,9 @@ def test_amplifier_and_heat_gate():
     assert ctx(apparent=30, daylight=1).g == pytest.approx(0.5 * 0.5)
 
 
-def test_pm_formula_and_greenery_cap():
-    T, G = np.array([10.0]), np.array([1.0])
-    pm = predict_pm(T, G, ctx(stagnation=100, hour=8), B=5.0, R=np.array([1.0]))
-    expected = 5.0 + 1.0 + C.TRAFFIC_GAIN * 10.0 * 1.0 * 2.0 * (1 - C.GREEN_CAP)
-    assert pm[0] == pytest.approx(expected)
+def test_pm_formula_has_no_traffic_term():
+    pm = predict_pm(5.0, np.array([1.0, -0.5]))
+    assert pm.tolist() == [6.0, 4.5]  # background + local sensor correction, nothing else
     assert shield(np.array([0.0]))[0] == 1.0 and shield(np.array([1.0]))[0] == pytest.approx(0.7)
 
 
@@ -76,6 +75,32 @@ def test_dp_simplify():
     out = douglas_peucker(line, 8)
     assert len(out) <= 8 and (out[0] == line[0]).all() and (out[-1] == line[-1]).all()
     assert len(douglas_peucker(line[:5], 8)) == 5
+
+
+class FieldModel:
+    """An engine whose PM2.5 follows a known spatial pattern (dirty centre plus dirty and clean pockets) at the real model's level. Routing and the network
+    view are tested on this because, with no assumed traffic term, the physics fallback is spatially flat apart from point corrections."""
+
+    def __init__(self, base: CaiModel):
+        self.base, self.net = base, base.net
+        cx, cy = to_xy(23.32, 42.69)
+        self.d = np.hypot(base.net.mid_xy[:, 0] - float(cx), base.net.mid_xy[:, 1] - float(cy))
+
+    def hour(self, i: int) -> dict:
+        h = dict(self.base.hour(i))
+        ctx, H = h["ctx"], self.base.feats.H
+        x, y = self.net.mid_xy[:, 0], self.net.mid_xy[:, 1]
+        wave = np.sin(x / 260.0) * np.sin(y / 340.0)  # ~1 km cells: dirty and clean pockets close together, as street-level sensors show
+        pm = (h["B"] * (1.0 + 0.35 * wave + 0.5 * np.exp(-(self.d / 2500.0) ** 2))).astype("float32")
+        cb = ((1 - ctx.g) * (1.0 - air_score(pm) / 100.0) + ctx.g * H).astype("float32")
+        h.update(pm=pm, cb=cb, cai=np.round(100 * (1 - cb)).astype("uint8"), cr=((1 - ctx.g) * route_burden(pm) + ctx.g * H).astype("float32"))
+        return h
+
+
+@pytest.fixture(scope="module")
+def field_engine(engine):
+    net, feats, model, router = engine
+    return net, feats, FieldModel(model), router
 
 
 # ---- engine on the real network (loaded once) -------------------------------------------------------
@@ -116,10 +141,10 @@ def test_decomposition_sums_to_pm(engine):
 
 
 @pytest.mark.parametrize("hour", [10, 30])
-def test_routing_still_discriminates_when_the_index_is_flat(engine, hour):
+def test_routing_still_discriminates_when_the_index_is_flat(field_engine, hour):
     """Routing weighs PM against the city's own spread, so it finds cleaner routes whether the displayed index is
     saturated (heavy episode) or almost flat (clean day)."""
-    net, _, model, router = engine
+    net, _, model, router = field_engine
     h = model.hour(hour)
     assert h["cr"].std() > 0 and h["cr"].max() <= C.ROUTE_REL_MAX + 1e-6
     for name in ("across", "central"):
@@ -138,12 +163,13 @@ def test_air_score_is_monotone_and_anchored_on_guidelines():
     assert air_score(np.array([3.0]))[0] < 90  # a clean day is good, not perfect
 
 
-def test_busy_roads_score_worse_than_quiet_paths(engine):
-    net, feats, model, _ = engine
-    h = model.hour(30)
-    major = net.hw_mask("primary", "secondary") & (feats.T > 0)
-    quiet = net.hw_mask("footway", "path") & (feats.T < np.percentile(feats.T, 20))
-    assert h["pm"][major].mean() > h["pm"][quiet].mean()
+def test_road_class_does_not_move_pm_without_a_measurement(engine):
+    """No assumed traffic: with no sensor correction, every street has the same PM2.5 whatever its road class."""
+    net, feats, _, _ = engine
+    hours = [{"time": f"2026-01-15T{h:02d}:00", "score": 50.0, "pm25": 20.0, "apparent": -5.0, "radiation": 0.0, "t2m": -3.0} for h in range(24)]
+    m = CaiModel(net, feats, hours, now_idx=8, sensors=[], ml=False)
+    pm = m.hour(8)["pm"]
+    assert float(pm.max() - pm.min()) == 0.0
 
 
 # fixed OD pairs: (lat, lng) central / across the city / suburban
@@ -170,8 +196,8 @@ def test_routes_invariants(engine, name):
     assert abs(f["polyline"][0][1] - o[0]) < 0.006 and abs(f["polyline"][-1][1] - d[0]) < 0.006
 
 
-def test_cleanest_changes_route_across_city(engine):
-    _, _, model, router = engine
+def test_cleanest_changes_route_across_city(field_engine):
+    _, _, model, router = field_engine
     h = model.hour(30)
     o, d = PAIRS["across"]
     res = router.routes(o, d, h["cr"], h["pm"], h["cai"])
@@ -197,10 +223,10 @@ def test_score_external_polyline_matches_own_route(engine):
     assert sc["distance_m"] == pytest.approx(f["distance_m"], rel=0.05)
 
 
-def test_network_output(engine):
+def test_network_output(field_engine):
     from backend.cai.network import compute_network
 
-    net, feats, model, router = engine
+    net, feats, model, router = field_engine
     h = model.hour(30)
     out = compute_network(net, router, h["cr"], h["pm"], h["cai"], feats)
     assert out["n_od"] == C.NETWORK_N_OD and out["trips"] and out["segments"]

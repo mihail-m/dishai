@@ -10,8 +10,11 @@ export default function MapLegend({ tab, custom }: { tab: "map" | "route" | "net
       ? [
           <><Line c="#4ca07e" /><Line c="#e2bc62" /><Line c="#c86458" /> Streets: Clean Air Index (scale on the right)</>,
           <><Dot c="#2f9e63" /><Dot c="#e0b030" /><Dot c="#c0392f" /> Citizen air sensors, coloured by PM2.5</>,
+          <><Dot c="#2f9e63" ring="#1d4ed8" /> Airthings pilot stations (hourly, hover for values)</>,
           <><i className="mr-1.5 inline-block h-[5px] w-5 shrink-0 rounded-full align-middle" style={{ background: "#fff", boxShadow: "0 0 0 1.5px #6b7280" }} /> Street you clicked (outlined)</>,
           <><i className="mr-1.5 inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: "#fff", border: "3px solid #111827" }} /> Municipal reference station (name, PM10 µg/m³)</>,
+          <><Line c="#3b82f6" w={4} /><Line c="#78829a" w={4} /><Line c="#f0aa28" w={4} /><Line c="#be1e28" w={4} /> Live traffic on arterials: lighter … heavier than usual</>,
+          <><Dot c="#be2828" /><Dot c="#e8742c" /><Dot c="#f0be28" /> Traffic incidents (TomTom): closure, major, minor</>,
         ]
       : tab === "route"
         ? [

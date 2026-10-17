@@ -9,10 +9,9 @@ A measured weak model is better than an unmeasured strong one.
 import numpy as np
 from scipy.stats import spearmanr
 
-from . import config as C
 from .features import Features
 from .graph import to_xy
-from .score import HourCtx, bias_factor, idw_residual, predict_pm, shield
+from .score import HourCtx, bias_factor, idw_residual
 
 
 def _rho(a, b) -> float | None:
@@ -22,9 +21,7 @@ def _rho(a, b) -> float | None:
     return None if np.isnan(r) else round(float(r), 3)
 
 
-def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str | None = None, gain: float | None = None) -> dict:
-    mode = mode or C.RESIDUAL_AGAINST
-    gain = C.TRAFFIC_GAIN if gain is None else gain
+def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx) -> dict:
     n = len(sensors)
     if n < 10:
         return {"n": n, "error": "too few sensors"}
@@ -34,8 +31,6 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
     obs_c = np.clip(obs, 0, 4 * np.median(obs) + 10)
     x, y = to_xy(lon, lat)
     xy = np.column_stack([x, y])
-    sf = feats.at(lon, lat)
-    local = gain * sf["T"] * ctx.rush * ctx.amp * shield(sf["G"])  # traffic term at each sensor
 
     pred_full = np.zeros(n)
     pred_noR = np.zeros(n)
@@ -44,9 +39,8 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
         m = np.arange(n) != i
         b = bias_factor(obs_c[m], ctx.cams)
         B = ctx.cams * b if ctx.cams is not None else float(np.median(obs_c[m]))
-        base = B + local[m] if mode == "model" else np.full(m.sum(), B)
-        R = idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base)[0]
-        pred_bg[i], pred_noR[i], pred_full[i] = B, B + local[i], B + local[i] + R
+        R = idw_residual(xy[i : i + 1], xy[m], obs_c[m] - B)[0]
+        pred_bg[i], pred_noR[i], pred_full[i] = B, B, B + R
 
     def mae(p):
         return round(float(np.median(np.abs(p - obs))), 2)
@@ -54,7 +48,7 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
     rho_full, rho_noR = _rho(pred_full, obs), _rho(pred_noR, obs)
     verdict = "weak" if (rho_full or 0) < 0.3 else "moderate" if rho_full < 0.6 else "reasonable"
     return {
-        "n": n, "residual_mode": mode, "traffic_gain": gain, "hour": ctx.time,
+        "n": n, "hour": ctx.time,
         "spearman": rho_full, "median_abs_error": mae(pred_full),
         "baselines": {
             "no_sensor_residual": {"spearman": rho_noR, "median_abs_error": mae(pred_noR)},

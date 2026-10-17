@@ -16,3 +16,6 @@ data/.osmnx_cache/
 data/.trees_progress.npz
 data/graph_bike.graphml
 data/history/
+
+# derived from Google Routes responses (typical travel times): not redistributed
+data/traffic_profile.json

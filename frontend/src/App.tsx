@@ -101,7 +101,7 @@ export default function App() {
   const layers = useMemo(() => {
     const out: Layer[] = [];
     if (geometry && values && extra.base !== "off") out.push(caiLayer(geometry, values.cai, relative, extra.base));
-    if (sensors && extra.base === "full") out.push(sensorLayer(sensors.sensors));
+    if (sensors && extra.base === "full") out.push(...sensorLayer(sensors.sensors));
     if (reference?.enabled && extra.base === "full") out.push(...referenceLayers(reference.stations));
     return [...out, ...extra.layers];
   }, [geometry, values, sensors, reference, relative, extra]);

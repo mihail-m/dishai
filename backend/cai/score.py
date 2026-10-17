@@ -1,14 +1,14 @@
 """Clean Air Index engine (vectorised over directed edges).
 
-    PM(e,t)     = B(t) + R(e,t) + T(e) * rush(t) * A(t) * shield(e)
+    PM(e,t)     = B(t) + R(e,t)                      (learned model: its prediction + R; no assumed traffic term anywhere)
     cost_burden = (1 - g) * (1 - air_score(PM)/100) + g * H(e)       CAI = round(100 * (1 - cost_burden))
 
-B = CAMS PM2.5 x sensor bias; R = IDW residual of sensors; A = 1 + S/100 with S the v1 stagnation score.
-An indicative screening model with assumed weights, not a dispersion model.
+B = CAMS PM2.5 x sensor bias; R = residual of the live sensors. Traffic is deliberately not modelled: the road-class weights and the
+rush-hour curve it needed were assumptions, and measured traffic (backend/traffic.py) has no history aligned with the sensor record to
+calibrate an effect against. It is shown as observed data on the map and in the street popover instead.
 
-When data/pm_model.joblib exists (python -m backend.ml.train) the bracketed physics part
-B + T * rush * A * shield is replaced by a gradient-boosted model trained on a year of citizen-sensor history
-(backend/ml); the live-sensor residual R and everything downstream (CAI, heat, routing) are unchanged.
+When data/pm_model.joblib exists (python -m backend.ml.train) B is replaced by a gradient-boosted model trained on a year of
+citizen-sensor history (backend/ml); the live-sensor residual R and everything downstream (CAI, heat, routing) are unchanged.
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,10 +22,6 @@ from .graph import Net, to_xy
 from ..ml import calibration as calibration_mod
 from ..ml.pm_model import MAX_LEAD_H, STATIC_COLS, PmModel, hour_vector, now_vector, static_matrix
 from . import krige
-
-
-def rush_factor(hour: int, weekend: bool) -> float:
-    return C.RUSH[hour % 24] * (C.WEEKEND_FACTOR if weekend else 1.0)
 
 
 def bias_factor(sensor_pm25: np.ndarray, cams_now: float | None) -> float:
@@ -62,11 +58,6 @@ class HourCtx:
     daylight: float
     hour: int
     weekend: bool
-    rush_override: float | None = None  # e.g. daily-mean rush for 24 h validation
-
-    @property
-    def rush(self) -> float:
-        return self.rush_override if self.rush_override is not None else rush_factor(self.hour, self.weekend)
 
     @property
     def amp(self) -> float:
@@ -110,8 +101,10 @@ def shield(G: np.ndarray) -> np.ndarray:
     return 1.0 - C.GREEN_CAP * G
 
 
-def predict_pm(T, G, ctx: HourCtx, B: float, R) -> np.ndarray:
-    return B + R + C.TRAFFIC_GAIN * T * ctx.rush * ctx.amp * shield(G)
+def predict_pm(B: float, R) -> np.ndarray:
+    """Fallback without the learned model: the sensor-corrected background only. There is no traffic term: road-class weights and a
+    rush-hour curve were assumptions that did not improve the estimate on held-out sensors, so they were removed."""
+    return B + R
 
 
 def ctx_month(time: str) -> int | None:
@@ -150,8 +143,6 @@ class CaiModel:
                 base = self._ml_pm(static_matrix(feats, sf), now_idx)
             else:
                 base = np.full(len(sensors), self.B_now, dtype="float32")
-                if C.RESIDUAL_AGAINST == "model":
-                    base = predict_pm(sf["T"], sf["G"], now, self.B_now, 0.0)
             if self.spatial:
                 self._krige(sensors, pm, base)
                 self.R_now = np.zeros(net.n_edges, dtype="float32")
@@ -163,7 +154,7 @@ class CaiModel:
             if self.spatial:
                 self.kappa, self.kvar = np.zeros(net.n_edges, "float32"), np.full(net.n_edges, self.spatial.psill, "float32")
         if self.ml:
-            self.B_now = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], now_idx)))
+            self.B_now = self._ml_sub(now_idx)
 
     @staticmethod
     def _spatial_params() -> "krige.SpatialParams | None":
@@ -184,6 +175,12 @@ class CaiModel:
         W, kv = krige.kriging_weights(net.mid_xy[rep], self.sens_xy, krige.sensor_noise(ids, p), p)
         self.kappa = (W @ e)[net.e_und].astype("float32")
         self.kvar = kv[net.e_und].astype("float32")
+
+    def _ml_sub(self, i: int) -> float:
+        return float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
+
+    def _ml_all(self, i: int) -> np.ndarray:
+        return self._ml_pm(self.static, i)
 
     def _ml_pm(self, static: np.ndarray, i: int) -> np.ndarray:
         """ML prediction for the given static-feature rows at forecast hour i; lead = hours ahead of the live snapshot."""
@@ -206,7 +203,7 @@ class CaiModel:
             h = self.hour(i)
             return (h["pm"] - h["base"]).astype("float32")
         if self.ml:
-            bg = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
+            bg = self._ml_sub(i)
         else:
             bg = self._background(self.ctxs[i])
         ratio = float(np.clip(bg / max(self.B_now, C.CAMS_FLOOR), 0.5, 2.0))
@@ -219,18 +216,18 @@ class CaiModel:
         ctx, f = self.ctxs[i], self.feats
         extra = {}
         if self.spatial:
-            B = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
-            base = self._ml_pm(self.static, i)
+            B = self._ml_sub(i)
+            base = self._ml_all(i)
             rho = self.spatial.rho_at(max(0, i - self.now_idx))
             pm = np.maximum(np.expm1(np.log1p(base) + rho * self.kappa), 0.0).astype("float32")
             # spatial part of the uncertainty (log1p units); the city-level part is added where the level is known (alert, API)
             extra = {"base": base, "rho": rho, "sd_u": krige.prediction_sd(self.kvar, self.spatial, rho, ctx_month(ctx.time)).astype("float32")}
         elif self.ml:
-            B = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
-            pm = np.maximum(self._ml_pm(self.static, i) + self.R(i), 0.0).astype("float32")
+            B = self._ml_sub(i)
+            pm = np.maximum(self._ml_all(i) + self.R(i), 0.0).astype("float32")
         else:
             B = self._background(ctx)
-            pm = np.maximum(predict_pm(f.T, f.G, ctx, B, self.R(i)), 0.0).astype("float32")
+            pm = np.maximum(predict_pm(B, self.R(i)), 0.0).astype("float32")
         air = 1.0 - air_score(pm) / 100.0
         cb = ((1 - ctx.g) * air + ctx.g * f.H).astype("float32")
         cai = np.round(100 * (1 - cb)).astype("uint8")
@@ -243,14 +240,13 @@ class CaiModel:
         self._cache[i] = out
         return out
 
-    def _ml_split(self, e: int, i: int) -> tuple[float, float, float, float]:
-        """(background, traffic, terrain, greenery) contributions in ug/m3 by swapping this street's features in one group at a
-        time into a typical street (the city median). Steps are sequential, so with the background they sum to the
-        model's prediction for the street."""
+    def _ml_split(self, e: int, i: int) -> tuple[float, float, float]:
+        """(background, terrain, greenery) contributions in ug/m3 by swapping this street's features in one group at a time into a
+        typical street (the city median). Steps are sequential, so with the background they sum to the model's prediction for the street."""
         med = np.nanmedian(self.static, axis=0)
         row = self.static[e]
         idx = {c: k for k, c in enumerate(STATIC_COLS)}
-        steps = [("T",), ("elev", "rel_elev", "lst_anom"), ("G", "canopy", "ndvi")]
+        steps = [("elev", "rel_elev", "lst_anom"), ("G", "canopy", "ndvi")]
         cur = med.copy()
         prev = bg = float(self._ml_pm(cur[None, :], i)[0])
         out = [bg]
@@ -260,19 +256,16 @@ class CaiModel:
             now = float(self._ml_pm(cur[None, :], i)[0])
             out.append(now - prev)
             prev = now
-        return out[0], out[1], out[2], out[3]
+        return out[0], out[1], out[2]
 
     def explain(self, e: int, i: int) -> dict:
         """Decomposition for the 'Why is this red?' popover. PM terms sum exactly to PM."""
         h, f = self.hour(i), self.feats
         ctx = h["ctx"]
         if self.ml:
-            bg, raw, vent, green = self._ml_split(e, i)
+            bg, vent, green = self._ml_split(e, i)
         else:
-            bg = h["B"]
-            raw = float(C.TRAFFIC_GAIN * f.T[e] * ctx.rush)
-            vent = raw * (ctx.amp - 1.0)
-            green = -raw * ctx.amp * C.GREEN_CAP * float(f.G[e])
+            bg, vent, green = h["B"], 0.0, 0.0
         air = float(1.0 - air_score(h["pm"][e]) / 100.0)
         cai_air = round(100 * (1 - air))
         return {
@@ -280,12 +273,10 @@ class CaiModel:
             "components_ugm3": {
                 "background": round(bg, 1),
                 "local_correction": round(float(self.R(i)[e]), 1),
-                "traffic": round(raw, 1),
                 "ventilation": round(vent, 1),
                 "greenery": round(green, 1),
             },
             "drivers": {
-                "traffic_term": round(float(f.T[e]), 2), "rush": round(ctx.rush, 2), "amplifier": round(ctx.amp, 2),
                 "greenery": round(float(f.G[e]), 2), "heat_anomaly": round(float(f.H[e]), 2),
                 "heat_weight": round(ctx.g, 2), "stagnation_score": round(ctx.stagnation, 1),
                 # context only: OSM construction sites within ~150 m. Not in the PM2.5 model (no effect on held-out sensors).
@@ -295,5 +286,5 @@ class CaiModel:
             "cai_air_only": cai_air,
             "model": "ml" if self.ml else "physics",
             "spatial": "krige" if self.spatial else "idw",
-            "note": "Learned from citizen-sensor history; indicative." if self.ml else "Indicative screening model with assumed weights.",
+            "note": "Learned from citizen-sensor history; indicative." if self.ml else "Background plus the local sensor correction; indicative.",
         }

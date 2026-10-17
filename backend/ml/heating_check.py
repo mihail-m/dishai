@@ -7,7 +7,7 @@ Design, in the order the Phase 4 brief asks for it (the buffer is chosen on the 
   1. sensor level: Spearman between the feature (250 / 500 / 1000 m buffers) and each sensor's persistent offset
   2. within-sensor contrast: heating-season nights (Dec-Feb, 22-06 local) minus summer nights (Jun-Aug), per sensor, against the feature.
      The sensor is its own control, so calibration and siting offsets cancel; a heating source shows up as a bigger winter-night excess
-  3. what the model needs: within-hour Spearman on HELD-OUT sensors in heating-season hours, traffic + terrain vs traffic + terrain +
+  3. what the model needs: within-hour Spearman on HELD-OUT sensors in heating-season hours, traffic + terrain vs terrain +
      heating (and heating x stagnation), sensor-grouped CV repeated over three fold seeds. Acceptance: +0.05 or it stays context.
 """
 import warnings
@@ -85,9 +85,9 @@ def main() -> int:
     df["hm"] = df.groupby("time").pm.transform("median")
     df["lr"] = np.log1p(df.pm) - np.log1p(df.hm)
     raw_off = df.groupby("sensor").lr.mean().loc[loc.index]
-    st = df.groupby("sensor")[["T", "elev"]].first().loc[loc.index]
-    X = np.column_stack([np.log1p(st["T"]), st.elev.fillna(st.elev.median())])
-    resid_off = raw_off - LinearRegression().fit(X, raw_off).predict(X)  # offset with traffic and terrain taken out
+    st = df.groupby("sensor")[["elev"]].first().loc[loc.index]
+    X = np.column_stack([st.elev.fillna(st.elev.median())])
+    resid_off = raw_off - LinearRegression().fit(X, raw_off).predict(X)  # offset with terrain taken out
 
     nan_s = int(np.isnan(feature_at(loc.lon.to_numpy(), loc.lat.to_numpy(), "lowrise", 500)).sum())
     print(f"{len(loc)} sensors ({nan_s} fall outside the raster and are left out of the sensor-level tests); low-rise share around sensors, median by buffer: "
@@ -102,8 +102,8 @@ def main() -> int:
             feats[f"{kind}_{R}"] = v
             r1, r2 = rho(v, raw_off), rho(v, resid_off)
             lo, hi = boot_ci(v.to_numpy(), raw_off.to_numpy())
-            print(f"   {kind:9s} {R:4d} m: rho {r1:+.3f} [{lo:+.2f},{hi:+.2f}]   after traffic+terrain {r2:+.3f}")
-    for nm, v in (("traffic", np.log1p(st["T"])), ("terrain height", st.elev)):
+            print(f"   {kind:9s} {R:4d} m: rho {r1:+.3f} [{lo:+.2f},{hi:+.2f}]   after terrain {r2:+.3f}")
+    for nm, v in (("terrain height", st.elev),):
         print(f"   (for scale) {nm}: rho {rho(v.fillna(v.median()), raw_off):+.3f}")
 
     # 2. within-sensor contrast
@@ -129,18 +129,18 @@ def main() -> int:
     # 3. what the model needs
     print("\n3. held-out within-hour Spearman, heating-season hours (sensor-grouped 5-fold, 3 repeats)")
     best = max(feats, key=lambda k: abs(contrast.get(k, 0)))
-    base_cols = ["T", "elev"]
+    base_cols = ["elev"]
     out = {}
-    for label, extra in (("traffic + terrain (baseline)", []), *((f"+ {k}", [k]) for k in ("lowrise_250", "lowrise_500", "lowrise_1000", "fraction_500"))):
+    for label, extra in (("terrain only (baseline)", []), *((f"+ {k}", [k]) for k in ("lowrise_250", "lowrise_500", "lowrise_1000", "fraction_500"))):
         d = df.copy()
         for k in extra:
             d[k] = feats[k].loc[d.sensor].to_numpy()
         vals = {sel: [cv_rho(d, base_cols + extra, seed, True, thr) for seed in (1, 2, 3)] for sel, thr in (("heating", None), ("heating, city > 15", 15.0))}
         out[label] = vals
-    b0 = {k: np.mean(v) for k, v in out["traffic + terrain (baseline)"].items()}
+    b0 = {k: np.mean(v) for k, v in out["terrain only (baseline)"].items()}
     for label, vals in out.items():
         print(f"   {label:30s} " + "   ".join(f"{k}: {np.mean(v):.3f} (+/-{np.std(v):.3f}, gain {np.mean(v) - b0[k]:+.3f})" for k, v in vals.items()))
-    gain = max(np.mean(v["heating"]) - b0["heating"] for k, v in out.items() if k != "traffic + terrain (baseline)")
+    gain = max(np.mean(v["heating"]) - b0["heating"] for k, v in out.items() if k != "terrain only (baseline)")
     print(f"\n   best gain in heating-season hours: {gain:+.3f}; acceptance bar +{ACCEPT:.2f} -> {'ENTERS the model' if gain >= ACCEPT else 'stays context only'}")
     return 0
 

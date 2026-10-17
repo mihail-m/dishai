@@ -36,9 +36,9 @@ def nearest(sel):
     u=unary_union(list(S[sel].g)); return np.array([p.distance(u) for p in pts])
 df["hm"]=df.groupby("time").pm.transform("median"); df["lr"]=np.log1p(df.pm)-np.log1p(df.hm)
 sm=df.groupby("sensor").lr.mean().loc[loc.index]
-st=df.groupby("sensor")[["T","elev"]].first().loc[loc.index]
+st=df.groupby("sensor")[["elev"]].first().loc[loc.index]
 from sklearn.linear_model import LinearRegression
-X=np.column_stack([np.log1p(st["T"]),st.elev.fillna(st.elev.median())]); res=sm-LinearRegression().fit(X,sm).predict(X)
+X=np.column_stack([st.elev.fillna(st.elev.median())]); res=sm-LinearRegression().fit(X,sm).predict(X)
 def rep(name,v,pos=True):
     v=pd.Series(v,index=loc.index); r=spearmanr(v,sm).statistic; pr=spearmanr(v,res).statistic
     rng=np.random.default_rng(0); b=[spearmanr(v.iloc[i],sm.iloc[i]).statistic for i in (rng.integers(0,len(v),len(v)) for _ in range(300))]
@@ -86,7 +86,7 @@ w=d[d.hr.between(9,17)].copy()
 a=w[w.wd].groupby("sensor").lr.agg(["mean","size"]); b=w[~w.wd].groupby("sensor").lr.agg(["mean","size"])
 j=a.join(b,lsuffix="_wd",rsuffix="_we").dropna(); j=j[(j.size_wd>200)&(j.size_we>40)]
 j["diff"]=j.mean_wd-j.mean_we
-T=np.log1p(st["T"]).loc[j.index]
+T=st.elev.fillna(st.elev.median()).loc[j.index]  # (was log traffic before the traffic term was removed)
 from sklearn.linear_model import LinearRegression
 for R in (100,150,300):
     c=pd.Series(share(allm,R),index=loc.index).loc[j.index]

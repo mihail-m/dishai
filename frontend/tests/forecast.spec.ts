@@ -5,6 +5,15 @@ test.beforeEach(async ({ page }) => {
   await mockMapApi(page);
   await page.goto("/");
   await expect(page.locator("#hour")).toBeEnabled();
+  await page.getByRole("button", { name: "Streets (indicative)" }).click(); // the default map shows neighbourhood cells; these tests are about streets
+});
+
+test("the default map shows neighbourhood cells, streets are an indicative option", async ({ page }) => {
+  await page.getByRole("button", { name: "Neighbourhoods" }).click();
+  await expect(page.getByRole("button", { name: "Neighbourhoods" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("neighbourhoods (~250 m)")).toBeVisible();
+  await page.getByRole("button", { name: "Streets (indicative)" }).click();
+  await expect(page.getByText(/Street colours are indicative/)).toBeVisible();
 });
 
 test("all 24 hours update from memory without requests", async ({ page }) => {

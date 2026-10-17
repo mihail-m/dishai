@@ -73,10 +73,10 @@ class Data:
         sp = model.spatial
         cols = [STATIC_COLS.index(c) for c in SPATIAL_COLS]
         raw = st[:, cols].astype("float64").copy()
-        raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
         z = np.nan_to_num((raw - np.asarray(sp["mean"])) / np.asarray(sp["std"]))
         coef = np.asarray(sp["coef"])
-        A, B = z @ coef[:2], z @ coef[2:]
+        k = len(cols)
+        A, B = z @ coef[:k], z @ coef[k:]
         self.stag = stag
         self.dev = np.clip(A[:, None] + B[:, None] * stag[None, :] / 100.0, -DEV_CLIP, DEV_CLIP)  # (S, T)
         si = {s: i for i, s in enumerate(self.ids)}

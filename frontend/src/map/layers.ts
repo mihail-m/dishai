@@ -2,7 +2,7 @@ import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import { TripsLayer } from "@deck.gl/geo-layers";
 import { PathStyleExtension } from "@deck.gl/extensions";
 import type { Layer } from "@deck.gl/core";
-import type { Sensor, Chokepoint, NetworkResp, RefStation, RouteStats } from "../types";
+import type { Sensor, Chokepoint, NetworkResp, RefStation, RouteStats, TrafficResp, TrafficCorridor, IncidentsResp, Incident } from "../types";
 import { buildAttributes, caiColor, relColor, relRange, type Geometry } from "./cai";
 
 type RGB = [number, number, number];
@@ -35,11 +35,19 @@ export function highlightLayer(path: [number, number][]): Layer {
   } as never);
 }
 
-export function sensorLayer(sensors: Sensor[]): Layer {
-  return new ScatterplotLayer<Sensor>({
-    id: "sensors", data: sensors, getPosition: (s) => [s.lon, s.lat], getFillColor: (s) => pmColor(s.pm25),
-    radiusUnits: "pixels", getRadius: 4, stroked: true, getLineColor: [255, 255, 255, 255], lineWidthUnits: "pixels", getLineWidth: 1, pickable: false,
-  });
+export function sensorLayer(sensors: Sensor[]): Layer[] {
+  const isAt = (s: Sensor) => s.source === "airthings";
+  return [
+    new ScatterplotLayer<Sensor>({
+      id: "sensors", data: sensors.filter((s) => !isAt(s)), getPosition: (s) => [s.lon, s.lat], getFillColor: (s) => pmColor(s.pm25),
+      radiusUnits: "pixels", getRadius: 4, stroked: true, getLineColor: [255, 255, 255, 255], lineWidthUnits: "pixels", getLineWidth: 1, pickable: false,
+    }),
+    // Sofia's Airthings pilot stations: larger, dark-blue ring, hoverable (name + hourly value)
+    new ScatterplotLayer<Sensor>({
+      id: "airthings-sensors", data: sensors.filter(isAt), getPosition: (s) => [s.lon, s.lat], getFillColor: (s) => pmColor(s.pm25),
+      radiusUnits: "pixels", getRadius: 6.5, stroked: true, getLineColor: [29, 78, 216, 255], lineWidthUnits: "pixels", getLineWidth: 2.5, pickable: true,
+    }),
+  ];
 }
 
 /** Municipal reference stations: big ringed dots with a name label (citizen sensors are small plain dots). */
@@ -202,4 +210,65 @@ export function segmentLayers(n: NetworkResp, opts: { channels: boolean; other: 
 
 export function chokepointLayers(n: NetworkResp, selected: Chokepoint | null): Layer[] {
   return networkStatic(n, false, selected).slice(1); // the chokepoint highlight, dots and rank labels from the original builder
+}
+
+// ---- real traffic: arterial corridors (live vs typical) and incidents ---------------------------------------------
+/** Live travel time relative to typical for this hour: bluer = lighter than usual, red = much heavier. */
+export function trafficColor(r: number | null): RGB {
+  if (r == null) return [140, 148, 160];
+  return r < 0.95 ? [59, 130, 246] : r < 1.05 ? [120, 130, 150] : r < 1.2 ? [240, 170, 40] : r < 1.4 ? [226, 100, 40] : [190, 30, 40];
+}
+export const trafficWord = (r: number | null) =>
+  r == null ? "no live reading" : r < 0.95 ? "lighter than usual" : r < 1.05 ? "about usual" : r < 1.2 ? "a little heavier than usual" : r < 1.4 ? "heavy for this hour" : "very heavy for this hour";
+
+const MAG_COLOR: RGB[] = [[120, 120, 120], [240, 190, 40], [232, 116, 44], [192, 40, 40], [20, 20, 20]];
+const incidentColor = (i: Incident): RGB => MAG_COLOR[Math.min(i.properties.magnitude_code, 4)] ?? MAG_COLOR[0];
+const incidentPath = (i: Incident): [number, number][] => (i.geometry.type === "LineString" ? i.geometry.coordinates : [i.geometry.coordinates]);
+
+export function trafficLayers(t: TrafficResp | null, inc: IncidentsResp | null): Layer[] {
+  const out: Layer[] = [];
+  const cs = (t?.corridors ?? []).filter((c) => c.polyline.length > 1);
+  if (cs.length) {
+    out.push(
+      new PathLayer<TrafficCorridor>({ id: "traffic-casing", data: cs, getPath: (c: TrafficCorridor) => c.polyline, getColor: [255, 255, 255, 235] as never,
+        getWidth: 9, widthUnits: "pixels", capRounded: true, jointRounded: true } as never),
+      new PathLayer<TrafficCorridor>({ id: "traffic-corridors", data: cs, getPath: (c: TrafficCorridor) => c.polyline,
+        getColor: (c: TrafficCorridor) => [...trafficColor(c.vs_typical), 255] as never, getWidth: 5, widthUnits: "pixels", capRounded: true, jointRounded: true,
+        pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 120] } as never),
+    );
+  }
+  const feats = inc?.features ?? [];
+  if (feats.length) {
+    out.push(
+      new PathLayer<Incident>({ id: "incident-lines", data: feats.filter((f) => f.geometry.type === "LineString"), getPath: (f: Incident) => incidentPath(f),
+        getColor: (f: Incident) => [...incidentColor(f), 255] as never, getWidth: 6, widthUnits: "pixels", capRounded: true, jointRounded: true, pickable: true } as never),
+      new ScatterplotLayer<Incident>({ id: "incident-dots", data: feats, getPosition: (f: Incident) => incidentPath(f)[Math.floor(incidentPath(f).length / 2)],
+        getFillColor: (f: Incident) => [...incidentColor(f), 255] as never, radiusUnits: "pixels", getRadius: 6, stroked: true, getLineColor: [255, 255, 255, 255],
+        lineWidthUnits: "pixels", getLineWidth: 2, pickable: true }),
+    );
+  }
+  return out;
+}
+
+const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+export function trafficTooltip(info: { layer?: { id: string } | null; object?: unknown }): { html: string } | null {
+  const id = info.layer?.id;
+  if (id === "traffic-corridors") {
+    const c = info.object as TrafficCorridor;
+    const g = c.google.duration_s ? `Google ${Math.round(c.google.duration_s / 60)} min` : "";
+    const t = c.tomtom.tti ? `TomTom flow ×${c.tomtom.tti.toFixed(2)} of free-flow time` : "";
+    return { html: `<b>${esc(c.name)}</b><br>${trafficWord(c.vs_typical)}${c.vs_typical ? ` (×${c.vs_typical.toFixed(2)} of typical)` : ""}<br>${[g, t].filter(Boolean).join(" · ")}` };
+  }
+  if (id === "airthings-sensors") {
+    const a = info.object as Sensor;
+    const when = a.timestamp ? ` · hour starting ${a.timestamp.slice(11, 16)} UTC` : "";
+    return { html: `<b>${esc(a.name ?? "Airthings station")}</b><br>PM2.5 ${a.pm25} µg/m³${a.pm10 != null ? ` · PM10 ${a.pm10}` : ""}<br>Airthings pilot network${when}` };
+  }
+  if (id === "incident-lines" || id === "incident-dots") {
+    const p = (info.object as Incident).properties;
+    const where = [p.from, p.to].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" → ");
+    return { html: `<b>${esc(p.category)}</b> · ${esc(p.magnitude)}<br>${esc(where)}${p.length_m ? ` · ${p.length_m} m` : ""}${p.delay_s ? `<br>delay ${Math.round(p.delay_s / 60)} min` : ""}${p.description ? `<br>${esc(p.description)}` : ""}` };
+  }
+  return null;
 }

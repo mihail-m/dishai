@@ -1,4 +1,7 @@
-"""Train and honestly evaluate the PM2.5 model against the hand-weighted physics formula.
+"""Train and honestly evaluate the PM2.5 model against simple baselines (CAMS x live-sensor bias, raw CAMS, persistence).
+
+The hand-weighted physics formula the app used before the learned model was dropped as a baseline when its traffic term (an assumption) was
+removed from the code; its last measured numbers are in docs/PM_MODEL.md.
 
     python -m backend.ml.train [--no-save]
 
@@ -30,7 +33,6 @@ from sklearn.model_selection import GroupKFold
 from ..cai import config as C
 from ..cai.features import compute_features
 from ..cai.graph import DATA, get_net
-from ..cai.score import HourCtx, hour_contexts, predict_pm
 from ..score import stagnation_score
 from . import calibration as calibration_mod
 from .pm_model import (N_BUCKETS, DEV_CLIP, interval_bucket, FEATURES, LEVEL_FEATURES, MAX_LEAD_H, S_IDX, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector,
@@ -136,16 +138,6 @@ def build_table(rng: np.random.Generator, calibrate: bool = True) -> tuple[pd.Da
     return out, feats.median_lst
 
 
-def physics_baseline(df: pd.DataFrame) -> np.ndarray:
-    """The pre-ML formula at each row's sensor, without the live-sensor residual (that is a separate stage)."""
-    out = np.empty(len(df))
-    bias = np.clip(df.city_med / np.maximum(df.cams_issue, C.CAMS_FLOOR), C.BIAS_MIN, C.BIAS_MAX).to_numpy()
-    for i, (T, G, c, st, ap, hr, wk, b) in enumerate(zip(df["T"], df.G, df.cams25, df.stagnation, df.t2m, df.hour, df.weekend, bias)):
-        ctx = HourCtx(time="", cams=c, stagnation=st, apparent=ap, daylight=0.0, hour=int(hr), weekend=bool(wk))
-        out[i] = predict_pm(T, G, ctx, c * b, 0.0)
-    return out
-
-
 def within_hour_rho(df: pd.DataFrame, pred: np.ndarray) -> float:
     """Mean Spearman across sensors within each hour: does it rank streets right at a given moment?"""
     d = pd.DataFrame({"t": df.time.to_numpy(), "p": pred, "o": df.pm.to_numpy()})
@@ -170,10 +162,8 @@ def metrics(df: pd.DataFrame, pred: np.ndarray, rank_score: np.ndarray | None = 
 
 def compare(df: pd.DataFrame, ml: np.ndarray, ml_dev: np.ndarray) -> dict:
     bias = np.clip(df.city_med / np.maximum(df.cams_issue, C.CAMS_FLOOR), C.BIAS_MIN, C.BIAS_MAX).to_numpy()
-    phys = physics_baseline(df)
     out = {
         "ml": metrics(df, ml, ml_dev),
-        "physics_formula": metrics(df, phys, np.log(phys + 1e-6) - np.log(df.cams25.to_numpy() * bias + 1e-6)),
         "cams_x_bias": metrics(df, df.cams25.to_numpy() * bias),
         "cams_raw": metrics(df, df.cams25.to_numpy()),
         "persistence_city_median": metrics(df, df.city_med.to_numpy()),
@@ -183,13 +173,13 @@ def compare(df: pd.DataFrame, ml: np.ndarray, ml_dev: np.ndarray) -> dict:
         sel = (df.lead >= m[0]) & (df.lead <= m[1])
         if sel.sum() > 1000:
             sub = df[sel]
-            by_lead[name] = {"ml_mae": metrics(sub, ml[sel.to_numpy()])["mae"], "physics_mae": metrics(sub, physics_baseline(sub))["mae"],
+            by_lead[name] = {"ml_mae": metrics(sub, ml[sel.to_numpy()])["mae"],
                              "persistence_mae": metrics(sub, sub.city_med.to_numpy())["mae"], "rows": int(sel.sum())}
     out["by_lead"] = by_lead
     # the hours the app exists for: CAMS forecasts an episode. bias < 0 = under-predicts.
     ep = (df.cams25 >= EPISODE_CAMS).to_numpy()
     if ep.sum() > 500:
-        preds = {"ml": ml, "physics_formula": phys, "cams_x_bias": df.cams25.to_numpy() * bias, "persistence_city_median": df.city_med.to_numpy()}
+        preds = {"ml": ml, "cams_x_bias": df.cams25.to_numpy() * bias, "persistence_city_median": df.city_med.to_numpy()}
         out["episodes"] = {"rows": int(ep.sum()), **{k: {"mae": round(float(np.mean(np.abs(v[ep] - df.pm.to_numpy()[ep]))), 2),
                                                          "bias": round(float(np.mean(v[ep] - df.pm.to_numpy()[ep])), 2)} for k, v in preds.items()}}
     return out
@@ -275,14 +265,12 @@ def level_predict(est, df: pd.DataFrame) -> np.ndarray:
 def spatial_stats(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     one = df.groupby("sensor")[STATIC_COLS].first()
     raw = one[SPATIAL_COLS].to_numpy(dtype="float64").copy()
-    raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
     return np.nanmean(raw, 0), np.nanstd(raw, 0)
 
 
 def design(st, stag, mean, std):
     cols = [STATIC_COLS.index(c) for c in SPATIAL_COLS]
     raw = st[:, cols].copy()
-    raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
     z = np.nan_to_num((raw - mean) / std)
     sf = np.nan_to_num(stag / 100.0)[:, None]
     return np.hstack([z, z * sf])
@@ -404,7 +392,7 @@ def main() -> int:
     final = fit_all(df, alpha)
     ls = fit_level_set(df)
     final.level, final.q_lo, final.q_hi, final.conf_lo, final.conf_hi = ls["q50"], ls["q10"], ls["q90"], ls["conf_lo"], ls["conf_hi"]
-    names = [f"{c}{suffix}" for suffix in ("", " x S/100") for c in ("z(log T)", "z(elev)")]
+    names = [f"{c}{suffix}" for suffix in ("", " x S/100") for c in ("z(elev)",)]
     print("spatial coefficients:", dict(zip(names, np.round(final.spatial["coef"], 3))), file=sys.stderr)
     if not args.no_save:
         final.meta = {

@@ -15,6 +15,7 @@ test.beforeEach(async ({ page }) => {
   await mockMapApi(page);
   await page.goto("/");
   await expect(page.getByText("Background 24 µg/m³", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Streets (indicative)" }).click(); // the default map shows neighbourhood cells; these tests are about streets
 });
 
 for (const renderer of ["Leaflet", "MapLibre"] as const) {

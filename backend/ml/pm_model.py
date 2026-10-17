@@ -21,15 +21,15 @@ from ..cai.graph import DATA
 
 MODEL_PATH = DATA / "pm_model.joblib"
 
-STATIC_COLS = ["T", "G", "canopy", "ndvi", "lst_anom", "elev", "rel_elev"]
+STATIC_COLS = ["G", "canopy", "ndvi", "lst_anom", "elev", "rel_elev"]  # no traffic: OSM road-class weights were an assumption
 HOUR_COLS = ["cams25", "cams10", "blh", "wind10", "wind925", "t2m", "inversion", "cloud", "rh", "radiation",
              "stagnation", "hour", "weekend"]
 NOW_COLS = ["lead", "city_med", "cams_issue", "city_ratio"]
 LEVEL_FEATURES = HOUR_COLS + NOW_COLS
 FEATURES = STATIC_COLS + LEVEL_FEATURES  # layout of the training table
-SPATIAL_COLS = ["T", "elev"]  # the only street features that survived held-out-sensor testing
+SPATIAL_COLS = ["elev"]  # the only street feature that survived held-out-sensor testing (traffic was dropped as an assumed quantity)
 MAX_LEAD_H = 47
-FORMAT = 4  # bump when the saved layout changes; older model files are then ignored (3: targets on the calibrated scale, 4: quantile level)
+FORMAT = 5  # bump when the saved layout changes; older model files are then ignored (3: targets on the calibrated scale, 4: quantile level, 5: no traffic column)
 LEAD_EDGES = (5, 23)  # lead buckets for the conformal interval widening: 0-5 h, 6-23 h, 24-47 h
 LEVEL_SPLIT = 15.0  # ... times two level classes: p50 below / at-or-above this (ug/m3)
 N_BUCKETS = 6
@@ -40,7 +40,7 @@ S_IDX = HOUR_COLS.index("stagnation")
 
 def static_matrix(feats, sf: dict | None = None) -> np.ndarray:
     """(n, len(STATIC_COLS)) from a Features object (all edges) or from `feats.at(...)` output `sf` (points)."""
-    d = sf if sf is not None else {"T": feats.T, "G": feats.G, "canopy": feats.canopy, "ndvi": feats.ndvi, "lst": feats.lst,
+    d = sf if sf is not None else {"G": feats.G, "canopy": feats.canopy, "ndvi": feats.ndvi, "lst": feats.lst,
                                   "elev": feats.elev, "rel_elev": feats.rel_elev}
     lst_anom = d["lst"] - (feats.median_lst if feats.median_lst is not None else np.nan)
     cols = {**d, "lst_anom": lst_anom}
@@ -76,10 +76,9 @@ def anchor(cams: float, city_med: float):
 
 
 def spatial_design(static: np.ndarray, stagnation: float, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
-    """(n, 4): z(log1p T), z(elev), and both times S/100 (S = stagnation score; NaN/missing terrain counts as typical)."""
+    """(n, 2): z(elev) and z(elev) times S/100 (S = stagnation score; NaN/missing terrain counts as typical)."""
     cols = [STATIC_COLS.index(c) for c in SPATIAL_COLS]
     raw = static[:, cols].astype("float64").copy()
-    raw[:, 0] = np.log1p(np.maximum(raw[:, 0], 0))
     z = np.nan_to_num((raw - mean) / std)
     sf = (stagnation / 100.0) if np.isfinite(stagnation) else 0.0
     return np.column_stack([z, z * sf])
@@ -98,7 +97,7 @@ class PmModel:
     `level` is the median (p50) model of the log ratio to the anchor. `q_lo`/`q_hi` are the p10/p90 models; `conf_lo`/`conf_hi` widen
     them per bucket so that, on out-of-fold hours, 10 % of readings fall below the p10 and 10 % above the p90 (split-conformal)."""
     level: object
-    spatial: dict  # mean, std (of SPATIAL_COLS over sensors), coef (4)
+    spatial: dict  # mean, std (of SPATIAL_COLS over sensors), coef (2 per spatial column: main effect and times S/100)
     meta: dict = field(default_factory=dict)
     q_lo: object = None
     q_hi: object = None
