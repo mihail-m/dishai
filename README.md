@@ -177,12 +177,12 @@ The README used to say the municipal stations report no PM2.5. That is true of t
 
 **Sofia's citizen sensors read about half of the reference station** (raw median 4.0 vs 9.1 µg/m³ at Hipodruma, 13 sensors within 1.5 km, 1,991 hours of
 2026), and the ratio **rises with humidity** from 0.36 (RH below 50 %) to 0.74 (above 90 %): they under-read, and under-read less in damp air. The same
-humidity slope appears in PM10 (coefficient -0.63 vs -0.61 for PM2.5, an independent check). This is why every sensor value in the app is calibrated. The
+humidity direction appears in PM10 too (coefficient -0.43 on 88 days vs -0.61 for PM2.5). This is why every sensor value in the app is calibrated. The
 map is therefore about twice as polluted as before the calibration on the same day; that is a correction, not a regression.
 
 With a `WAQI_TOKEN` the map also shows the municipal stations (ringed dots) and compares nearby citizen sensors with them. On 2026-10-17 around 21:30,
-citizen-sensor PM10 read **0.46x** the reference raw and **1.31x** after the (short, nine-day) PM10 calibration: closer, but now over at three of five
-stations; one hour, and the reference PM10 is converted from AQI, so treat it as a check, not a calibration.
+citizen-sensor PM10 read about **0.5x** the reference raw and **1.4x** after the PM10 calibration (88 days, five stations): the calibration over-reads in damp air and at low
+concentrations; one hour, and the reference PM10 is converted from AQI, so treat it as a check, not a calibration.
 aqicn's terms require attribution, forbid archiving their data, and ask non-profit public deployments to notify the WAQI team by email.
 GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when checked and exposes no station coordinates, so it is not used.
 

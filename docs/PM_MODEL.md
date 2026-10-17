@@ -89,7 +89,7 @@ Rebuild: `make dem history construction train` (history takes about an hour and 
 **Why that is plausible.** Construction dust is mostly coarse. One site study estimated 207 kg/yr PM10 against 59.5 kg/yr PM2.5 and modelled hourly means of 112 vs 11 µg/m³ (Čavić et al. 2025); a London study found PM10 limit exceedances next to sites (Azarmi et al. 2016). PM10 is where a signal would show, and it is not in the history yet (only 9 days: PM10/PM2.5 1.81 near sites vs 1.71 elsewhere, and 1.79 vs 1.65 at night, so not specific to working hours).
 
 **What was tried to improve it**
-1. **PM10 instead of PM2.5: not run yet.** The Sensor.Community archive stopped answering from this machine after a fast download (it works for others; the live API is fine). `backend/data_prep/history.py` now runs slowly, writes to its own file (`--name sensors_pm10`), and stops instead of recording empty days. A waiter script restarts it when the archive answers. Then rerun `python -m backend.ml.construction_check` (PM10 pre-specified check below). Only 9 days of PM10 exist today.
+1. **PM10 instead of PM2.5: now run, see "Step back: more data" below (negative).** The Sensor.Community archive had stopped answering from this machine after a fast download (it works for others; the live API is fine). `backend/data_prep/history.py` now runs slowly, writes to its own file (`--name sensors_pm10`), and stops instead of recording empty days. A waiter script restarts it when the archive answers. Then rerun `python -m backend.ml.construction_check` (PM10 pre-specified check below). Only 9 days of PM10 exist today.
 2. **Sentinel-2 activity per site** (`make construction-activity`, 10 m bands inside each footprint, this summer vs last): 1,389 of 1,881 sites scored, 877 bare now, 65 cleared since last year. Sensors near **bare-now** sites: +0.07 to +0.08 rank correlation (interval includes 0). Sensors near **cleared-since** sites: +0.11 to +0.12, but only 9 to 30 sensors, the interval barely excludes 0 at one radius, and the "green now" control scores +0.12 on the same partial measure. Treat as a lead, not a result.
 3. **More OSM tags:** only 2 of 1,881 sites were last checked before 2023, so dropping stale ones changes nothing; weighting by building height (24 sensors near tall sites) gives +0.04.
 4. **Dated permits: skipped.** A public register exists ([nag.sofia.bg](https://nag.sofia.bg/RegisterBuildingPermitsPortal/Index)) but it has no export, no coordinates, and a copyright notice requiring written consent, so it needs an agreement with the municipality.
@@ -170,11 +170,11 @@ d is the best and the simplest within one standard error of the best by block-wi
 Disc radius barely matters (MAE 3.12 / 3.16 / 3.14 for 1 / 1.5 / 2 km). A last-quarter-of-the-year fit gives MAE 3.96, bias −0.95 (future check).
 
 ### PM10 cross-check
-The PM10 sensor history is only the 9 autumn days of 2026 the archive gave before it stopped answering (a re-pull stalled; `make history --name sensors_pm10 --since 2026-01-01` is ready for when it answers). Against the five PM10 stations, 984 station-hours, RH only 26–82 %:
+First done on the 9 autumn days the archive gave before it stalled (984 station-hours), then **redone on the full PM10 history** (191 days pulled when the archive answered again; 9,969 station-hours in 2026, 88 days, humidity 27–94 %, five stations):
 
-- Same fit form, **RH coefficient −0.632 for PM10 against −0.609 for PM2.5**. Independent stations, a different pollutant, the same humidity behaviour.
-- Calibrated PM10 MAE 7.2 vs raw 15.3 µg/m³; median ratio per RH bin 0.91–1.01 up to 80 % RH, 1.35 above (n=70).
-- This PM10 fit is saved as a stop-gap for the live WAQI comparison; it is indicative, fitted on 9 days.
+- Same fit form, **RH coefficient −0.43 for PM10 against −0.61 for PM2.5**: same sign, weaker. The first estimate (−0.63 from 9 days) looked like an exact match; it was a short-sample coincidence and is withdrawn.
+- Calibrated PM10 average error 7.0 vs raw 14.3 µg/m³. Median calibrated/reference ratio by humidity band: 1.05 / 0.91 / 0.89 / 0.95 / 1.09 / **1.17** (dry to above 90 %): it overshoots in the dampest air.
+- By calibrated value, reference ÷ calibrated is 0.75 below 10, 1.01 at 10–25, 0.96 at 25–50, 0.87 above 50: it over-reads at both ends. This PM10 fit feeds only the live WAQI comparison.
 
 ### Acceptance (proposed bars)
 | Bar | Result |
@@ -425,5 +425,77 @@ The proposed rule was: within-hour Spearman below 0.3 in polluted heating-season
 - **Future-days drift**: level intervals are too narrow on the last quarter of the history (above-p90 0.16).
 - **No heating map**: the strongest known winter source has no usable feature; the OSM proxy fails its bar. Needs census heating-fuel data, the district-heating polygon, or the low-emission-zone geometry (Phase 4 lists whom to ask).
 - **Observed heavy hours are under-predicted** (−5.4 µg/m³ on hours whose outcome was ≥ 25; an outcome-selected statistic, but real for the alert's recall: the red tier misses 6 of 32 episodes in the test winter).
-- **PM10 calibration** rests on nine autumn days; the live WAQI check overshoots (1.31×).
-- **Not done**: the Sensor.Community PM10 re-pull (archive not answering), ELAPSE surfaces (no public download), NIMH station forecasts.
+- **PM10 calibration** (88 days, five stations) over-reads in the dampest air and at low concentrations; the live WAQI check reads 1.38× (range 1.03–1.92) against 0.54× raw. WAQI's PM10 is converted from AQI, so neither number is firm.
+- **Not done**: ELAPSE surfaces (no public download), NIMH station forecasts, census heating fuel / district-heating area / low-emission-zone geometry.
+
+
+## Step back: more data, and a direct model
+
+Prompted by the objection that one city-wide weather point and one city median cannot describe a city whose parts differ in traffic, temperature, buildings and vegetation ("Sofia is 20 degrees, so Varna is 20 degrees"), the data were re-examined, new local sources were pulled, and the model was rebuilt the way the objection suggests: inputs = coordinates, hour, the nearest sensors' readings, weather, static features, output = what a sensor there would read. Result: **the objection is right about the inputs and wrong about the payoff**. Local inputs exist and differ, but the place-dependent signal they could explain is small next to a stable sensor-specific offset that no input predicts.
+
+### Local conditions do differ
+Open-Meteo for six places on 2026-01-01 22:00 (a polluted inversion night; Hipodruma 63 µg/m³): boundary-layer height 20 / 65 / 20 / 30 / 80 / 220 m (centre / Lyulin / Mladost / Nadezhda / Kremikovtsi / Vitosha foot), wind 0.5 to 13.5 km/h, humidity 51 to 87 %, temperature −1.8 to −5.5 °C. Over winter nights at 35 grid points, the spread across the city is large relative to the variation in time: boundary-layer height 87 m (SD across points) vs 167 m (SD in time of the city mean), wind 3.0 vs 3.3 km/h, humidity 6.9 vs 7.9 %, CAMS PM2.5 13.1 vs 14.1 µg/m³.
+
+### New data pulled
+| Data | What | Size / coverage | Command |
+|---|---|---|---|
+| Weather and CAMS grid | Open-Meteo historical forecast + CAMS PM2.5/PM10/NO2 at 35 points over Sofia | 672,000 hours, 2024-08 to 2026-10 | `python -m backend.data_prep.weather_grid` |
+| Local temperature / humidity / pressure | the BME280, DHT22, SHT3x next to the PM sensors (Sensor.Community archive) | 203 of 258 outdoor PM locations; 574,670 sensor-hours over the 130 history days | `python -m backend.data_prep.history_env` |
+| Building height, volume, population | JRC GHSL (GHS-BUILT-H, -V, GHS-POP), 3 arc seconds (~90 × 68 m), CC BY 4.0 | 3 small rasters in `data/ghs_*.tif` | `python -m backend.data_prep.ghsl` |
+| PM10 history | the Sensor.Community archive, same days as PM2.5 | 191 days, 697k sensor-hours | `python -m backend.data_prep.history --name sensors_pm10 --same-days --no-series` |
+
+Considered and left out: EUBUCCO per-building heights (about 57 % are ML-estimated from footprint attributes, so they add little over the OSM footprints already used), satellite NO2/aerosol (5 km and coarser), the TNO wood-combustion inventory (7 km), the Sofia open-data portal (no usable datasets found). `backend/ml/local_features.py` turns the first three into per-place, per-hour inputs (the target's own co-located temperature sensor, if any, is never used).
+
+### The direct model (`backend/ml/direct_model.py`)
+One gradient-boosted model: coordinates, 8 nearest *other* sensors' readings with distance and direction, neighbour means inside 5 radii, weather and CAMS at the target and issue hours, static features, optional local inputs. Scored on sensors never trained on in weeks never seen ("bi-fold": sensors and weeks both split in five, fold k tests on sensor group k in week group k, trains on rows outside both). Hidden sensor predicted at lead 0, same hours and sensors as the kriging chain refitted on the same training weeks. Median error in µg/m³ / within-hour Spearman:
+
+| | all hours | polluted heating (city > 15) | 80 % interval holds |
+|---|---|---|---|
+| terrain trend alone | 2.94 / 0.16 | 8.96 / 0.21 | – |
+| **kriging chain (current)** | **2.78 / 0.25** | **8.07 / 0.34** | 0.79 |
+| direct model, first version (anchored on CAMS) | 3.90 / 0.10 | 10.57 / 0.18 | 0.64 |
+| ... without coordinates | 3.83 / 0.08 | 10.33 / 0.18 | – |
+| ... without coordinates and static features | 3.81 / 0.10 | 10.30 / 0.20 | – |
+| ... without coordinates, static features and weather | 4.83 / 0.14 | 13.61 / 0.24 | – |
+| direct model, anchored on the neighbours' median (a design fix) | 3.73 / 0.06 | 10.32 / 0.15 | – |
+| ... plus local weather grid, nearby temperature sensors, GHSL buildings | 3.76 / 0.07 | 10.46 / 0.12 | – |
+
+It is **worse than the plain median plus terrain** at every cut. Coordinates and static features hardly matter (removing them changes the error by 0.1); the nearest sensors' distances and directions already fingerprint a place, so the trees memorise it. The first version's CAMS anchor was a design flaw (the trees had to rebuild the city level); anchoring on the neighbours' median helped a little and did not change the verdict. The local inputs add nothing here either. These runs used the median model only (no intervals), except the first.
+
+### ML on top of kriging (`backend/ml/stack_eval.py`)
+The standard remedy: keep kriging and let the trees learn what is left over, trained on the reading with the sensor's own offset removed (otherwise they learn offsets from features that fingerprint the place). Development on folds 0 and 1 only looked like a small gain (median error −2 %, ranking +0.025); **on the untouched folds 2–4 it does not replicate**:
+
+| Folds 2–4, hidden sensors | kriging | + ML, local inputs | + ML, no local inputs | knowing the sensor's own offset (ceiling) |
+|---|---|---|---|---|
+| all: error / ranking | 2.99 / 0.264 | 3.04 / 0.243 | 3.03 / 0.256 | 1.62 / 0.778 |
+| heating | 5.54 / 0.330 | 5.75 / 0.301 | 5.68 / 0.316 | 2.61 / 0.808 |
+| polluted heating (city > 15) | 8.58 / 0.350 | 8.95 / 0.316 | 8.83 / 0.337 | 4.07 / 0.797 |
+| city > 25 | 11.97 / 0.358 | 12.54 / 0.315 | 12.31 / 0.340 | 6.12 / 0.769 |
+
+The local weather grid, the nearby temperature sensors and the GHSL buildings do not improve the held-out prediction; the ML step is slightly worse than kriging alone.
+
+### Why: the sensors' offsets are not about the place
+The last column is the key. If the model knew each hidden sensor's persistent offset (its stable deviation from what the trend and the neighbours predict), the error would halve and the ranking would jump from 0.25–0.35 to about 0.8. So about 85 % of the ranking among sensors is that one number per sensor. Is it the air of the place, or the instrument? Offsets of neighbouring sensors are **uncorrelated**:
+
+| distance between two sensors | pairs | correlation of their offsets |
+|---|---|---|
+| 0–150 m | 17 | +0.05 |
+| 150–300 m | 56 | +0.07 |
+| 300–600 m | 174 | +0.02 |
+| 0.6–1.2 km | 604 | −0.04 |
+| 1.2–2.5 km | 2,446 | +0.01 |
+| 2.5–6 km | 11,211 | +0.01 |
+
+Predicting a hidden sensor's offset from its 1, 3 or 8 nearest sensors' offsets gives R² of −0.73, −0.39, −0.26 (worse than the average). If offsets were local pollution (a heated street, a canyon), nearby sensors would share part of it; they do not. They look like instrument and siting differences (calibration, inlet height, enclosure, sun on the housing), which is also why they are stable (r = 0.85 between halves of the history). (Caveat: the 0–150 m bin has only 17 pairs.) This also explains why no feature, however local, can predict them: they are not a function of place.
+
+What is predictable is the hour-to-hour spatial structure after the offsets: neighbourhood-scale, 80 % intervals holding, and that is what the kriging chain models.
+
+### Other checks run
+- **Measured NO2 as an input to the PM2.5 level (the NO2 card's idea, tested):** adding the mean of the five EEA NO2 stations at the issue hour changes the level model's average error from 2.351 to 2.339 µg/m³ and makes episodes slightly worse (8.60 → 8.69). Adding NO2 at the target hour (2.263) is a nowcast only, not available for a forecast, and the sensors already give the level at lead 0. **Not a PM2.5 input.** (dishai-34's separate NO2 model and card stand on their own.)
+- **PM10 construction-dust check, pre-specified earlier, now run on 191 days of PM10:** sensors within 300 m of sites cleared since last summer (24 sensors) vs sensors with no mapped site within 300 m (47): workday-minus-weekend daytime gap +0.043 log units, 95 % interval [−0.095, +0.169]. **Includes zero: no site-activity term.** Also nothing for bare sites, any mapped site, or the green control; PM10/PM2.5 near sites +0.593 vs +0.574 elsewhere.
+- **PM10 calibration** refit on the full history (see the Phase 1 cross-check): RH coefficient −0.43, not the −0.63 first seen on 9 days.
+
+### What this means for the design
+- The chain stays: calibrated level, kriging with offsets removed, neighbourhood-level display, honest intervals. The direct model and the ML-on-kriging step are kept as experiments (`direct_model.py`, `stack_eval.py`), not shipped.
+- To make street-level claims possible, the instrument part of the offsets has to be separated from the place part. That needs data not available here: side-by-side runs of a few citizen sensors next to a reference station (or each other) to calibrate each sensor individually, or sensor metadata (inlet height, enclosure, location type). With per-sensor calibration, the sensors' remaining differences would be the place's, and the local inputs pulled here would have something to explain.
+- The local weather grid and the sensors' temperatures are still the right inputs for the *level* forecast (boundary-layer height 20 vs 220 m on the same night); that has not been tested yet and is the next experiment: city level from local rather than central weather.

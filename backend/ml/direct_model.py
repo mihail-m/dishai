@@ -27,6 +27,7 @@ from ..cai.features import _load_raster, compute_features
 from ..cai.graph import DATA, get_net
 from . import spatial_fit as S
 from .pm_model import static_matrix
+from .local_features import Local
 from .train import load_hours
 
 K = 8
@@ -63,6 +64,9 @@ class World:
         self.static = pd.DataFrame({"x": d.xy[:, 0] / 1000, "y": d.xy[:, 1] / 1000, "r_center": np.linalg.norm(d.xy - np.array([[0.0, 0.0]]), axis=1) / 1000,
                                     **cols, "construction": cons, "lowrise250": low250, "lowrise1000": low1000, "bld250": bld250})
         self.static_cols = list(self.static.columns)
+        self.local = Local(d.times, d.xy) if LOCAL else None
+        if self.local is not None:
+            self.static = pd.concat([self.static, self.local.static], axis=1)
 
     def _lonlat(self):
         from ..cai.graph import to_lonlat
@@ -134,12 +138,21 @@ def features(w: World, rows: pd.DataFrame) -> pd.DataFrame:
                            "cams25": w.cams25[t], "cams10": w.cams10[t], "cams25_issue": w.cams25[t0], "stag_issue": d.stag[t0]})
     f = pd.concat([st, time_f, f], axis=1)
     f["med_others_vs_cams"] = f.med_others - np.log1p(f.cams25_issue)
+    if w.local is not None:
+        xy = d.xy[ri]
+        f = pd.concat([f, w.local.grid_features(xy, t.astype(int)), w.local.env_features(xy, t0.astype(int))], axis=1)
+        for v in ("boundary_layer_height", "temperature_2m", "relative_humidity_2m", "wind_speed_10m"):  # how the place differs from the city
+            f[f"g_{v}_vs_city"] = f[f"g_{v}"] - w.hrs[{"boundary_layer_height": "boundary_layer_height", "temperature_2m": "temperature_2m",
+                                                       "relative_humidity_2m": "relative_humidity_2m", "wind_speed_10m": "wind_speed_10m"}[v]].to_numpy()[t]
     return f
 
 
 def target(w: World, rows: pd.DataFrame, f: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """(y, anchor): y = log1p(sensor) - anchor, anchor = log1p(CAMS at the target hour), else the city median at issue."""
-    anchor = np.where(np.isfinite(f.cams25), np.log1p(f.cams25.to_numpy()), f.med_others.to_numpy())
+    """(y, anchor): y = log1p(sensor) - anchor. The anchor is the median of the other sensors at the ISSUE hour (known exactly) moved by how
+    much CAMS says the city changes between the issue hour and the target hour; at lead 0 that is just the neighbours' median. (An earlier
+    version anchored on CAMS at the target hour and made the trees rebuild the city level; it lost to simply using the median.)"""
+    delta = np.log1p(f.cams25.to_numpy()) - np.log1p(f.cams25_issue.to_numpy())
+    anchor = f.med_others.to_numpy() + np.where(np.isfinite(delta), np.clip(delta, -1.5, 1.5), 0.0)
     obs = w.d.U[rows.i.to_numpy(), rows.t.to_numpy()]
     return obs - anchor, anchor
 
@@ -149,12 +162,21 @@ def gbm(q: float | None, n_iter: int = 300) -> HistGradientBoostingRegressor:
     return HistGradientBoostingRegressor(loss="quantile", quantile=q, **kw) if q is not None else HistGradientBoostingRegressor(**kw)
 
 
+GROUPS = {"coords": ["x", "y", "r_center"],
+          "static": ["elev", "rel_elev", "G", "canopy", "ndvi", "lst_anom", "construction", "lowrise250", "lowrise1000", "bld250"],
+          "weather": [c for c in ["hour", "month", "weekend", "w_stagnation", "w_inversion", "cams25", "cams10", "cams25_issue", "stag_issue", "med_others_vs_cams"]] + [f"w_{c}" for c in WEATHER]}
+FAST = False  # --fast: median model only (no intervals), for ablations
+LOCAL = True  # local weather grid, nearby temperature sensors, buildings (needs the data pulls); --no-local to switch off
+
+
 def fit_models(X: pd.DataFrame, y: np.ndarray, weeks: np.ndarray, anchors: np.ndarray, lead: np.ndarray) -> dict:
     """p10/p50/p90 plus conformal widening from a held-out quarter of the training weeks (then no refit: the margin stays honest)."""
     uw = np.unique(weeks)
     rng = np.random.default_rng(SEED)
     cal_w = rng.choice(uw, max(2, len(uw) // 4), replace=False)
     cal = np.isin(weeks, cal_w)
+    if FAST:
+        return {"m": {0.5: gbm(0.5).fit(X, y)}, "lo": np.zeros(3), "hi": np.zeros(3)}
     ms = {q: gbm(q).fit(X[~cal], y[~cal]) for q in (0.1, 0.5, 0.9)}
     Xc, yc = X[cal], y[cal]
     p = {q: ms[q].predict(Xc) for q in ms}
@@ -169,6 +191,8 @@ def fit_models(X: pd.DataFrame, y: np.ndarray, weeks: np.ndarray, anchors: np.nd
 
 def predict(model: dict, X: pd.DataFrame, lead: np.ndarray):
     p = {q: model["m"][q].predict(X) for q in model["m"]}
+    if len(p) == 1:
+        return p[0.5], p[0.5], p[0.5]
     b = np.digitize(lead, (5, 23), right=True)
     return p[0.5] - 0.0, np.minimum(p[0.1] - model["lo"][b], p[0.5]), np.maximum(p[0.9] + model["hi"][b], p[0.5])
 
@@ -182,7 +206,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--rows", type=int, default=450_000)
+    ap.add_argument("--drop", default="", help="comma list of input groups to remove: coords, static, weather, nn (neighbour readings)")
+    ap.add_argument("--fast", action="store_true", help="median model only, no intervals")
+    ap.add_argument("--no-local", action="store_true", help="leave out the local weather grid / nearby temperature sensors / buildings")
     a = ap.parse_args()
+    global FAST, LOCAL
+    FAST, LOCAL = a.fast, not a.no_local
+    drop = [c for g in filter(None, a.drop.split(",")) for c in (GROUPS.get(g) or [c for c in [] ])]
+    if "nn" in a.drop.split(","):
+        drop += [f"{p}{k}" for p in ("nn_u", "nn_d", "nn_dx", "nn_dy") for k in range(K)] + [f"mean_r{r}" for r in RADII] + [f"cnt_r{r}" for r in RADII] + ["sd_others"]
     rng = np.random.default_rng(SEED)
     w = World()
     d = w.d
@@ -196,6 +228,8 @@ def main() -> int:
     print(f"building features for {len(rows):,} rows ...", file=sys.stderr)
     F = features(w, rows)
     y, anchor = target(w, rows, F)
+    F = F.drop(columns=[c for c in drop if c in F.columns])
+    print(f"inputs: {F.shape[1]} columns" + (f" (dropped {a.drop})" if a.drop else ""), file=sys.stderr)
     rows_fold_s, rows_fold_w = sensor_fold[rows.i.to_numpy()], wf_t[rows.t.to_numpy()]
     wk = d.week[rows.t.to_numpy()]
     month = d.month[rows.t.to_numpy()]
@@ -225,6 +259,7 @@ def main() -> int:
         r0["t0"], r0["lead"] = r0.t, 0
         F0 = features(w, r0)
         y0, a0 = target(w, r0, F0)
+        F0 = F0.drop(columns=[c for c in drop if c in F0.columns])
         m0, l0, h0 = predict(mdl, F0, r0.lead.to_numpy())
         kr["direct"] = np.expm1(a0 + m0)
         kr["inside_d"] = ((y0 >= l0) & (y0 <= h0)).astype(float)
