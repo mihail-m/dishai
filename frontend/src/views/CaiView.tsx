@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AreasResp, Forecast, Scenario, EdgeExplain, GoogleAir, IncidentsResp, TrafficResp } from "../types";
+import type { AreasResp, Forecast, Scenario, EdgeExplain, GoogleAir, IncidentsResp, No2Resp, TrafficResp } from "../types";
 import type { Stage } from "../stage";
 import { api2 } from "../api";
 import { caiCss, relCss } from "../map/cai";
@@ -11,6 +11,7 @@ import ValidationCard from "../components/ValidationCard";
 import ReferenceCard from "../components/ReferenceCard";
 import TrafficCard from "../components/TrafficCard";
 import GoogleAirCard from "../components/GoogleAirCard";
+import No2Card from "../components/No2Card";
 
 interface Props { stage: Stage; fc: Forecast | null; scenario: Scenario; hourIndex: number; setHourIndex: (i: number) => void }
 
@@ -41,6 +42,8 @@ export default function CaiView({ stage, fc, scenario, hourIndex, setHourIndex }
   const [incidents, setIncidents] = useState<IncidentsResp | null>(null);
   const [showTraffic, setShowTraffic] = useState(true);
   const [gair, setGair] = useState<GoogleAir | null>(null);
+  const [no2, setNo2] = useState<No2Resp | null>(null);
+  useEffect(() => { api2.no2().then(setNo2).catch(() => undefined); }, []);
   useEffect(() => { api2.googleAir().then(setGair).catch(() => undefined); }, []);
   useEffect(() => {
     let off = false;
@@ -122,6 +125,7 @@ export default function CaiView({ stage, fc, scenario, hourIndex, setHourIndex }
         hour={Number(window?.forecast.hours[hourIndex]?.time.slice(11, 13) ?? 12)}
         weekend={[0, 6].includes(new Date(`${window?.forecast.hours[hourIndex]?.time ?? ""}:00`).getDay())} />}
       <ReferenceCard ref_={stage.reference} />
+      {scenario === "live" && <No2Card d={no2} />}
       {scenario === "live" && <GoogleAirCard g={gair} ours={window?.forecast.hours[0]?.pm25_model ?? null} />}
       <ValidationCard key={window?.id} scenario={scenario} />
       {fc && (

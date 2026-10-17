@@ -38,7 +38,7 @@ export const PM_LEVEL_TEXT = { good: "Fine", watch: "Sensitive groups", warning:
 export const PM_WATCH = 15;  // WHO 24 h guideline
 export const PM_WARNING = 25;  // EU 24 h limit
 
-import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, IncidentsResp, Mode, NetworkResp, ReferenceResp, RouteResp, TrafficResp, Validation } from "./types";
+import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, IncidentsResp, Mode, No2Resp, NetworkResp, ReferenceResp, RouteResp, TrafficResp, Validation } from "./types";
 export interface ForecastRequest { forecastId?: string; signal?: AbortSignal; includeGoogle?: boolean }
 const snapshotQuery = (opts?: ForecastRequest) => opts?.forecastId ? `&forecast_id=${encodeURIComponent(opts.forecastId)}` : "";
 export const api2 = {
@@ -59,4 +59,5 @@ export const api2 = {
   traffic: () => j<TrafficResp>("/api/traffic", { cache: "no-store" }),
   incidents: () => j<IncidentsResp>("/api/traffic/incidents", { cache: "no-store" }),
   googleAir: () => j<GoogleAir>("/api/google-air"),
+  no2: () => j<No2Resp>("/api/no2"),
 };

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict
 
 from . import advice as advice_mod
 from . import alert as alert_mod
-from . import airthings, geo, google_air, sensors as sensors_mod, waqi
+from . import airthings, geo, google_air, no2_model, sensors as sensors_mod, waqi
 from .cache import Cache
 from .cai import config as C
 from .cai import krige as krige_mod
@@ -795,6 +795,7 @@ def refresh_forecast_sources():
 cai_router = make_router(build_forecast, build_sensors, Scenario, ScenarioQ, build_sensors_24h, district_at,
                          refresh_sources=refresh_forecast_sources, now=lambda: sofia_now())
 app.include_router(cai_router)
+app.include_router(no2_model.make_router(build_forecast))  # /api/no2: NO2 forecast and the traffic-NO2 study
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
