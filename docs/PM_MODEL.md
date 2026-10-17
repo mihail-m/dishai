@@ -559,3 +559,25 @@ A weather-free local model that works in both eras: kriged backbone (offsets rem
 
 ### Against the place's own variation
 Scored against the sensors' readings with their own persistent offset removed (the place's hour-to-hour variation, without the instrument bias), the same kriging predictions look much better: within-hour Spearman 0.455 in the heating season and 0.462 in polluted winter hours (0.330 / 0.350 against the raw readings), median error 4.6 µg/m³ in polluted winter hours (vs 8.6). The ML correction still does not beat kriging on that target (0.432). So a model of *local* variation exists and works moderately; the raw-reading scores understate it because each sensor carries an instrument bias that no input can predict.
+
+
+## Multi-city calibration (`python -m backend.data_prep.multicity pull`, `python -m backend.ml.calibrate_pooled`)
+
+The Sofia calibration rests on one reference station (13–14 sensors, 91 hours above 25 µg/m³, 3 above 50). The same SDS011 sensors sit next to EEA PM2.5 stations across Europe, so the calibration was refitted on many cities and scored on Sofia, and the other way round. Data (2026, the same sample days as the Sofia history, sensors from the Sensor.Community archive within 1.5 km of each station, at least 3 per hour, RH and temperature from Open-Meteo at the station): **52 EEA stations in 29 cities** (DE 33, BE 8, BG 3, NL 2, MK 2, GR, RO, SE, SK), 96,309 station-hours, **1,477 hours above 50 µg/m³** (Sofia alone: 3). Austria, Poland, Spain and Italy could not be matched (their EEA file names do not contain the station code). Whole weeks are held out in every score.
+
+**Scored on Sofia (Hipodruma):**
+
+| fit | average error | bias | r | calibrated ÷ reference by humidity band | error / bias when the station reads > 25 |
+|---|---|---|---|---|---|
+| raw sensors | 5.16 | −4.78 | 0.742 | 0.37–0.76 | 15.1 / −15.1 |
+| Sofia only (the app's calibration) | **3.22** | −0.41 | 0.797 | 0.97–1.04 | **8.0 / −6.8** |
+| **other cities only (never saw Sofia)** | 3.31 | +0.10 | 0.787 | 0.97–1.14 | 8.5 / −7.7 |
+| all cities pooled | 3.31 | +0.03 | 0.787 | 0.97–1.13 | 8.8 / −8.3 |
+
+**A calibration fitted without any Sofia data is within 3 % of the Sofia-specific one**, and the correction removes the same ~40 % of the error. **Leave one city out, over 28 cities:** raw 5.35 → fitted on the other cities 3.17 (−41 %) → fitted on the city itself 2.71; the Sofia-only fit applied elsewhere gives 3.54, worse than the pooled fit (3.17), so the Sofia fit is slightly Sofia-specific and the pooled one travels better.
+
+**What generalises:** the humidity term, `−0.67` pooled vs `−0.62` Sofia; the log-linear form; the ~2× under-reading (raw ÷ reference median 0.3–0.6 in every country). **What does not:** the Sofia fit's temperature term (+0.17) and heating-season term (+0.31) are not supported elsewhere (pooled −0.06 and +0.005), a hint that they partly absorb Sofia-specific effects of a single station.
+
+**The high end, which one station could not test.** Reliability by the calibrated value (leave-one-city-out, all cities): when the calibrated reading is above 25 µg/m³ the station reads a median **1.06×** that value (6,942 hours); above 50, **0.95×** (786 hours). A flexible model (gradient boosting) gives 1.03 and 1.04 and 7 % lower error overall (2.96 vs 3.17), but no better on Sofia (3.33), so the simple form stays. The "−8 µg/m³ bias when the station reads > 25" is selection on the outcome (regression to the mean), not a bias given the sensor reading.
+
+**Decision.** No change to the app's calibration: the pooled fit is not better on Sofia (3.31 vs 3.22). What changes is the confidence: the form, the humidity slope and the behaviour above 50 µg/m³ are now backed by 52 stations instead of one, and the earlier caveat that values above ~40 µg/m³ were pure extrapolation is replaced by "checked against other cities". Caveats: 34 of the 52 stations are German, whose aerosol differs from Sofia's winter smoke; the Sofia heating-season term is untested outside Sofia; the pooled test uses 2026 only.
