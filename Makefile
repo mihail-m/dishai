@@ -1,4 +1,4 @@
-.PHONY: dem history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: dem construction history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -42,6 +42,8 @@ trees:
 	$(PY) -m backend.data_prep.trees_sofiaplan   # Sofia tree inventory -> data/tree_crown_m2.tif (~45 min, polite sequential crawl, resumable)
 bake:
 	$(PY) -m backend.cai.graph                      # data/*.graphml -> data/net.npz (what the app loads)
+construction:
+	$(PY) -m backend.data_prep.construction   # OSM construction sites -> data/construction.tif
 dem:
 	$(PY) -m backend.data_prep.dem                  # Copernicus 30 m terrain -> data/dem.tif
 history:

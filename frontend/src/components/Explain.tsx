@@ -58,6 +58,11 @@ export default function Explain({ e, onClose }: { e: EdgeExplain | null; onClose
           <span className="tabular-nums font-semibold">{e.drivers.heat_weight === 0 ? "off (not hot)" : `${e.heat_points > 0 ? "+" : ""}${e.heat_points} CAI points`}</span>
         </li>
       </ul>
+      {(e.drivers.construction_share ?? 0) >= 0.02 && (
+        <p className="muted mt-2 text-xs" title="OpenStreetMap landuse/building=construction within about 150 m">
+          Construction nearby: {Math.round((e.drivers.construction_share ?? 0) * 100)}% of the area within 150 m. Shown for context, not in the score: citizen sensors near sites do not read dirtier.
+        </p>
+      )}
       <p className="faint mt-3 text-[11px] leading-snug">
         µg/m³ added to or removed from the street&apos;s PM2.5. Traffic term {e.drivers.traffic_term}, rush ×{e.drivers.rush}, trapping ×{e.drivers.amplifier}, greenery {e.drivers.greenery}.
         Indicative screening model with assumed weights.

@@ -40,7 +40,7 @@ Why so small: 66% of the street-to-street variation in the sensors is a fixed pe
 - Open-Meteo historical forecast (weather) and CAMS history, in the same variables the live app uses.
 - Each training row gets a random forecast lead of 0–47 h, so the nowcast inputs mean the same thing in training and in serving.
 
-Rebuild: `make dem history train` (history takes about an hour and is resumable).
+Rebuild: `make dem history construction train` (history takes about an hour and is resumable).
 
 ## How to test it
 
@@ -67,6 +67,17 @@ Rebuild: `make dem history train` (history takes about an hour and is resumable)
 - The big win is the **level**, especially in episodes: when CAMS forecasts an inversion, the old formula overshot the sensors by about 23 µg/m³ on average. The learned model stays within a few µg/m³ of the sensors on average.
 - At 0–5 h ahead it is no better than persistence (expected: the live sensors already give the level). The gain appears from about 6 h out.
 - The **street part is weak**: 0.12–0.16 rank correlation. It is real and slightly better than the old formula, but it cannot say that one street is reliably cleaner than the next. On today's clean-air snapshot neither model beats "everything is the median" (median error 0.94 vs 0.90).
+
+## Things I tried that did not help (so they are not in the model)
+
+| Idea | Result on sensors the model never saw |
+|---|---|
+| CAMS NO₂, SO₂, CO, O₃ as inputs (from the Bagging-GBDT paper's pollutant list) | no gain: average error 5.13 vs 5.10 without, episode-hour error 12.9 vs 12.7 |
+| Tree canopy, NDVI, surface heat, richer street models | memorised individual sensors, no generalisation |
+| **Buildings under construction** (OSM `landuse`/`building=construction`, 1,842 areas, about 5 km²) | street ranking 0.03; sensors within 150 m of sites read slightly *lower*, not higher (correlation with the sensor offset −0.004, +0.044 after traffic and terrain). Shown as context in "Why is this red?" but not in the score. |
+| Live-sensor PM10/PM2.5 ratio (dust vs smoke) | **not tested**: needs the PM10 history re-download, paused. The downloader already keeps PM10 for when it is re-run. |
+
+The construction layer is coarse: OSM sites have no start or end dates and coverage is incomplete, so a real effect near active sites could be hidden. Sofia's building-permit data with dates would be the better test.
 
 ## Limits to keep in mind
 

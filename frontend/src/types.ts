@@ -73,7 +73,7 @@ export interface EdgeExplain {
   id: number; edge: number; time: string; pm25: number; cai: number; street: string | null; street_bg: string | null; near_street: boolean;
   district: string | null; geometry: [number, number][]; road_class: string; length_m: number;
   components_ugm3: { background: number; local_correction: number; traffic: number; ventilation: number; greenery: number };
-  drivers: { traffic_term: number; rush: number; amplifier: number; greenery: number; heat_anomaly: number; heat_weight: number; stagnation_score: number };
+  drivers: { traffic_term: number; rush: number; amplifier: number; greenery: number; heat_anomaly: number; heat_weight: number; stagnation_score: number; construction_share?: number };
   heat_points: number; cai_air_only: number; note: string;
 }
 export interface RouteStats {

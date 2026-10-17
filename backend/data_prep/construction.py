@@ -20,8 +20,9 @@ from shapely.ops import unary_union
 
 from .stac_common import BBOX, DATA, save_geotiff, target_grid
 
-MIRRORS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
-           "https://overpass.private.coffee/api/interpreter"]
+MIRRORS = ["https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter",
+           "https://overpass.kumi.systems/api/interpreter"]
+HEADERS = {"User-Agent": "dishai-inversion-watch/0.1 (research prototype)"}  # public Overpass servers reject anonymous clients
 SUPERSAMPLE = 4
 
 
@@ -37,7 +38,7 @@ def fetch(tries: int = 8) -> dict:
     for attempt in range(tries):
         url = MIRRORS[attempt % len(MIRRORS)]
         try:
-            r = httpx.post(url, data={"data": query()}, timeout=120)
+            r = httpx.post(url, data={"data": query()}, headers=HEADERS, timeout=120)
             if r.status_code == 200:
                 return r.json()
             print(f"{url}: HTTP {r.status_code}, retrying in {wait}s", file=sys.stderr)

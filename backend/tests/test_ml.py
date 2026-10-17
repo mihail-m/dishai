@@ -95,3 +95,12 @@ def test_physics_fallback_when_no_model(ml_world):
     net, feats, hours = ml_world
     m = CaiModel(net, feats, hours, 8, [], ml=False)
     assert m.ml is None and m.explain(0, 10)["model"] == "physics"
+
+
+def test_features_carry_construction_share():
+    from backend.cai.features import compute_features
+    f = compute_features(get_net("walk"))
+    c = f.construction
+    assert c.shape == f.T.shape
+    if f.sources["construction"] != "missing":
+        assert np.nanmin(c) >= 0 and np.nanmax(c) <= 1 and np.nanmax(c) > 0

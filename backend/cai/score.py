@@ -239,6 +239,8 @@ class CaiModel:
                 "traffic_term": round(float(f.T[e]), 2), "rush": round(ctx.rush, 2), "amplifier": round(ctx.amp, 2),
                 "greenery": round(float(f.G[e]), 2), "heat_anomaly": round(float(f.H[e]), 2),
                 "heat_weight": round(ctx.g, 2), "stagnation_score": round(ctx.stagnation, 1),
+                # context only: OSM construction sites within ~150 m. Not in the PM2.5 model (no effect on held-out sensors).
+                "construction_share": round(float(np.nan_to_num(f.construction[e])), 3),
             },
             "heat_points": int(h["cai"][e]) - cai_air,
             "cai_air_only": cai_air,
