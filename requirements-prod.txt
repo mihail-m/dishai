@@ -2,6 +2,7 @@
 fastapi
 uvicorn[standard]
 httpx
+tzdata
 numpy
 scipy
 pyproj

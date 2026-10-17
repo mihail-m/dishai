@@ -9,10 +9,39 @@ corridors and dirty chokepoints are, and ties each action to a measure in the So
 
 ## Run it
 
+### Double-click (Windows or macOS)
+
+1. Keep the whole project folder together. If you downloaded a ZIP, extract it first.
+2. On **Windows**, double-click **`Start DishAI.cmd`**.
+   On **macOS** (Apple Silicon or Intel), double-click **`Start DishAI.command`**.
+3. Wait for setup to finish. Your browser opens automatically when the app is ready.
+
+No separate Python, Node.js, Docker, or API-key installation is needed. The first launch needs internet
+and downloads Python 3.12, Node.js and dependencies; allow a few minutes. Tools and Python packages stay
+inside the git-ignored `.local/` folder; frontend packages stay in `frontend/node_modules/`.
+Later launches reuse these downloads and rebuild the frontend only when its inputs change.
+Setup uses [uv](https://docs.astral.sh/uv/guides/install-python/) and the
+[official Node.js distribution](https://nodejs.org/download/release/v22.23.3/), with archive checksum checks.
+
+Keep the terminal window open while using the app. Press **Ctrl+C** to stop it. Reopening the launcher
+while it is running opens the same app. It listens only on this computer, normally at `http://127.0.0.1:8000`;
+if that port is busy it picks a free one and prints the address. Live data and map tiles need internet;
+cached tools and built UI can be reused without downloading them again.
+
+On macOS, a downloaded file may need **right-click → Open** the first time. Git clones preserve its
+executable permission; if a ZIP extractor drops it, run `chmod +x "Start DishAI.command"` once in the project folder.
+If setup fails, the window keeps the error visible: fix the connection/problem and double-click again.
+Do not copy `.local/` or `frontend/node_modules/` between computers; let each computer set itself up.
+
+For a setup check without opening a browser or fetching live data, run the launcher with `--smoke-test`.
+Use `--no-browser` to run normally without opening a browser.
+
+### Development commands (macOS/Linux shell)
+
 ```bash
 make setup          # venv + pip + npm install (frontend/.npmrc points at the public npm registry)
 make dev            # FastAPI on :8000 + Vite on :5173  ->  http://localhost:5173
-make test           # 57 backend tests (offline: upstream calls are forced to fail)
+make test           # backend tests
 make start          # single process: build the UI and let FastAPI serve it on :8000
 ```
 

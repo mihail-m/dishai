@@ -51,12 +51,12 @@ class Cache:
     def _save_fixture(self, key: str, data: Any) -> None:
         try:
             self.fixture_dir.mkdir(parents=True, exist_ok=True)
-            self._fixture_path(key).write_text(json.dumps(data))
+            self._fixture_path(key).write_text(json.dumps(data), encoding="utf-8")
         except OSError as exc:
             log.warning("could not save fixture %s: %r", key, exc)
 
     def _load_fixture(self, key: str) -> Any | None:
         p = self._fixture_path(key)
         if p.exists():
-            return json.loads(p.read_text())
+            return json.loads(p.read_text(encoding="utf-8"))
         return None

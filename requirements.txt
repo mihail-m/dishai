@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 httpx
+tzdata
 pytest
 # CAI / routing
 numpy

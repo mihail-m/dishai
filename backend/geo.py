@@ -48,4 +48,4 @@ def centroid(geometry: dict) -> tuple[float, float]:
 
 
 def load_features(path: Path) -> list[dict]:
-    return json.loads(path.read_text())["features"]
+    return json.loads(path.read_text(encoding="utf-8"))["features"]

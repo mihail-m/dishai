@@ -31,7 +31,7 @@ def _load_dotenv(path: Path) -> None:
     """Minimal .env reader (no dependency). Existing environment variables win; values are never logged."""
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
@@ -703,7 +703,7 @@ async def _warm():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "districts": len(DISTRICTS)}
+    return {"ok": True, "app": "dishai", "districts": len(DISTRICTS)}
 
 
 # Serve the built frontend and static data when present (single-process demo: `make start`).
