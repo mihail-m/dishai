@@ -8,7 +8,7 @@ export default function MapLegend({ tab, custom }: { tab: "map" | "route" | "net
   const rows: React.ReactNode[] =
     tab === "map"
       ? [
-          <><Line c="#2a9d6f" /><Line c="#e0b030" /><Line c="#d6453d" /> Streets: Clean Air Index (scale on the right)</>,
+          <><Line c="#4ca07e" /><Line c="#e2bc62" /><Line c="#c86458" /> Streets: Clean Air Index (scale on the right)</>,
           <><Dot c="#2f9e63" /><Dot c="#e0b030" /><Dot c="#c0392f" /> Citizen air sensors, coloured by PM2.5</>,
           <><i className="mr-1.5 inline-block h-[5px] w-5 shrink-0 rounded-full align-middle" style={{ background: "#fff", boxShadow: "0 0 0 1.5px #6b7280" }} /> Street you clicked (outlined)</>,
           <><i className="mr-1.5 inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: "#fff", border: "3px solid #111827" }} /> Municipal reference station (name, PM10 µg/m³)</>,
@@ -22,7 +22,7 @@ export default function MapLegend({ tab, custom }: { tab: "map" | "route" | "net
           ]
         : [
             <><Line c="#d6453d" w={2} /><Line c="#d6453d" w={7} /> Wider = more of the 400 sample walks use it on their cleanest route</>,
-            <><Line c="#2a9d6f" /><Line c="#e0b030" /><Line c="#d6453d" /> Colour = Clean Air Index</>,
+            <><Line c="#4ca07e" /><Line c="#e2bc62" /><Line c="#c86458" /> Colour = Clean Air Index</>,
             <><i className="mr-1.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-bold text-white" style={{ background: "#d6288c" }}>1</i> Chokepoint: many fastest routes, low CAI</>,
             <><Dot c="#fff" ring="#6b7280" /><Dot c="#fff" ring="#6b7280" /> Moving white dots: animated illustration of the cleanest routes&apos; direction. Not live traffic or people.</>,
           ];

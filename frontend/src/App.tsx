@@ -131,7 +131,9 @@ export default function App() {
         </nav>
         <div className="seg" role="group" aria-label="Data mode">
           <button aria-pressed={scenario === "live"} onClick={() => setScenario("live")}>Live</button>
-          <button aria-pressed={scenario === "winter_inversion"} onClick={() => setScenario("winter_inversion")}>Winter inversion demo</button>
+          <button aria-pressed={scenario === "winter_inversion"} onClick={() => setScenario("winter_inversion")} title="Demo: simulated January inversion">Winter inversion demo</button>
+          <button aria-pressed={scenario === "summer_heatwave"} onClick={() => setScenario("summer_heatwave")} title="Demo: simulated July heatwave">Summer heatwave</button>
+          <button aria-pressed={scenario === "birch_season"} onClick={() => setScenario("birch_season")} title="Demo: simulated April birch pollen peak">Birch season</button>
         </div>
       </header>
 

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from . import advice as advice_mod
 from . import geo, sensors as sensors_mod, waqi
 from .cache import Cache
-from .scenario import scenario_pm25, winter_inversion_hourly
+from .scenario import HOURLY as SCENARIO_HOURLY, scenario_pm25
 from .score import clamp, label_for, stagnation_score
 
 log = logging.getLogger("inversion_watch")
@@ -49,16 +49,17 @@ WEATHER_URL = (
     f"?latitude={LAT}&longitude={LON}"
     "&hourly=boundary_layer_height,wind_speed_10m,temperature_2m,temperature_925hPa,wind_speed_925hPa,cloud_cover,"
     "apparent_temperature,shortwave_radiation,relative_humidity_2m"
-    "&forecast_days=2&timezone=Europe%2FSofia"
+    "&forecast_days=4&timezone=Europe%2FSofia"
 )
 AQ_URL = (
     "https://air-quality-api.open-meteo.com/v1/air-quality"
     f"?latitude={LAT}&longitude={LON}"
-    "&hourly=pm10,pm2_5,european_aqi&forecast_days=2&timezone=Europe%2FSofia"
+    "&hourly=pm10,pm2_5,european_aqi,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen"
+    "&forecast_days=4&timezone=Europe%2FSofia"
 )
 SENSORS_URL = "https://data.sensor.community/airrohr/v1/filter/box=42.80,23.15,42.60,23.55"
 
-SCENARIOS = ("winter_inversion",)
+SCENARIOS = tuple(SCENARIO_HOURLY)
 SOURCE_RANK = {"scenario": 0, "live": 0, "cache": 1, "stale": 2, "fixture": 3}
 
 cache = Cache()
@@ -183,6 +184,12 @@ def _ffill(values: list, default: float) -> list[float]:
     return out
 
 
+def _pollen_at(hourly: dict, i: int) -> dict | None:
+    """Pollen per type at index i of an Open-Meteo-shaped hourly dict; None when the feed has no pollen keys (old fixtures, winter)."""
+    got = {k: hourly[f"{k}_pollen"][i] for k in advice_mod.POLLEN_TYPES if f"{k}_pollen" in hourly}
+    return got or None
+
+
 def _hhmm(t: str) -> str:
     return t[11:16]
 
@@ -241,10 +248,11 @@ async def build_forecast(scenario: str | None) -> dict:
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     sources: dict[str, str]
 
-    if scenario == "winter_inversion":
-        h = winter_inversion_hourly(today)
+    if scenario:
+        h = SCENARIO_HOURLY[scenario](today)
         sources = {"weather": "scenario", "air_quality": "scenario"}
         pm25, pm10, aqi = h["pm2_5"], h["pm10"], h["european_aqi"]
+        pollen = [_pollen_at(h, i) for i in range(len(h["time"]))]
     else:
         try:
             weather, src_w = await cache.get("open_meteo_forecast", fetch_weather)
@@ -259,6 +267,7 @@ async def build_forecast(scenario: str | None) -> dict:
             h = _rebase(h, today)
         n = len(h["time"])
         pm25, pm10, aqi = [None] * n, [None] * n, [None] * n
+        pollen = [None] * n
         if aq:
             ah = aq["hourly"]
             if src_a == "fixture":
@@ -268,6 +277,7 @@ async def build_forecast(scenario: str | None) -> dict:
                 j = idx.get(t)
                 if j is not None:
                     pm25[i], pm10[i], aqi[i] = ah["pm2_5"][j], ah["pm10"][j], ah["european_aqi"][j]
+                    pollen[i] = _pollen_at(ah, j)
         sources = {"weather": src_w, "air_quality": src_a}
 
     times = h["time"]
@@ -305,6 +315,7 @@ async def build_forecast(scenario: str | None) -> dict:
                 "pm25": pm25[i],
                 "pm10": pm10[i],
                 "aqi": aqi[i],
+                "pollen": pollen[i],  # grains/m3 per type; None where there is no data (absent in old fixtures)
                 "is_night": hr >= 18 or hr < 7,
             }
         )
@@ -334,7 +345,7 @@ def Scenario(value: str | None):
     return value
 
 
-ScenarioQ = Query(None, description="winter_inversion replays a hand-built January inversion")
+ScenarioQ = Query(None, description="demo scenario: winter_inversion, summer_heatwave or birch_season (hand-built 48 h replays)")
 
 
 @app.get("/api/forecast")
@@ -380,7 +391,7 @@ async def build_sensors(scenario: str | None) -> dict:
         recs = sensors_mod.fresh_only(recs)
     out = []
     for r in recs:
-        pm25 = scenario_pm25(r["pm25"]) if scenario else r["pm25"]
+        pm25 = scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]
         out.append({**r, "pm25": pm25, "district": district_at(r["lon"], r["lat"])})
     vals = [r["pm25"] for r in out]
     return {
@@ -518,6 +529,9 @@ async def api_advice(
     profile: Literal["driver", "wood_heater", "vulnerable"],
     district: str,
     scenario: str | None = ScenarioQ,
+    toggles: list[Literal["pollen_allergy", "asthma", "heat_sensitive", "outdoor_exercise", "kids_or_elderly"]] = Query(
+        [], description="personalisation toggles; repeat the parameter. Not stored."
+    ),
 ):
     sc = Scenario(scenario)
     d = get_district(district)
@@ -530,8 +544,10 @@ async def api_advice(
     peak = max(series[ni : ni + 24]) if series else 0
     level = label_for(peak)
     zone = zone_for(d)
+    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], series[ni : ni + 24], "pollen_allergy" in toggles)
     return {
         "profile": profile,
+        "toggles": sorted(set(toggles)),
         "district": d["name"],
         "scenario": sc,
         "status": {
@@ -542,7 +558,8 @@ async def api_advice(
             "best_window": best,
         },
         "zone": zone,
-        "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone),
+        "conditions": cond,
+        "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone, cond, toggles),
         "grant_note": advice_mod.GRANT_NOTE,
     }
 

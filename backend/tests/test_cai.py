@@ -92,7 +92,8 @@ def engine():
         })
     rng = np.random.default_rng(1)
     sens = [{"lon": float(23.25 + 0.15 * rng.random()), "lat": float(42.65 + 0.08 * rng.random()), "pm25": float(8 + 3 * rng.random())} for _ in range(60)]
-    return net, feats, CaiModel(net, feats, hours, now_idx=10, sensors=sens), Router(net)
+    # ml=False: these assertions are about the hand-weighted formula (synthetic hours lack the weather the learned model reads)
+    return net, feats, CaiModel(net, feats, hours, now_idx=10, sensors=sens, ml=False), Router(net)
 
 
 def test_cai_bounds_and_winter_worse_than_calm(engine):
@@ -114,14 +115,27 @@ def test_decomposition_sums_to_pm(engine):
                 assert sum(parts.values()) == pytest.approx(ex["pm25"], abs=0.35)
 
 
-def test_routing_still_discriminates_when_pm_saturates_the_index(engine):
-    """Winter background (>60 ug/m3) clamps every street's CAI air term; routes must still differ by exposure."""
+@pytest.mark.parametrize("hour", [10, 30])
+def test_routing_still_discriminates_when_the_index_is_flat(engine, hour):
+    """Routing weighs PM against the city's own spread, so it finds cleaner routes whether the displayed index is
+    saturated (heavy episode) or almost flat (clean day)."""
     net, _, model, router = engine
-    h = model.hour(30)
-    assert h["B"] > C.PM_NORM and (h["cb"] >= 0.999).mean() > 0.9  # the displayed index saturates...
-    assert h["cr"].std() > 0  # ...but the routing burden keeps the spatial contrast
-    o, d = PAIRS["across"]
-    assert router.routes(o, d, h["cr"], h["pm"], h["cai"])["cleanest"]["dose_change_pct"] < 0
+    h = model.hour(hour)
+    assert h["cr"].std() > 0 and h["cr"].max() <= C.ROUTE_REL_MAX + 1e-6
+    for name in ("across", "central"):
+        o, d = PAIRS[name]
+        r = router.routes(o, d, h["cr"], h["pm"], h["cai"])
+        assert r["cleanest"]["dose_change_pct"] < 0, name
+        assert r["cleanest"]["time_change_pct"] <= C.ROUTE_MAX_EXTRA * 100 + 0.5
+
+
+def test_air_score_is_monotone_and_anchored_on_guidelines():
+    from backend.cai.score import air_score
+    pm = np.linspace(0, 150, 300)
+    s = air_score(pm)
+    assert (np.diff(s) <= 1e-9).all() and s[0] == 100 and s[-1] == 0
+    assert air_score(np.array([5.0]))[0] == 80  # WHO annual guideline
+    assert air_score(np.array([3.0]))[0] < 90  # a clean day is good, not perfect
 
 
 def test_busy_roads_score_worse_than_quiet_paths(engine):

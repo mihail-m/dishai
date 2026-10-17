@@ -32,7 +32,7 @@ export default function Timeline({ fc, hourIndex, onPick }: Props) {
     if (s?.activeTooltipIndex != null) onPick(Number(s.activeTooltipIndex));
   };
   const hasPm = data.some((d) => d.pm25 != null);
-  const xAxis = <XAxis dataKey="time" tickFormatter={(t: string) => (t.slice(11, 13) === "00" ? dayHour(t).slice(0, 5) : hhmm(t))} interval={3} tick={axis} tickLine={false} axisLine={{ stroke: "var(--line)" }} />;
+  const xAxis = <XAxis dataKey="time" tickFormatter={(t: string) => (t.slice(11, 13) === "00" ? dayHour(t).slice(0, 5) : hhmm(t))} interval={data.length > 60 ? 7 : 3} tick={axis} tickLine={false} axisLine={{ stroke: "var(--line)" }} />;
   const marks = (
     <>
       {now && <ReferenceLine x={now} stroke="var(--ink-3)" strokeDasharray="3 3" label={{ value: "now", position: "insideTopLeft", fontSize: 10, fill: "var(--ink-3)" }} />}
@@ -43,7 +43,7 @@ export default function Timeline({ fc, hourIndex, onPick }: Props) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <figure>
-        <figcaption className="mb-1 text-sm font-semibold">Stagnation score, next 24 h <span className="faint font-normal">(0–100, higher traps more pollution)</span></figcaption>
+        <figcaption className="mb-1 text-sm font-semibold">Stagnation score, next {fc.hours.length} h <span className="faint font-normal">(0–100, higher traps more pollution)</span></figcaption>
         <div className="h-[190px]" aria-label="Line chart of the hourly stagnation score">
           <ResponsiveContainer>
             <AreaChart data={data} margin={{ top: 6, right: 8, left: -18, bottom: 0 }} onClick={pick}>

@@ -2,11 +2,18 @@
 
 Formula: see PLAN2.md section 3.
     PM(e,t)  = B(t) + R(e,t) + T(e) * rush(t) * A(t) * shield(e)
-    cost_burden = (1 - g) * clamp(PM/PM_NORM) + g * H(e)        CAI = round(100 * (1 - cost_burden))
+    cost_burden = (1 - g) * (1 - air_score(PM)/100) + g * H(e)        CAI = round(100 * (1 - cost_burden))
 """
 
 # --- bounding box (west, south, east, north) -----------------------------------------------------
 BBOX = (23.15, 42.60, 23.55, 42.80)
+
+# Use the learned PM2.5 model (data/pm_model.joblib) when it exists; False forces the hand-weighted physics formula.
+USE_ML = True
+
+# Hours ahead the forecast slider covers (and the app preloads). Every hour is computed on refresh and fetched per view
+# (the network tab runs one 400-route computation per hour), so this trades reach against load time.
+WINDOW_HOURS = 48
 
 # --- 1. regional level: CAMS bias-corrected by live sensors, then IDW residual ---------------------
 BIAS_MIN, BIAS_MAX = 0.5, 2.0
@@ -60,7 +67,12 @@ HEAT_GATE_FROM_C, HEAT_GATE_RANGE_C = 26.0, 8.0  # apparent temperature
 HEAT_MAX_SHARE = 0.5  # at most half the cost can come from heat
 
 # --- 7. outputs ------------------------------------------------------------------------------------------
-PM_NORM = 60.0  # ug/m3 at which AirNorm saturates
+# PM2.5 (ug/m3) -> air score (100 clean .. 0 worst), piecewise linear through health anchors rather than one straight line to 60:
+# 5 = WHO annual guideline, 15 = WHO 24 h guideline, 25 = EU 24 h limit. A calm autumn day (3 ug/m3) is therefore ~88, not ~95,
+# so streets stay distinguishable instead of the whole city being one shade of green.
+AIR_PM = (0.0, 5.0, 15.0, 25.0, 50.0, 100.0)
+AIR_SCORE = (100.0, 80.0, 60.0, 40.0, 15.0, 0.0)
+PM_NORM = AIR_PM[-1]  # ug/m3 at which the displayed index saturates
 
 # --- routing ---------------------------------------------------------------------------------------------
 WALK_KMH = 4.8
@@ -68,6 +80,11 @@ STEPS_FACTOR = 1.5
 BIKE_KMH = 15.0
 # Relative ventilation rate used for dose: an ASSUMPTION (cycling is commonly cited at 2-3x walking). Scales dose, not route choice.
 BREATHING = {"walk": 1.0, "bike": 2.0}
+# Routing weighs PM2.5 against the city's own spread (p5..p95 over all streets), not the absolute scale: on a clean day the
+# absolute index is almost flat (all streets 90-96), which made every route identical. The floor stops a perfectly flat field
+# from turning measurement noise into detours.
+ROUTE_MIN_SPREAD = 3.0  # ug/m3
+ROUTE_REL_MAX = 2.0  # cap on the relative burden so a single hot spot cannot dominate the cost
 ROUTE_K = 2.0  # cost = time * (1 + lambda * cost_burden * ROUTE_K)
 ROUTE_MAX_EXTRA = 0.30  # cleanest/balanced routes are capped at +30 % time over fastest
 LAMBDAS = {"fastest": 0.0, "balanced": 1.0, "cleanest": 3.0}

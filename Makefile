@@ -1,4 +1,4 @@
-.PHONY: setup dev backend frontend test districts data graph roads ndvi lst canopy bake build start
+.PHONY: dem history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -28,6 +28,8 @@ districts:
 
 graph:
 	$(PY) -m backend.data_prep.graph_dl            # walking graph -> data/graph.graphml (large, git-ignored)
+bikegraph:
+	$(PY) -m backend.data_prep.graph_dl --bike --out data/graph_bike.graphml   # cycling network (git-ignored)
 roads:
 	$(PY) -m backend.data_prep.graph_dl --roads --out data/roads.graphml
 ndvi:
@@ -36,9 +38,17 @@ lst:
 	$(PY) -m backend.data_prep.lst                  # Landsat LST -> data/lst.tif
 canopy:
 	$(PY) -m backend.data_prep.greenery_osm         # OSM canopy fallback -> data/canopy_osm.tif
+trees:
+	$(PY) -m backend.data_prep.trees_sofiaplan   # Sofia tree inventory -> data/tree_crown_m2.tif (~45 min, polite sequential crawl, resumable)
 bake:
 	$(PY) -m backend.cai.graph                      # data/*.graphml -> data/net.npz (what the app loads)
-data: graph roads ndvi lst canopy bake
+dem:
+	$(PY) -m backend.data_prep.dem                  # Copernicus 30 m terrain -> data/dem.tif
+history:
+	$(PY) -m backend.data_prep.history              # Sensor.Community + Open-Meteo history -> data/history/ (~1 h, resumable)
+train:
+	$(PY) -m backend.ml.train                       # fit + evaluate the PM2.5 model -> data/pm_model.joblib
+data: graph bikegraph roads ndvi lst canopy trees bake
 
 # single-process demo: build the UI, FastAPI serves it on :8000
 build:

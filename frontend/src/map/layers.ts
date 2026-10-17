@@ -3,7 +3,7 @@ import { TripsLayer } from "@deck.gl/geo-layers";
 import { PathStyleExtension } from "@deck.gl/extensions";
 import type { Layer } from "@deck.gl/core";
 import type { Sensor, Chokepoint, NetworkResp, RefStation, RouteStats } from "../types";
-import { buildAttributes, caiColor, type Geometry } from "./cai";
+import { buildAttributes, caiColor, relColor, relRange, type Geometry } from "./cai";
 
 type RGB = [number, number, number];
 type Seg = NetworkResp["segments"][number];
@@ -85,10 +85,8 @@ export function markerLayer(points: { id: string; lonlat: [number, number]; labe
 // ---- network view ---------------------------------------------------------------------------------------
 export function networkStatic(n: NetworkResp, relative: boolean, selected: Chokepoint | null): Layer[] {
   const maxUse = Math.max(1, ...n.segments.map((s) => s.usage_clean));
-  const cais = n.segments.map((s) => s.cai);
-  const sorted = [...cais].sort((a, b) => a - b);
-  const lo = relative ? sorted[Math.floor(sorted.length * 0.05)] : 0, hi = relative ? sorted[Math.floor(sorted.length * 0.95)] : 100;
-  const col = (v: number) => caiColor(relative ? ((v - lo) / Math.max(1, hi - lo)) * 100 : v);
+  const { lo, hi } = relRange(n.segments.map((s) => s.cai));
+  const col = (v: number) => (relative ? relColor(v, lo, hi) : caiColor(v));
   const cps = n.chokepoints;
   return [
     new PathLayer<Seg>({
@@ -161,9 +159,7 @@ export function heatColor(anomaly: number, range: number): [number, number, numb
 }
 
 export function areaLayer(a: AreasResp, rows: AreaRow[], scale: "relative" | "absolute"): Layer {
-  const means = rows.map((r) => r.mean).sort((x, y) => x - y);
-  const q = (p: number) => means[Math.floor((means.length - 1) * p)];
-  const lo = q(0.05), hi = q(0.95);
+  const { lo, hi } = relRange(rows.map((r) => r.mean));
   const heat = a.metric === "heat";
   const range = Math.max(Math.abs(a.thresholds.cool ?? 0), Math.abs(a.thresholds.hot ?? 0), 1);
   const extreme = (r: AreaRow) => (heat ? (r.anomaly ?? 0) >= (a.thresholds.hot ?? 99) || (r.anomaly ?? 0) <= (a.thresholds.cool ?? -99)
@@ -172,7 +168,7 @@ export function areaLayer(a: AreasResp, rows: AreaRow[], scale: "relative" | "ab
     id: "areas", data: rows, getPosition: (r: AreaRow) => [r.lon, r.lat], cellSize: a.cell_m, coverage: 0.96, extruded: false, material: false,
     getFillColor: (r: AreaRow) => {
       const c = heat ? heatColor(r.anomaly ?? 0, range)
-        : caiColor(scale === "relative" ? ((r.mean - lo) / Math.max(1, hi - lo)) * 100 : r.mean);
+        : scale === "relative" ? relColor(r.mean, lo, hi) : caiColor(r.mean);
       return [...c, extreme(r) ? 215 : 120] as never; // the cleanest/dirtiest (or coolest/hottest) 10 % stand out
     },
     pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 90],

@@ -75,16 +75,16 @@ def compute_network(net: Net, router: Router, cb: np.ndarray, pm: np.ndarray, ca
             if fe is None or len(fe) == 0:
                 continue
             ft = float(router.time_min[fe].sum())
+            dose_f = float((pm[fe] * router.time_min[fe]).sum())
             chosen = fe
-            for pred in trees:  # cleanest first, back off until within +30 % time
+            for pred in trees:  # cleanest first, back off until within +30 % time and no more dose than the fastest walk
                 ce = router.path_edges(pred, o, int(dn))
-                if ce is not None and router.time_min[ce].sum() <= ft * (1 + C.ROUTE_MAX_EXTRA):
+                if ce is not None and router.time_min[ce].sum() <= ft * (1 + C.ROUTE_MAX_EXTRA) and float((pm[ce] * router.time_min[ce]).sum()) <= dose_f:
                     chosen = ce
                     break
             use_fast[np.unique(net.e_und[fe])] += 1
             use_clean[np.unique(net.e_und[chosen])] += 1
             clean_paths.append(chosen)
-            dose_f = float((pm[fe] * router.time_min[fe]).sum())
             dose_c = float((pm[chosen] * router.time_min[chosen]).sum())
             saved_dose.append(100 * (dose_c / dose_f - 1) if dose_f else 0.0)
             saved_time.append(100 * (router.time_min[chosen].sum() / ft - 1))

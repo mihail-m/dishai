@@ -7,3 +7,5 @@ numpy
 scipy
 pyproj
 rasterio
+scikit-learn
+joblib

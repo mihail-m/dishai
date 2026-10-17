@@ -88,6 +88,9 @@ class Features:
     canopy: np.ndarray
     ndvi: np.ndarray
     lst: np.ndarray
+    construction: np.ndarray  # share of the ~150 m around the street that is a construction site (OSM); NaN when not baked
+    elev: np.ndarray  # terrain height, m (NaN when data/dem.tif is not baked)
+    rel_elev: np.ndarray  # height above the surrounding ~3 km mean: valley floor < 0 < ridge
     median_lst: float | None
     sources: dict
     _tfield: tuple = field(repr=False, default=None)
@@ -103,7 +106,7 @@ def _sample_all(tfield, rasters, median_lst, lon, lat):
     fld, (x0, y0), cell = tfield
     x, y = to_xy(lon, lat)
     T = ndimage.map_coordinates(fld, [(y - y0) / cell, (x - x0) / cell], order=1, mode="nearest").astype("float32")
-    canopy = rasters["canopy"].sample(lon, lat) if rasters.get("canopy") else np.full(len(lon), np.nan, "float32")
+    canopy = np.clip(rasters["canopy"].sample(lon, lat), 0, 1) if rasters.get("canopy") else np.full(len(lon), np.nan, "float32")  # overlapping crowns can exceed 100 %
     ndvi = rasters["ndvi"].sample(lon, lat) if rasters.get("ndvi") else np.full(len(lon), np.nan, "float32")
     lst = rasters["lst"].sample(lon, lat) if rasters.get("lst") else np.full(len(lon), np.nan, "float32")
     ndvi_n = _clamp((ndvi - C.NDVI_LOW) / (C.NDVI_HIGH - C.NDVI_LOW))
@@ -114,21 +117,34 @@ def _sample_all(tfield, rasters, median_lst, lon, lat):
     G = _clamp(G).astype("float32")
     H = (_clamp((lst - median_lst) / C.HEAT_RANGE_K) if median_lst is not None else np.zeros(len(lon))).astype("float32")
     H = np.nan_to_num(H)
-    return {"T": T, "G": G, "H": H, "canopy": canopy, "ndvi": ndvi, "lst": lst}
+    elev = rasters["dem"].sample(lon, lat) if rasters.get("dem") else np.full(len(lon), np.nan, "float32")
+    rel = rasters["dem_rel"].sample(lon, lat) if rasters.get("dem_rel") else np.full(len(lon), np.nan, "float32")
+    construction = rasters["construction"].sample(lon, lat) if rasters.get("construction") else np.full(len(lon), np.nan, "float32")
+    return {"T": T, "G": G, "H": H, "canopy": canopy, "ndvi": ndvi, "lst": lst, "construction": construction, "elev": elev, "rel_elev": elev - rel}
 
 
 def compute_features(net: Net) -> Features:
     sources = {}
     rasters = {}
-    c = _load_raster(DATA / "canopy_osm.tif", scale=0.01, buffer_m=C.GREEN_BUFFER_M)
+    # Tree canopy: the Sofia tree inventory (crown area per 10 m cell / 100 m2) when baked, else the OSM approximation.
+    trees = _load_raster(DATA / "tree_crown_m2.tif", scale=0.01, buffer_m=C.GREEN_BUFFER_M)
+    c = trees if trees is not None else _load_raster(DATA / "canopy_osm.tif", scale=0.01, buffer_m=C.GREEN_BUFFER_M)
     n = _load_raster(DATA / "ndvi.tif", buffer_m=C.GREEN_BUFFER_M)
     lst = _load_raster(DATA / "lst.tif", buffer_m=60.0)
-    for name, r, label in (("canopy", c, "OSM canopy"), ("ndvi", n, "Sentinel-2 NDVI"), ("lst", lst, "Landsat LST")):
+    for name, r, label in (("canopy", c, "Sofia tree inventory (Sofiaplan)" if trees is not None else "OSM canopy"), ("ndvi", n, "Sentinel-2 NDVI"), ("lst", lst, "Landsat LST")):
         sources[name] = label if r is not None else "missing"
         rasters[name] = r
+    cons = _load_raster(DATA / "construction.tif", buffer_m=150.0)
+    rasters["construction"] = cons
+    sources["construction"] = "OSM construction sites" if cons is not None else "missing"
+    dem = _load_raster(DATA / "dem.tif")
+    rasters["dem"] = dem
+    # the mean over ~3 km (the raster is ~35 m/cell), so rel_elev = elevation - this
+    rasters["dem_rel"] = _load_raster(DATA / "dem.tif", buffer_m=1500.0)
+    sources["dem"] = "Copernicus GLO-30" if dem is not None else "missing"
     median_lst = float(np.nanmedian(lst.arr)) if lst is not None else None
     tfield = traffic_field(net)
     out = _sample_all(tfield, rasters, median_lst, net.e_mid_lon, net.e_mid_lat)
     print(f"features: {sources}; median LST {median_lst}", file=sys.stderr)
     return Features(T=out["T"], G=out["G"], H=out["H"], canopy=out["canopy"], ndvi=out["ndvi"], lst=out["lst"],
-                    median_lst=median_lst, sources=sources, _tfield=tfield, _rasters=rasters)
+                    construction=out["construction"], elev=out["elev"], rel_elev=out["rel_elev"], median_lst=median_lst, sources=sources, _tfield=tfield, _rasters=rasters)

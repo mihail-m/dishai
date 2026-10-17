@@ -27,7 +27,7 @@ def client(monkeypatch, tmp_path):
 def test_forecast_offline_uses_fixture(client):
     r = client.get("/api/forecast").json()
     assert r["source"] == "fixture"
-    assert len(r["hours"]) == 48
+    assert len(r["hours"]) >= 48  # 48 in the bundled fixture, 96 once a live fetch has rewritten it
     assert r["hours"][0]["time"].startswith(main.sofia_now().strftime("%Y-%m-%d"))  # rebased to today
     assert all(0 <= h["score"] <= 100 for h in r["hours"])
 

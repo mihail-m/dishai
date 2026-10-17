@@ -1,12 +1,14 @@
 export type Level = "good" | "watch" | "warning";
-export type Scenario = "live" | "winter_inversion";
+export type Scenario = "live" | "winter_inversion" | "summer_heatwave" | "birch_season";
 export type Profile = "driver" | "wood_heater" | "vulnerable";
+export type Toggle = "pollen_allergy" | "asthma" | "heat_sensitive" | "outdoor_exercise" | "kids_or_elderly";
 export type Mode = "walk" | "bike";
 
 export interface Hour {
   time: string; score: number; label: Level; blh: number; wind10m: number; t2m: number; t925: number;
   inversion_delta: number; wind925: number; cloud: number; apparent?: number; radiation?: number | null; rh?: number | null;
   pm25: number | null; pm10: number | null; aqi: number | null; is_night: boolean;
+  pollen?: Record<string, number | null> | null;
 }
 export interface Alert {
   active: boolean; in_progress?: boolean; start?: string; end?: string; start_hhmm?: string; end_hhmm?: string;
@@ -36,8 +38,17 @@ export interface Card {
   id: string; title: string; body: string; severity: "info" | "action"; cta?: string;
   measure: { id: string; label: string };
 }
+export interface HeatSummary {
+  level: "none" | "caution" | "high" | "extreme"; peak_c: number | null; peak_hhmm: string | null;
+  start_hhmm: string | null; end_hhmm: string | null; warm_night: boolean;
+}
+export interface PollenSummary {
+  available: boolean; level: "none" | "low" | "moderate" | "high"; peak_hhmm: string | null;
+  types: { type: string; label: string; grains: number; level: string; peak_hhmm: string }[];
+}
+export interface Conditions { heat: HeatSummary; pollen: PollenSummary; activity: { start_hhmm: string; end_hhmm: string } | null }
 export interface Advice {
-  profile: Profile; district: string;
+  profile: Profile; toggles: Toggle[]; district: string; conditions: Conditions;
   status: { level: Level; current_score: number; peak_score: number; alert: Alert; best_window: Window | null };
   zone: { zone: "inner" | "outer" | null; illustrative: boolean; label: string; basis: string };
   cards: Card[]; grant_note: string;
@@ -93,7 +104,18 @@ export interface ValidationBlock {
   observed: { median: number; p10: number; p90: number }; caveat: string; traffic_gain: number;
   traffic_gain_sensitivity?: { traffic_gain: number; spearman: number | null; median_abs_error: number }[];
 }
-export interface Validation extends ValidationBlock { daily_mean: ValidationBlock | null; warning?: string; scenario: string | null }
+export interface MlMetrics { mae: number; median_abs_error: number; spearman_within_hour: number | null }
+export interface MlEpisode { mae: number; bias: number }
+export interface MlValidation {
+  trained: string | null; span: [string, string] | null; sensors: number | null;
+  n?: number; spearman?: number | null; median_abs_error?: number; error?: string;
+  ml_only?: { spearman: number | null; median_abs_error: number };
+  // hidden sensors AND future days (never seen in training)
+  offline_eval: { ml: MlMetrics; physics_formula: MlMetrics; persistence_city_median: MlMetrics } | null;
+  // hours where CAMS forecasts >= 50 ug/m3
+  episodes: { rows: number; ml: MlEpisode; physics_formula: MlEpisode; persistence_city_median: MlEpisode } | null;
+}
+export interface Validation extends ValidationBlock { daily_mean: ValidationBlock | null; ml?: MlValidation | null; warning?: string; scenario: string | null }
 
 export interface RefStation {
   uid: number; name: string; name_bg: string | null; lat: number; lon: number; time: string | null;

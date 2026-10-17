@@ -79,13 +79,13 @@ set `PLAYWRIGHT_CHANNEL=chrome` before running the tests.
 
 | Screen | What it shows | Plan measure it supports |
 |---|---|---|
-| **Clean Air map** | Street-level CAI, preloaded 24 h slider, citizen sensors, "Why is this red?" breakdown, honest validation card, stagnation-score timeline | A.3.4 early warning, A.3.3 self-cleaning potential of the air |
-| **Route planner** | Fastest / balanced / cleanest walk, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
-| **Clean-air network** | 400 seeded random walks: clean-route usage (width) coloured by CAI, flow pulses along clean corridors, ranked **chokepoints** with suggested measures | A.4.3, A.4.4, A.4.7, C.1.1 |
+| **Clean Air map** | Street-level CAI, preloaded forecast slider, citizen sensors, "Why is this red?" breakdown, honest validation card, stagnation-score timeline | A.3.4 early warning, A.3.3 self-cleaning potential of the air |
+| **Route planner** | Fastest / balanced / cleanest walk or ride, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
+| **Clean-air network** | Pedestrians or cyclists; air-quality **areas** (~250 m cells) and **cool/hot spots** (Landsat surface temperature); dark-teal **clean channels**; ranked chokepoints with suggested measures; named cleanest/dirtiest areas; hover tooltips; optional flow animation | A.4.3, A.4.4, A.4.7, C.1.1 |
 | **For me** | Profile cards (driver / wood or coal heater / vulnerable), zone lookup, C.3.2 eligibility wizard (anonymous lead) | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
 | **Municipality** | Hotspot districts, C.3.2 leads, street chokepoints (street level), street-washing list (**sample street names**) | C.3.2, A.4.7, A.3.4, A.4.3, A.4.4, C.1.1 |
 
-A **Live / Winter inversion demo** switch replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
+A **Live / Winter inversion / Summer heatwave / Birch season** switch (the last two drive the heat and pollen cards on *For me*) replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
 interesting case shows even in October. In demo mode sensor values are simulated from live positions and the validation is disabled.
 
 ## How it works
@@ -116,8 +116,10 @@ All weights and caps are in [`backend/cai/config.py`](backend/cai/config.py); th
 * **Google (optional)**: the baseline `WALK` route is snapped to our edges (≤25 m) and scored with the same formulas; our cleanest path
   is simplified (Douglas-Peucker, ≤8 waypoints) and sent back as `intermediates` so Google returns a trustworthy polyline and ETA.
   Any failure silently falls back to our own polyline. Nothing from Google is persisted (in-memory session cache only).
-* **Network** (`backend/cai/network.py`): 40 origins × 10 destinations (seed fixed), fastest vs cleanest walk, per-street usage. Chokepoint =
-  street with many fastest-route users and low CAI, ranked by `usage × (1 − CAI/100)`.
+* **Network** (`backend/cai/network.py`, `areas.py`): 40 origins × 10 destinations (seed fixed), fastest vs cleanest trip, per-street usage. **Chokepoint** = street
+  with many fastest-route users and low CAI, ranked by `usage × (1 − CAI/100)`. **Clean channel** = street used by >= 3 of the cleanest routes and above the city's 60th CAI
+  percentile. **Areas** = length-weighted mean CAI (or surface temperature) of the streets in each 250 m cell; the strongest 10 % are drawn bolder.
+* **Cycling**: a separate OSM cycling graph (`make bikegraph bake`), 15 km/h, steps removed. Dose uses an **assumed** 2× breathing rate (`BREATHING` in config). Google is not used for cycling.
 
 ## Validation (leave-one-out against outdoor citizen sensors)
 
@@ -125,8 +127,8 @@ All weights and caps are in [`backend/cai/config.py`](backend/cai/config.py); th
 
 | Target | n | Spearman ρ | Median error, model | Median error, constant median |
 |---|---|---|---|---|
-| Latest reading | 261 | **0.08** | 2.34 µg/m³ | 2.00 µg/m³ |
-| 24 h mean | 272 | **0.01** | 3.43 µg/m³ | 1.65 µg/m³ |
+| Latest reading | 259 | **-0.03** | 1.74 µg/m³ | 1.10 µg/m³ |
+| 24 h mean | 271 | **0.00** | 3.23 µg/m³ | 1.70 µg/m³ |
 
 **The street-level pattern is not confirmed by the data on this day**: rank correlation is about zero and the model is no better than
 guessing the median level. The signs of the individual terms are as expected (traffic +, heat +, greenery −) but tiny (|ρ| ≤ 0.13, n = 273).
@@ -144,7 +146,7 @@ test; none was available. Two parameters were set from this validation and both 
 | Walking graph, roads | OSM via osmnx | `make graph roads bake`; GraphML (112 MB) is git-ignored, `data/net.npz` (11 MB) is committed |
 | NDVI | Sentinel-2 L2A via Planetary Computer | `make ndvi`, 40 m overview, median of ≤5 scenes per tile |
 | LST | Landsat 8/9 C2 L2 `lwir11` | `make lst`, scale/offset read from asset metadata (0.00341802 / 149.0), QA-masked |
-| Canopy | OSM parks, forest, trees | `make canopy`, 10 m grid, blended 50/50 with NDVI |
+| Tree canopy | **Sofia tree inventory** (Sofiaplan GIS, 1.68 M trees with crown area), baked by `make trees` | Crown area per 10 m cell, sampled in a 50 m buffer. Correlates **0.70 with Sentinel-2 NDVI** at street level, vs 0.33 for the OSM approximation it replaces (kept as a fallback, `make canopy`). Only the aggregate raster is stored, not individual trees. Credit: Sofia Municipality / Sofiaplan (gis.sofiaplan.bg); the service states no licence. |
 | Street names | OSM `name`, transliterated (official Streamlined System) | Cyrillic kept alongside. Footpaths take the nearest named street within 80 m ("Footpath near …"). Chokepoint markers sit on the street; only chokepoints inside Sofia's 24 districts are ranked. |
 | Districts | OSM `admin_level=6` | `make districts`; the plan said level 9, which is neighbourhoods (121 features) |
 | Low-emission zones | hand-drawn | labelled "illustrative, not official" |
@@ -164,8 +166,8 @@ GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when ch
 ## API
 
 `/api/forecast` `/api/sensors` `/api/districts` `/api/advice` `/api/leads` `/api/dashboard` (v1) ·
-`/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
-`/api/route?from=lat,lng&to=lat,lng&lambda=&hour=` `/api/network?hour=` `/api/validation` `/api/reference`. All accept `scenario=winter_inversion`.
+`/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/areas?metric=air|heat&mode=walk|bike` (area cells) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
+`/api/route?from=lat,lng&to=lat,lng&lambda=&hour=&mode=walk|bike` `/api/network?hour=&mode=` `/api/validation` `/api/reference`. All accept `scenario=winter_inversion|summer_heatwave|birch_season`.
 
 `GET /api/forecast/window` returns the current 24-hour display forecast, original hour indices, sensor snapshot,
 and base64-encoded uint8 street CAI arrays (one byte per segment per hour). `POST /api/forecast/refresh` rebuilds
@@ -175,6 +177,9 @@ refreshing. Four snapshots and 48 hourly networks are retained in memory. The le
 returns the full upstream series, used internally for daily validation and existing API clients.
 
 ## Honest caveats
+
+* **Better greenery did not improve the validation.** After switching to the tree inventory the leave-one-out result is unchanged (ρ ≈ 0): the limit is sensor noise at ~5 µg/m³, not the greenery input.
+* **Heat map = surface temperature**, a summer satellite snapshot, not live and not air temperature. Cyclist exposure assumes a 2× breathing rate.
 
 * The CAI is a **screening model with assumed weights** (traffic class weights, rush curve, 30 % greenery cap). It is not validated (see above).
 * Plan-spec `clamp(PM/60)` **saturates** whenever background PM2.5 exceeds 60 µg/m³ (every street gets CAI ≈ 0). The map keeps the spec but offers a

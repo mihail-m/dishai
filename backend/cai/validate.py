@@ -64,3 +64,35 @@ def leave_one_out(feats: Features, sensors: list[dict], ctx: HourCtx, mode: str 
         "verdict": verdict,
         "caveat": "Single snapshot of low-cost sensors (they drift and read high in humid air); indicative only.",
     }
+
+
+def leave_one_out_ml(model) -> dict | None:
+    """Same leave-one-out on the live snapshot for the learned model: ML prediction at each sensor, then the IDW
+    residual of the other sensors. Also returns the offline evaluation stored with the trained model."""
+    if not getattr(model, "ml", None):
+        return None
+    sensors = model.sensors
+    n = len(sensors)
+    m = model.ml.meta
+    meta = {"trained": m.get("trained"), "offline_eval": m.get("eval_unseen_sensors_future_days"),
+            "episodes": (m.get("eval_unseen_sensors") or {}).get("episodes"), "span": m.get("span"), "sensors": m.get("sensors")}
+    if n < 10:
+        return {"n": n, "error": "too few sensors", **meta}
+    lon = np.array([s["lon"] for s in sensors])
+    lat = np.array([s["lat"] for s in sensors])
+    obs = np.array([s["pm25"] for s in sensors], dtype=float)
+    obs_c = np.clip(obs, 0, 4 * np.median(obs) + 10)
+    x, y = to_xy(lon, lat)
+    xy = np.column_stack([x, y])
+    from ..ml.pm_model import static_matrix
+    base = model._ml_pm(static_matrix(model.feats, model.feats.at(lon, lat)), model.now_idx).astype(float)
+    full = np.zeros(n)
+    for i in range(n):
+        m = np.arange(n) != i
+        full[i] = base[i] + idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base[m])[0]
+
+    def mae(p):
+        return round(float(np.median(np.abs(p - obs))), 2)
+
+    return {"n": n, "spearman": _rho(full, obs), "median_abs_error": mae(full),
+            "ml_only": {"spearman": _rho(base, obs), "median_abs_error": mae(base)}, **meta}

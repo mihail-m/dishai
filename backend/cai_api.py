@@ -19,7 +19,7 @@ from .cai.names import Namer, translit
 from .cai.network import compute_network
 from .cai.routing import Router, RouteError, douglas_peucker, road_group
 from .cai.score import CaiModel, HourCtx
-from .cai.validate import leave_one_out
+from .cai.validate import leave_one_out, leave_one_out_ml
 
 log = logging.getLogger("inversion_watch")
 MODEL_TTL = 300
@@ -57,7 +57,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
             if forecast_id:
                 snapshot = snapshots.get(forecast_id)
                 if not snapshot or snapshot["forecast"]["scenario"] != scenario:
-                    raise HTTPException(409, "Forecast snapshot expired. Refresh the 24-hour forecast.")
+                    raise HTTPException(409, "Forecast snapshot expired. Refresh the forecast.")
                 if mode not in snapshot["models"]:
                     fc, sens = snapshot["forecast"], snapshot["sensors"]
                     snapshot["models"][mode] = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens["sensors"])
@@ -90,8 +90,11 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
                 refresh_sources()
             fc, sens = await asyncio.gather(build_forecast(sc), build_sensors(sc))
             start = fc["now_index"]
-            indices = list(range(start, start + 24))
-            if len(fc["hours"]) < start + 24 or (clock_hour and fc["hours"][start]["time"] != clock_hour):
+            # Demo scenarios are hand-built 24 h replays; live data gets up to WINDOW_HOURS, and 24 is the floor when the feed (or an
+            # offline fixture) is shorter.
+            n_win = 24 if sc else min(C.WINDOW_HOURS, len(fc["hours"]) - start)
+            indices = list(range(start, start + n_win))
+            if n_win < 24 or (clock_hour and fc["hours"][start]["time"] != clock_hour):
                 raise HTTPException(503, "A complete forecast for the next 24 hours is unavailable. Try refreshing again.")
             net, feats, _ = await get_static()
 
@@ -108,7 +111,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
 
             model, values = await asyncio.to_thread(prepare)
             ident = uuid.uuid4().hex
-            payload = {"id": ident, "forecast": {**fc, "hours": fc["hours"][start:start + 24], "now_index": 0},
+            payload = {"id": ident, "forecast": {**fc, "hours": fc["hours"][start:start + n_win], "now_index": 0},
                        "hours": indices, "values": values, "sensors": sens}
             snapshots[ident] = {"created": time.time(), "forecast": fc, "sensors": sens, "models": {"walk": model}, "payload": payload}
             # Bound memory while allowing an old tab/refresh to finish safely.
@@ -351,6 +354,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         alt_mode = "background" if C.RESIDUAL_AGAINST == "model" else "model"
         alt = await asyncio.to_thread(leave_one_out, model.feats, model.sensors, ctx, alt_mode)
         out["other_residual_variant"] = {k: alt.get(k) for k in ("residual_mode", "spearman", "median_abs_error")}
+        out["ml"] = await asyncio.to_thread(leave_one_out_ml, model)
         out["scenario"] = sc
         out["daily_mean"] = None
         if sc:

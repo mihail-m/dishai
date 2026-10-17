@@ -1,4 +1,4 @@
-import type { Advice, Dashboard, DistrictsFC, Forecast, ForecastWindow, Profile, Scenario, SensorsResp } from "./types";
+import type { Advice, Dashboard, DistrictsFC, Forecast, ForecastWindow, Profile, Scenario, SensorsResp, Toggle } from "./types";
 
 const q = (s: Scenario) => (s === "live" ? "" : `scenario=${s}`);
 
@@ -12,14 +12,15 @@ export const api = {
   window: async (s: Scenario, refresh: boolean, signal: AbortSignal): Promise<ForecastWindow> => {
     type Wire = Omit<ForecastWindow, "values"> & { values: (Omit<CaiValues, "cai"> & { cai_base64: string })[] };
     const result = await j<Wire>(`/api/forecast/${refresh ? "refresh" : "window"}?${q(s)}`, { method: refresh ? "POST" : "GET", signal, cache: "no-store" });
-    if (result.hours.length !== 24 || result.values.length !== 24 || result.forecast.hours.length !== 24) throw new Error("Incomplete 24-hour forecast. Please refresh again.");
+    const n = result.hours.length;
+    if (n < 24 || result.values.length !== n || result.forecast.hours.length !== n) throw new Error("Incomplete forecast. Please refresh again.");
     return { ...result, values: result.values.map(({ cai_base64, ...v }) => ({ ...v, cai: Uint8Array.from(atob(cai_base64), (c) => c.charCodeAt(0)) })) };
   },
   forecast: (s: Scenario) => j<Forecast>(`/api/forecast?${q(s)}`),
   sensors: (s: Scenario) => j<SensorsResp>(`/api/sensors?${q(s)}`),
   districts: (s: Scenario) => j<DistrictsFC>(`/api/districts?${q(s)}`),
-  advice: (p: Profile, d: string, s: Scenario) =>
-    j<Advice>(`/api/advice?profile=${p}&district=${encodeURIComponent(d)}&${q(s)}`),
+  advice: (p: Profile, d: string, s: Scenario, toggles: Toggle[] = []) =>
+    j<Advice>(`/api/advice?profile=${p}&district=${encodeURIComponent(d)}&${[q(s), ...toggles.map((t) => `toggles=${t}`)].filter(Boolean).join("&")}`),
   dashboard: (s: Scenario) => j<Dashboard>(`/api/dashboard?${q(s)}`),
   lead: (district: string, heating_type: string, likely_eligible: boolean) =>
     j<{ ok: boolean; district_total: number; message: string }>("/api/leads", {

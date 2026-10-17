@@ -149,6 +149,11 @@ class Router:
             p = self.capped(src, dst, cb, lam, ft) if lam > 0 else Path(fast_edges, 0.0)
             p = p or Path(fast_edges, 0.0)
             s = self.stats(p.edges, pm, cai)
+            # The cost over-weights contrast relative to dose; if a detour still ends up with more dose than walking
+            # straight, ease the setting off until it does not.
+            while s["dose"] > fast["dose"] and p.lam > 0.05:
+                p = (self.capped(src, dst, cb, p.lam / 2, ft) if p.lam / 2 > 0.05 else None) or Path(fast_edges, 0.0)
+                s = self.stats(p.edges, pm, cai)
             out[name] = {**s, "lambda_used": round(p.lam, 2), "polyline": self.polyline(p.edges), "edges": p.edges}
         for r in out.values():
             r["dose_change_pct"] = round(100 * (r["dose"] / fast["dose"] - 1), 1) if fast["dose"] else 0.0

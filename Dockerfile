@@ -18,7 +18,7 @@ COPY requirements-prod.txt ./
 RUN pip install --no-cache-dir -r requirements-prod.txt
 COPY backend/ ./backend/
 COPY public/ ./public/
-COPY data/*.npz data/*.tif ./data/
+COPY data/*.npz data/*.tif data/*.joblib ./data/
 COPY --from=ui /app/frontend/dist ./frontend/dist
 
 # Hugging Face Spaces expects 7860; Render/Cloud Run set $PORT.

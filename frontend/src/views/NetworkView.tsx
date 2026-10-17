@@ -4,7 +4,7 @@ import type { AreasResp, Chokepoint, Mode, NetworkResp, Scenario } from "../type
 import type { Stage } from "../stage";
 import { useHourlyPreload } from "../forecast";
 import { api2 } from "../api";
-import { caiCss } from "../map/cai";
+import { caiCss, relCss } from "../map/cai";
 import { areaLayer, areaRows, chokepointLayers, flowLayer, heatColor, segmentLayers } from "../map/layers";
 
 interface Props { stage: Stage; scenario: Scenario; hourIndex: number }
@@ -99,7 +99,7 @@ export default function NetworkView({ stage, scenario, hourIndex }: Props) {
     const range = areas ? Math.max(Math.abs(areas.thresholds.cool ?? 0), Math.abs(areas.thresholds.hot ?? 0), 1) : 5;
     const bar = heat
       ? `linear-gradient(90deg, ${[-1, -0.5, 0, 0.5, 1].map((u) => rgb(heatColor(u * range, range))).join(",")})`
-      : `linear-gradient(90deg, ${[0, 25, 50, 75, 100].map((x) => caiCss(x)).join(",")})`;
+      : `linear-gradient(90deg, ${[0, 25, 50, 75, 100].map((x) => (scale === "relative" ? relCss(x) : caiCss(x))).join(",")})`;
     return (
       <ul className="grid gap-1.5">
         {showAreas && (

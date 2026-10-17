@@ -1,10 +1,14 @@
 """Clean Air Index engine (vectorised over directed edges).
 
     PM(e,t)     = B(t) + R(e,t) + T(e) * rush(t) * A(t) * shield(e)
-    cost_burden = (1 - g) * clamp(PM/60) + g * H(e)       CAI = round(100 * (1 - cost_burden))
+    cost_burden = (1 - g) * (1 - air_score(PM)/100) + g * H(e)       CAI = round(100 * (1 - cost_burden))
 
 B = CAMS PM2.5 x sensor bias; R = IDW residual of sensors; A = 1 + S/100 with S the v1 stagnation score.
 An indicative screening model with assumed weights, not a dispersion model.
+
+When data/pm_model.joblib exists (python -m backend.ml.train) the bracketed physics part
+B + T * rush * A * shield is replaced by a gradient-boosted model trained on a year of citizen-sensor history
+(backend/ml); the live-sensor residual R and everything downstream (CAI, heat, routing) are unchanged.
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +19,7 @@ from scipy.spatial import cKDTree
 from . import config as C
 from .features import Features
 from .graph import Net, to_xy
+from ..ml.pm_model import MAX_LEAD_H, STATIC_COLS, PmModel, hour_vector, now_vector, static_matrix
 
 
 def rush_factor(hour: int, weekend: bool) -> float:
@@ -88,6 +93,17 @@ def hour_contexts(hours: list[dict]) -> list[HourCtx]:
     return out
 
 
+def air_score(pm) -> np.ndarray:
+    """PM2.5 (ug/m3) -> 100 (clean) .. 0 (worst), piecewise linear through the health anchors in config (WHO 5/15, EU 25)."""
+    return np.interp(pm, C.AIR_PM, C.AIR_SCORE)
+
+
+def route_burden(pm: np.ndarray) -> np.ndarray:
+    """Routing cost term: PM relative to the city's own spread (p5..p95 over all streets), floored and capped (see config)."""
+    lo, hi = np.percentile(pm, [5, 95])
+    return np.clip((pm - lo) / max(hi - lo, C.ROUTE_MIN_SPREAD), 0.0, C.ROUTE_REL_MAX)
+
+
 def shield(G: np.ndarray) -> np.ndarray:
     return 1.0 - C.GREEN_CAP * G
 
@@ -99,8 +115,11 @@ def predict_pm(T, G, ctx: HourCtx, B: float, R) -> np.ndarray:
 class CaiModel:
     """Everything needed to score any edge for any forecast hour, from one sensor snapshot."""
 
-    def __init__(self, net: Net, feats: Features, hours: list[dict], now_idx: int, sensors: list[dict]):
+    def __init__(self, net: Net, feats: Features, hours: list[dict], now_idx: int, sensors: list[dict], ml: "PmModel | None | bool" = True):
         self.net, self.feats = net, feats
+        self.hours = hours
+        self.ml: PmModel | None = (PmModel.load() if C.USE_ML else None) if ml is True else (ml or None)
+        self.static = static_matrix(feats) if self.ml else None
         self.ctxs = hour_contexts(hours)
         self.now_idx = now_idx
         self.sensors = sensors
@@ -116,13 +135,27 @@ class CaiModel:
             sx, sy = to_xy([s["lon"] for s in sensors], [s["lat"] for s in sensors])
             self.sens_xy = np.column_stack([sx, sy])
             sf = feats.at([s["lon"] for s in sensors], [s["lat"] for s in sensors])
-            base = np.full(len(sensors), self.B_now, dtype="float32")
-            if C.RESIDUAL_AGAINST == "model":
-                base = predict_pm(sf["T"], sf["G"], now, self.B_now, 0.0)
+            if self.ml:
+                base = self._ml_pm(static_matrix(feats, sf), now_idx)
+            else:
+                base = np.full(len(sensors), self.B_now, dtype="float32")
+                if C.RESIDUAL_AGAINST == "model":
+                    base = predict_pm(sf["T"], sf["G"], now, self.B_now, 0.0)
             self.resid = (pm - base).astype("float32")
             self.R_now = idw_residual(net.mid_xy, self.sens_xy, self.resid)
         else:
             self.R_now = np.zeros(net.n_edges, dtype="float32")
+        if self.ml:
+            self.B_now = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], now_idx)))
+
+    def _ml_pm(self, static: np.ndarray, i: int) -> np.ndarray:
+        """ML prediction for the given static-feature rows at forecast hour i; lead = hours ahead of the live snapshot."""
+        ctx = self.ctxs[i]
+        now = self.ctxs[self.now_idx]
+        hv = hour_vector(self.hours[i], hour=ctx.hour, weekend=ctx.weekend)
+        nv = now_vector(min(max(0, i - self.now_idx), MAX_LEAD_H), self.sensor_median if self.sensor_median is not None else float("nan"),
+                        now.cams if now.cams is not None else float("nan"))
+        return self.ml.predict(static, hv, nv)
 
     def _background(self, ctx: HourCtx) -> float:
         if ctx.cams is not None:
@@ -131,7 +164,11 @@ class CaiModel:
 
     def R(self, i: int) -> np.ndarray:
         """Sensor residual persists, scaled with the background level (sensor error scales with level)."""
-        ratio = float(np.clip(self._background(self.ctxs[i]) / max(self.B_now, C.CAMS_FLOOR), 0.5, 2.0))
+        if self.ml:
+            bg = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
+        else:
+            bg = self._background(self.ctxs[i])
+        ratio = float(np.clip(bg / max(self.B_now, C.CAMS_FLOOR), 0.5, 2.0))
         return self.R_now * ratio
 
     def hour(self, i: int) -> dict:
@@ -139,33 +176,60 @@ class CaiModel:
         if i in self._cache:
             return self._cache[i]
         ctx, f = self.ctxs[i], self.feats
-        B = self._background(ctx)
-        pm = np.maximum(predict_pm(f.T, f.G, ctx, B, self.R(i)), 0.0).astype("float32")
-        air = np.clip(pm / C.PM_NORM, 0, 1)
+        if self.ml:
+            B = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
+            pm = np.maximum(self._ml_pm(self.static, i) + self.R(i), 0.0).astype("float32")
+        else:
+            B = self._background(ctx)
+            pm = np.maximum(predict_pm(f.T, f.G, ctx, B, self.R(i)), 0.0).astype("float32")
+        air = 1.0 - air_score(pm) / 100.0
         cb = ((1 - ctx.g) * air + ctx.g * f.H).astype("float32")
         cai = np.round(100 * (1 - cb)).astype("uint8")
-        # Routing cost burden is NOT clamped: in a heavy episode the city-wide PM exceeds PM_NORM everywhere, which
-        # would flatten every street to cost_burden 1 and make "cleanest" identical to "fastest".
-        cr = ((1 - ctx.g) * (pm / C.PM_NORM) + ctx.g * f.H).astype("float32")
+        # Routing burden is relative to the spatial spread of PM (see route_burden), so a clean, flat day still has a
+        # cleanest route and a heavy episode does not flatten every street to the same cost.
+        cr = ((1 - ctx.g) * route_burden(pm) + ctx.g * f.H).astype("float32")
         out = {"pm": pm, "cai": cai, "cb": cb, "cr": cr, "B": B, "ctx": ctx}
         if len(self._cache) > 12:
             self._cache.pop(next(iter(self._cache)))
         self._cache[i] = out
         return out
 
+    def _ml_split(self, e: int, i: int) -> tuple[float, float, float, float]:
+        """(background, traffic, terrain, greenery) contributions in ug/m3 by swapping this street's features in one group at a
+        time into a typical street (the city median). Steps are sequential, so with the background they sum to the
+        model's prediction for the street."""
+        med = np.nanmedian(self.static, axis=0)
+        row = self.static[e]
+        idx = {c: k for k, c in enumerate(STATIC_COLS)}
+        steps = [("T",), ("elev", "rel_elev", "lst_anom"), ("G", "canopy", "ndvi")]
+        cur = med.copy()
+        prev = bg = float(self._ml_pm(cur[None, :], i)[0])
+        out = [bg]
+        for grp in steps:
+            for c in grp:
+                cur[idx[c]] = row[idx[c]]
+            now = float(self._ml_pm(cur[None, :], i)[0])
+            out.append(now - prev)
+            prev = now
+        return out[0], out[1], out[2], out[3]
+
     def explain(self, e: int, i: int) -> dict:
         """Decomposition for the 'Why is this red?' popover. PM terms sum exactly to PM."""
         h, f = self.hour(i), self.feats
         ctx = h["ctx"]
-        raw = float(C.TRAFFIC_GAIN * f.T[e] * ctx.rush)
-        vent = raw * (ctx.amp - 1.0)
-        green = -raw * ctx.amp * C.GREEN_CAP * float(f.G[e])
-        air = float(np.clip(h["pm"][e] / C.PM_NORM, 0, 1))
+        if self.ml:
+            bg, raw, vent, green = self._ml_split(e, i)
+        else:
+            bg = h["B"]
+            raw = float(C.TRAFFIC_GAIN * f.T[e] * ctx.rush)
+            vent = raw * (ctx.amp - 1.0)
+            green = -raw * ctx.amp * C.GREEN_CAP * float(f.G[e])
+        air = float(1.0 - air_score(h["pm"][e]) / 100.0)
         cai_air = round(100 * (1 - air))
         return {
             "edge": int(e), "time": ctx.time, "pm25": round(float(h["pm"][e]), 1), "cai": int(h["cai"][e]),
             "components_ugm3": {
-                "background": round(h["B"], 1),
+                "background": round(bg, 1),
                 "local_correction": round(float(self.R(i)[e]), 1),
                 "traffic": round(raw, 1),
                 "ventilation": round(vent, 1),
@@ -178,5 +242,6 @@ class CaiModel:
             },
             "heat_points": int(h["cai"][e]) - cai_air,
             "cai_air_only": cai_air,
-            "note": "Indicative screening model with assumed weights.",
+            "model": "ml" if self.ml else "physics",
+            "note": "Learned from citizen-sensor history; indicative." if self.ml else "Indicative screening model with assumed weights.",
         }

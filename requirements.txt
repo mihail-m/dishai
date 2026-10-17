@@ -14,3 +14,7 @@ pyproj
 rasterio
 pystac-client
 planetary-computer
+# PM2.5 model (training also needs pandas)
+scikit-learn
+joblib
+pandas

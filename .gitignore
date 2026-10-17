@@ -15,3 +15,4 @@ data/roads.graphml
 data/.osmnx_cache/
 data/.trees_progress.npz
 data/graph_bike.graphml
+data/history/

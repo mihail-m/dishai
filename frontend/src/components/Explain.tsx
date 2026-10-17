@@ -2,10 +2,10 @@ import type { EdgeExplain } from "../types";
 import { caiCss } from "../map/cai";
 
 const ROWS: { key: keyof EdgeExplain["components_ugm3"]; label: string; hint: string }[] = [
-  { key: "background", label: "Regional background", hint: "CAMS forecast, bias-corrected by live sensors" },
+  { key: "background", label: "Regional background", hint: "CAMS + weather + live-sensor nowcast, for a typical street" },
   { key: "local_correction", label: "Local sensor correction", hint: "nearby citizen sensors vs the model" },
-  { key: "traffic", label: "Traffic", hint: "road class within 150 m × time-of-day" },
-  { key: "ventilation", label: "Trapped air (inversion)", hint: "the v1 stagnation score amplifies local sources" },
+  { key: "traffic", label: "Traffic", hint: "road class within 150 m (learned effect vs a typical street)" },
+  { key: "ventilation", label: "Terrain / trapped air", hint: "valley floor vs slope and surface heat (learned); physics fallback: stagnation amplifier" },
   { key: "greenery", label: "Greenery shield", hint: "trees and NDVI within 50 m (capped at −30 %)" },
 ];
 const colorName = (cai: number) => (cai < 25 ? "red" : cai < 45 ? "orange" : cai < 65 ? "amber" : cai < 85 ? "light green" : "green");

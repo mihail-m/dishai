@@ -7,6 +7,11 @@ const SRC: Record<string, string> = {
   fixture: "Offline: saved fixture",
   scenario: "Demo scenario: simulated winter inversion",
 };
+const SCENARIO_SRC: Record<string, string> = {
+  winter_inversion: "Demo scenario: simulated winter inversion",
+  summer_heatwave: "Demo scenario: simulated summer heatwave",
+  birch_season: "Demo scenario: simulated birch pollen season",
+};
 
 export default function Banner({ fc }: { fc: Forecast | null }) {
   if (!fc) return <div className="card h-[72px] animate-pulse" />;
@@ -30,7 +35,7 @@ export default function Banner({ fc }: { fc: Forecast | null }) {
         </div>
       </div>
       <span className="badge" style={sim ? { background: "var(--watch-bg)", color: "var(--watch)" } : undefined}>
-        {SRC[fc.source] ?? fc.source}
+        {(fc.scenario && SCENARIO_SRC[fc.scenario]) || SRC[fc.source] || fc.source}
       </span>
     </div>
   );
