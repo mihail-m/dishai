@@ -91,20 +91,27 @@ interesting case shows even in October. In demo mode sensor values are simulated
 ## How it works
 
 ```
-Open-Meteo forecast + CAMS PM2.5 ──► stagnation score S(t) (v1, per hour, city-wide)
-Sensor.Community ──► bias + local residual                               \
-Copernicus DEM ──► terrain                                                  > PM(e,t) ──► CAI(e,t) ──► map, router, network
-Sentinel-2 NDVI + OSM canopy ──► greenery G(e);  Landsat LST ──► heat H(e) /
+Sensor.Community ──► calibration to the EEA reference scale (humidity, temperature, season)   [stage 0]
+CAMS + Open-Meteo weather + live city median ──► city-level PM2.5, p10/p50/p90 (gradient boosting)  [stage 1]
+sensor residuals, per-sensor offsets removed ──► regression kriging + uncertainty per street  [stage 2]
+      terrain height (street trend) ─┘
+                                     └──► banner (chance of an episode), chart, map, router, advice  [stage 3]
+Sentinel-2 NDVI + tree inventory ──► greenery G(e);  Landsat LST ──► heat H(e)     (CAI only)
 Google Routes + TomTom ──► observed traffic (map and street popover only, NOT an input to PM)
 ```
 
 ```
-B(t)   = CAMS_pm25(t) * bias,  bias = median(sensors)/CAMS now, clamped 0.5..2
-R(e,t) = IDW residual of sensors vs the model (k=4, 1.5 km, shrunk toward 0)
-PM     = B + R                              # (learned model when available). No traffic term: see docs/TRAFFIC.md
-g(t)   = 0.5 * clamp((apparent_temp-26)/8) * daylight        # heat only when hot and sunny; 0 in winter
-cost_burden = (1-g) * clamp(PM/60) + g * H        CAI = round(100 * (1 - cost_burden))     # 100 = cleanest, coolest
+level(t)  = learned city-level PM2.5, calibrated µg/m³: p50 with a conformal p10..p90 band       (backend/ml, backend/alert.py)
+street    = expm1( log1p(level) + terrain_deviation(e) + rho(lead) * kriged_residual(e) )       (backend/cai/krige.py)
+banner    = P(city level >= 25 µg/m³ for 3 h in a row, next 24 h): red from 0.7, amber ("possible") from 0.2
+CAI       = anchors on the health values: PM2.5 5 -> 80, 15 (WHO 24 h) -> 60, 25 (EU 24 h limit) -> 40, 50 -> 15
+g(t)      = 0.5 * clamp((apparent_temp-26)/8) * daylight        # heat only when hot and sunny; 0 in winter
+cost_burden = (1-g) * air_burden(PM) + g * H        CAI = round(100 * (1 - cost_burden))     # 100 = cleanest, coolest
 ```
+
+The stagnation score (how trapped the air is) is no longer the alert; it is an input to the level model, a chart overlay and the line "the air is
+trapped" in the banner. The whole chain, with every test and negative result, is in [docs/PM_MODEL.md](docs/PM_MODEL.md). Rebuild with
+`make reference calibrate train spatial backtest` (after `make history`).
 
 All weights and caps are in [`backend/cai/config.py`](backend/cai/config.py); the stagnation score is in
 [`backend/score.py`](backend/score.py).
@@ -113,6 +120,9 @@ All weights and caps are in [`backend/cai/config.py`](backend/cai/config.py); th
   `data/net.npz`). `cost = time * (1 + λ * cost_burden * 2)`, walking 4.8 km/h, steps ×1.5. Fastest (λ=0), balanced (1), cleanest (3), each
   capped at **+30 % time** by bisecting λ. Reports time, distance, mean PM2.5, **dose** (PM2.5 × minutes) and % change vs fastest.
   The routing burden is *not* clamped (see below), so "cleanest" still discriminates during a heavy episode.
+  **"Cleanest" is only offered when it is really cleaner**: the difference in mean PM2.5 is compared with the street-level uncertainty
+  (`backend/cai/route_confidence.py`); otherwise the panel says *All routes have about the same air right now*. On typical trips today's
+  differences are under 1 % against an uncertainty of 4-10 %.
 * **Google (optional)**: the baseline `WALK` route is snapped to our edges (≤25 m) and scored with the same formulas; our cleanest path
   is simplified (Douglas-Peucker, ≤8 waypoints) and sent back as `intermediates` so Google returns a trustworthy polyline and ETA.
   Any failure silently falls back to our own polyline. Nothing from Google is persisted (in-memory session cache only).
@@ -121,34 +131,39 @@ All weights and caps are in [`backend/cai/config.py`](backend/cai/config.py); th
   percentile. **Areas** = length-weighted mean CAI (or surface temperature) of the streets in each 250 m cell; the strongest 10 % are drawn bolder.
 * **Cycling**: a separate OSM cycling graph (`make bikegraph bake`), 15 km/h, steps removed. Dose uses an **assumed** 2× breathing rate (`BREATHING` in config). Google is not used for cycling.
 
-## Validation (leave-one-out against outdoor citizen sensors)
+## Validation
 
-`GET /api/validation`, shown on the map screen. Measured 2026-10-17 around 13:00, a clean autumn day (sensors ≈ 6 µg/m³):
+`GET /api/validation`, shown as "How far to trust this map". The numbers below are in reference-station µg/m³ (the sensors, calibrated); full tables in
+[docs/PM_MODEL.md](docs/PM_MODEL.md).
 
-| Target | n | Spearman ρ | Median error, model | Median error, constant median |
-|---|---|---|---|---|
-| Latest reading | 259 | **-0.03** | 1.74 µg/m³ | 1.10 µg/m³ |
-| 24 h mean | 271 | **0.00** | 3.23 µg/m³ | 1.70 µg/m³ |
+| What | Result |
+|---|---|
+| Calibration vs the EEA station (weeks it never saw) | median ratio 0.93-1.02 in every humidity band; average error 3.3 µg/m³ vs 5.4 raw (-39 % for the whole city's median, -40 % near the station). **One station only**, 3 hours above 50 µg/m³. |
+| City level, hidden sensors + future days | 4.6 µg/m³ average error vs 4.9 for "the city median stays" and 5.3 for the regional model x bias; on forecast episodes (CAMS >= 50) bias -3.2 µg/m³ vs +22.6 for the regional model x bias |
+| Sensors predicted from their neighbours (polluted winter hours, city level > 15) | median error 7.7 µg/m³ vs 8.6 (old IDW method); ranking within an hour 0.35 vs 0.28; 80 % ranges hold 78 % |
+| Street vs neighbourhood | a map of 250 m squares ranks held-out sensors as well as the street map (0.347 vs 0.349): **sensors support neighbourhoods, not streets** |
+| Banner, winter 2025/26 back-test (episode = 3 h in a row >= 25) | red tier catches 67 % of episode windows (81 % of distinct episodes) with 12 % false alarms; the old stagnation-score rule catches 95 % with 71 % false alarms; amber tier (chance >= 20 %) catches 95 % with 55 % false alarms |
 
-**The street-level pattern is not confirmed by the data on this day**: rank correlation is about zero and the model is no better than
-guessing the median level. The terms that remained were tiny (|ρ| ≤ 0.13, n = 273).
-Sensor noise (±2 µg/m³) is as large as the signal at these concentrations. The assumed traffic term (OSM road-class weights, a hand-set rush curve and a
-gain) never improved on this test and has been removed; measured traffic is shown on the map but is not used in the PM2.5 number (docs/TRAFFIC.md).
-`IDW_SHRINK_M` is 200 m (picked by leave-one-out; differences were small).
+A snapshot check is still run live (each sensor predicted from the others, today): on a clean autumn evening nothing beats the terrain trend
+(rank correlation 0.02, median error 2.6 vs 2.4 µg/m³ for the trend alone and 2.8 for the old IDW method), consistent with the summer rows in the full tables: sensor noise (±2 µg/m³) is as large as
+the signal at clean-air levels. The assumed traffic term (OSM road-class weights, a hand-set rush curve and a gain) has been removed;
+measured traffic is shown on the map but is not used in the PM2.5 number (docs/TRAFFIC.md).
 
 ## Data
 
 | Input | Source | Notes |
 |---|---|---|
 | Forecast, CAMS PM | Open-Meteo (keyless) | cached 10 min, saved to `backend/fixtures/`, timestamps rebased to today when offline |
-| Reference stations | Sofia Municipality via aqicn.org/WAQI API (`WAQI_TOKEN`, optional) | 6 live stations: PM10, NO2, O3, CO, **no PM2.5**. In-memory only (their terms forbid archiving), never in fixtures. Attribution shown on screen. |
-| Sensors | Sensor.Community (keyless) | outdoor, valid PM2.5 < 500, last 30 min; 24 h means used for validation |
+| Reference PM2.5 / PM10 | **European Environment Agency (EEA) e-reporting**, hourly, via the EEA download API (`make reference`) | Sofia stations from the EEA station table (coordinates and type are never guessed): PM2.5 at Hipodruma (BG0050A) and BG0070A (excluded, see docs), PM10 at five stations. Dataset 1 only, **from 2026-01-01**. Licence CC BY 4.0 ([EEA legal notice](https://www.eea.europa.eu/en/legal-notice)); credit: *European Environment Agency (EEA) e-reporting, reported by Bulgaria*. Stored under the git-ignored `data/history/`; only the fitted calibration is committed. |
+| Reference stations (live) | Sofia Municipality via aqicn.org/WAQI API (`WAQI_TOKEN`, optional) | 6 live stations: PM10, NO2, O3, CO, **no PM2.5 on this feed** (the EEA stream above does have it). In-memory only (their terms forbid archiving), never in fixtures. Attribution shown on screen. |
+| Sensors | Sensor.Community (keyless) | outdoor, valid PM2.5 < 500, last 30 min; 24 h means used for validation. **Calibrated** to the reference scale before use (`data/calibration.joblib`); the raw value is kept as `pm25_raw`. Without the file the raw values are used and labelled uncalibrated. |
 | Sensors (extra) | Sofia's **Airthings pilot network** (Interreg Balkan-Mediterranean), via the anonymous endpoints of its public map, `platform.airthings-project.com` | ~19 outdoor stations in Sofia, hourly PM2.5/PM10 already calibrated by the project, so they skip our Sensor.Community calibration. Merged into `/api/sensors` with `source: "airthings"`; shown as blue-ringed dots. **The site states no licence**: data is held in memory only (never in fixtures), two requests per refresh with an identifying User-Agent, credit shown on screen. The endpoints are undocumented and may change; any failure just means no Airthings sensors. They have no per-sensor history yet, so the spatial model treats them as new sensors (offset 0, full offset uncertainty). Switch off with `AIRTHINGS_DISABLED=1`. Ask the project/municipality for a documented feed and permission before relying on it. |
 | Walking graph, roads | OSM via osmnx | `make graph roads bake`; GraphML (112 MB) is git-ignored, `data/net.npz` (11 MB) is committed |
 | NDVI | Sentinel-2 L2A via Planetary Computer | `make ndvi`, 40 m overview, median of ≤5 scenes per tile |
 | LST | Landsat 8/9 C2 L2 `lwir11` | `make lst`, scale/offset read from asset metadata (0.00341802 / 149.0), QA-masked |
 | Tree canopy | **Sofia tree inventory** (Sofiaplan GIS, 1.68 M trees with crown area), baked by `make trees` | Crown area per 10 m cell, sampled in a 50 m buffer. Correlates **0.70 with Sentinel-2 NDVI** at street level, vs 0.33 for the OSM approximation it replaces (kept as a fallback, `make canopy`). Only the aggregate raster is stored, not individual trees. Credit: Sofia Municipality / Sofiaplan (gis.sofiaplan.bg); the service states no licence. |
 | Street names | OSM `name`, transliterated (official Streamlined System) | Cyrillic kept alongside. Footpaths take the nearest named street within 80 m ("Footpath near …"). Chokepoint markers sit on the street; only chokepoints inside Sofia's 24 districts are ranked. |
+| Buildings (heating proxy) | OSM buildings via Overpass | `make heating` -> `data/lowrise.tif`, `data/buildings.tif`; tested and **not used** in the model (docs/PM_MODEL.md, Phase 4) |
 | Districts | OSM `admin_level=6` | `make districts`; the plan said level 9, which is neighbourhoods (121 features) |
 | Low-emission zones | hand-drawn | labelled "illustrative, not official" |
 
@@ -157,10 +172,17 @@ Sentinel-2 L2A assets on Planetary Computer carry **no** scale/offset metadata, 
 
 ## Reference stations and a sensor-quality finding
 
-With a `WAQI_TOKEN` the map shows Sofia's municipal reference stations (ringed dots) and compares nearby citizen sensors with them.
-On 2026-10-17 around 14:00, **citizen-sensor PM10 read about 0.4× the reference PM10** (0.34-0.67 at all five stations with PM10, 6-19
-sensors within 1.5 km each; e.g. 5.6 vs 16 µg/m³ at Mladost). One hour, PM10 only, and the reference PM10 is converted from AQI, so
-treat it as a warning, not a calibration: the stations do not report PM2.5, so they cannot calibrate the PM2.5 values the model uses.
+The README used to say the municipal stations report no PM2.5. That is true of the WAQI feed only: Bulgaria reports hourly PM2.5 (Hipodruma) and PM10
+(five Sofia stations) to the EEA, and that stream is what the model is calibrated against.
+
+**Sofia's citizen sensors read about half of the reference station** (raw median 4.0 vs 9.1 µg/m³ at Hipodruma, 13 sensors within 1.5 km, 1,991 hours of
+2026), and the ratio **rises with humidity** from 0.36 (RH below 50 %) to 0.74 (above 90 %): they under-read, and under-read less in damp air. The same
+humidity slope appears in PM10 (coefficient -0.63 vs -0.61 for PM2.5, an independent check). This is why every sensor value in the app is calibrated. The
+map is therefore about twice as polluted as before the calibration on the same day; that is a correction, not a regression.
+
+With a `WAQI_TOKEN` the map also shows the municipal stations (ringed dots) and compares nearby citizen sensors with them. On 2026-10-17 around 21:30,
+citizen-sensor PM10 read **0.46x** the reference raw and **1.31x** after the (short, nine-day) PM10 calibration: closer, but now over at three of five
+stations; one hour, and the reference PM10 is converted from AQI, so treat it as a check, not a calibration.
 aqicn's terms require attribution, forbid archiving their data, and ask non-profit public deployments to notify the WAQI team by email.
 GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when checked and exposes no station coordinates, so it is not used.
 
@@ -168,7 +190,7 @@ GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when ch
 
 `/api/forecast` `/api/sensors` `/api/districts` `/api/advice` `/api/leads` `/api/dashboard` (v1) ·
 `/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/areas?metric=air|heat&mode=walk|bike` (area cells) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
-`/api/route?from=lat,lng&to=lat,lng&lambda=&hour=&mode=walk|bike` `/api/network?hour=&mode=` `/api/validation` `/api/reference`. All accept `scenario=winter_inversion|summer_heatwave|birch_season`.
+`/api/route?from=lat,lng&to=lat,lng&lambda=&hour=&mode=walk|bike` (with a `confidence` block: is any alternative distinguishable from the fastest route?) `/api/network?hour=&mode=` `/api/validation` (calibration, spatial and back-test summaries under `trust`) `/api/reference`. All accept `scenario=winter_inversion|summer_heatwave|birch_season`.
 
 `GET /api/forecast/window` returns the current display forecast (48 hours live, 24 in a demo scenario), original hour indices, sensor snapshot,
 and base64-encoded uint8 street CAI arrays (one byte per segment per hour). `POST /api/forecast/refresh` rebuilds
@@ -182,11 +204,14 @@ returns the full upstream series, used internally for daily validation and exist
 * **Better greenery did not improve the validation.** After switching to the tree inventory the leave-one-out result is unchanged (ρ ≈ 0): the limit is sensor noise at ~5 µg/m³, not the greenery input.
 * **Heat map = surface temperature**, a summer satellite snapshot, not live and not air temperature. Cyclist exposure assumes a 2× breathing rate.
 
+* **Street-level colours are indicative.** The sensors support how a neighbourhood differs from the city (a 250 m cell map is as good as the street map at ranking hidden sensors); they do not support one street versus the next. The map defaults to cells for that reason.
+* **The warning is a probability, not a certainty.** The red banner misses a third of the episode windows in the test winter (6 of 32 distinct episodes; the amber tier catches all but one), and the model under-predicts the very heaviest hours. Level intervals drift too narrow on the most recent months.
+* **Winter home heating, the main source, is not modelled.** The OSM low-rise proxy did not pass its test; census heating-fuel data or the district-heating map are needed.
 * The CAI is a **screening model**. Traffic is not modelled (observed only, see docs/TRAFFIC.md); the remaining assumed constants are the health anchors and the heat gate. It is not validated (see above).
 * Plan-spec `clamp(PM/60)` **saturates** whenever background PM2.5 exceeds 60 µg/m³ (every street gets CAI ≈ 0). The map keeps the spec but offers a
   *Relative* view (5th-95th percentile stretch); routing uses the unclamped burden. In a heavy inversion the street choice changes a cross-city
   walk's exposure by only about 5 % for ≈5 % more time; the background dominates.
 * Routes are as good as OSM pedestrian data; expect missing crossings and private paths. No user location is stored.
-* Sensors drift and read high in humid air. Zone polygons are illustrative. The C.3.2 grant ("up to about 10,000 EUR") comes from the plan and may change.
+* Sensors drift, and in Sofia they read **low** (about half of the reference station), less so in humid air; the calibration rests on **one** reference station, so values above ~40 µg/m³ are extrapolated and the calibrated city value is typically off by about 37 %. Zone polygons are illustrative. The C.3.2 grant ("up to about 10,000 EUR") comes from the plan and may change.
 * Street names in the "wash first" list are sample data. Chokepoint measures are suggestions mapped to the plan, not engineering assessments.
 * `npm audit` reports transitive findings in deck.gl's loaders.gl (3D-tile / texture parsers this app does not use).

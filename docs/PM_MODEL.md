@@ -1,5 +1,7 @@
 # The learned PM2.5 model
 
+> **Read this first.** The sections up to "Unified model" describe the model as it was before the work on branch `unified-pm-model`. Since then: PM2.5 is calibrated to the EEA reference scale, the live-sensor correction is regression kriging instead of IDW, the alert is probabilistic, and **the OSM-weighted traffic term was removed** (street model = terrain height only). Where an older section mentions traffic, a calibrated-scale number or IDW, the "Unified model" sections below are current.
+
 The Clean Air Index (CAI) used to rest on a hand-weighted formula for PM2.5. It now rests on a model learned from citizen-sensor history. Everything downstream (CAI, heat term, routes, area view) is unchanged.
 
 ## What it replaces
@@ -189,14 +191,17 @@ Ratio of citizen to reference PM10 at five stations (6–19 sensors within 1.5 k
 ### Retrained level model (calibrated targets)
 `make calibrate train`. The model file now records that it was trained on calibrated values and which calibration; it refuses to load if the calibration file is missing or has changed (otherwise its input, the live city median, would be off by about 2×). Numbers are now in reference-scale µg/m³ (old rows were on the sensor scale: not comparable).
 
-| | Learned model | Old formula | CAMS × bias | Persistence |
+| | Learned model (final, no traffic term) | Old formula (last measured, with traffic) | CAMS × bias | Persistence |
 |---|---|---|---|---|
-| Error, hidden sensors + future days (MAE) | **4.67** | 5.67 | 5.29 | 4.86 |
-| Error, hidden sensors, all weeks | **7.24** | 10.28 | 9.84 | 7.69 |
-| Episode hours (CAMS ≥ 50): MAE / bias | **15.98 / −3.73** | 32.17 / +24.27 | 31.27 / +22.62 | 17.17 / −5.84 |
-| Street ranking within an hour | **0.16** (0.118 on the future split) | 0.12 | 0.00 | – |
+| Error, hidden sensors + future days (MAE) | **4.64** | 5.67 | 5.29 | 4.86 |
+| Error, hidden sensors, all weeks | **7.19** | 10.28 | 9.84 | 7.69 |
+| Episode hours (CAMS ≥ 50): MAE / bias | **15.86 / −3.21** | 32.17 / +24.27 | 31.27 / +22.62 | 17.17 / −5.84 |
+| Street ranking within an hour | **0.148** (0.127 on the future split) | 0.12 | 0.00 | – |
 
-The learned model keeps its advantage on episode hours and still sits within ±5 µg/m³ of bias there. Within-hour street ranking is unchanged in kind (about 0.12–0.16). Calibration did not make the street part better, as expected: it scales values, it does not add spatial information.
+The learned model keeps its advantage on episode hours and sits within ±5 µg/m³ of bias there. The old hand-weighted formula needed the OSM road-class traffic term; that term was removed from the code later (see "Traffic term removed" below), so it is no longer a baseline in `train.py` and its row is the last measurement. Calibration did not make the street part better, as expected: it scales values, it does not add spatial information.
+
+### Traffic term removed
+The street model originally had two features, a traffic term built from OSM road-class weights and terrain height. The traffic term was an assumed quantity (class weights chosen by hand, never measured), it was fitted to a coefficient of only +0.014 log-units per SD, and the project rule is that no assumed values are shown. It was removed from the model (`STATIC_COLS`/`SPATIAL_COLS` now hold terrain height only; `FORMAT` 5), from serving and from the baselines, and everything was retrained. Cost: held-out within-hour street ranking 0.161 → 0.148 (all weeks, unseen sensors), 0.118 → 0.127 (future days); the city level (the part that matters) is unchanged (MAE 7.22 → 7.19). Real measured traffic (Google Routes / TomTom) is a separate live layer; it is not an input to this model.
 
 ### Visible effect
 **The map and the sensor dots are about 2× more polluted than before on the same day** (median sensor ×1.87 across the history). This is a correction, not a regression: the sensors read about half of the reference station.
@@ -206,7 +211,7 @@ The learned model keeps its advantage on episode hours and still sits within ±5
 `make spatial` (`backend/ml/spatial_fit.py`) fits it; `backend/cai/krige.py` serves it; `C.SPATIAL_METHOD = "idw"` brings the old method back (it is also the fallback if `data/spatial.joblib` is missing or was made against another calibration).
 
 ### The model
-In log1p space, with the city level and the traffic/terrain trend taken out:
+In log1p space, with the city level and the terrain trend taken out:
 
 ```
 residual e0[s,t] = log1p(sensor) - log1p(city median) - trend(s,t)
@@ -222,12 +227,12 @@ The kriging weights (streets × sensors, sparse) and variances are computed once
 | | |
 |---|---|
 | Offsets | SD **0.48** in log1p units (×1.6), lag-1 autocorrelation of the hourly residual 0.86. Stable: first vs second half of the weeks, **r = 0.85** on 247 sensors. Hundreds of effectively independent hours per sensor, so the shrinkage factor is ≈1 for nearly all (249 of 252 of today's live sensors have an offset). |
-| Variogram (exponential, all hours) | nugget 0.072, partial sill 0.150, **range a = 12.6 km** (practical range about 38 km) |
-| by season | heating: 0.082 / 0.174 / 8.8 km · summer: 0.066 / 0.122 / 17.4 km · polluted heating hours (city > 15): 0.106 / 0.182 / 6.7 km |
+| Variogram (exponential, all hours) | nugget 0.072, partial sill 0.145, **range a = 12.3 km** (practical range about 37 km) |
+| by season | heating: 0.083 / 0.168 / 8.6 km · summer: 0.066 / 0.121 / 17.4 km · polluted heating hours (city > 15): 0.106 / 0.174 / 6.5 km |
 | Empirical semivariance | below 300 m about 0.06 · 0.6–1.3 km about 0.09 · 4 km 0.11 · 7 km 0.14 · 14 km 0.17 |
-| Persistence of the kriged residual | slope on the residual h hours later: 0.89 (0 h) · 0.76 (1) · 0.63 (2) · 0.54 (3) · 0.33 (6) · 0.18 (12) · 0.29 (24) · 0.12 (36) · 0.19 (47). Fitted `rho(h) = 0.19 + 0.71·exp(-h/4 h)`. |
+| Persistence of the kriged residual | slope on the residual h hours later: 0.89 (0 h) · 0.76 (1) · 0.63 (2) · 0.54 (3) · 0.33 (6) · 0.18 (12) · 0.29 (24) · 0.12 (36) · 0.19 (47). Fitted `rho(h) = 0.18 + 0.72·exp(-h/4 h)`. |
 
-**Reading this: the field carries almost no street-scale information.** The semivariance climbs from 0.06 below 300 m to 0.09 at about 1 km, then keeps climbing slowly to 0.17 at 14 km: only about a sixth of the spatial variance is at scales under a kilometre, the rest is neighbourhood-to-district scale (valley floor and edge, east-west contrasts the traffic and terrain trend does not capture). The unstructured part (nugget, 32 % of the fitted sill) cannot be told apart from measurement noise. So sensors can say how a *neighbourhood* differs from the city, not how one street differs from the next. This is what Phase 5 turns into the decision.
+**Reading this: the field carries almost no street-scale information.** The semivariance climbs from 0.06 below 300 m to 0.09 at about 1 km, then keeps climbing slowly to 0.17 at 14 km: only about a sixth of the spatial variance is at scales under a kilometre, the rest is neighbourhood-to-district scale (valley floor and edge, east-west contrasts the terrain trend does not capture). The unstructured part (nugget, 32 % of the fitted sill) cannot be told apart from measurement noise. So sensors can say how a *neighbourhood* differs from the city, not how one street differs from the next. This is what Phase 5 turns into the decision.
 
 The old IDW kept a snapshot residual at full strength for the whole 48 h window. The data say it is mostly gone after 6 h (slope 0.33) and about a fifth remains afterwards.
 
@@ -236,26 +241,28 @@ Whole weeks held out (5 folds); offsets, variogram and the interval scale are re
 
 | Held-out hours | level only | level + trend | IDW (old) | kriging, offsets kept | **kriging, offsets removed** |
 |---|---|---|---|---|---|
-| all (2,680 h) | 3.02 / – | 2.93 / 0.176 | 3.07 / 0.225 | 2.85 / 0.200 | **2.77 / 0.251** |
-| heating season (1,645 h) | 5.24 / – | 5.09 / 0.191 | 5.05 / 0.266 | 4.71 / 0.259 | **4.54 / 0.315** |
-| summer (1,035 h) | 1.52 / – | 1.44 / 0.153 | 1.59 / 0.159 | 1.48 / 0.105 | 1.50 / 0.149 |
-| polluted heating, city > 15 (930 h) | 9.06 / – | 8.81 / 0.218 | 8.57 / 0.290 | 8.05 / 0.299 | **7.78 / 0.341** |
-| city > 25 (436 h) | 12.94 / – | 12.68 / 0.221 | 12.20 / 0.300 | 11.41 / 0.334 | **11.04 / 0.360** |
+| all (2,680 h) | 3.02 / – | 2.93 / 0.157 | 3.09 / 0.222 | 2.84 / 0.203 | **2.74 / 0.262** |
+| heating season (1,645 h) | 5.24 / – | 5.04 / 0.172 | 5.06 / 0.263 | 4.69 / 0.263 | **4.51 / 0.321** |
+| summer (1,035 h) | 1.52 / – | 1.46 / 0.132 | 1.60 / 0.157 | 1.48 / 0.109 | 1.48 / **0.167** |
+| polluted heating, city > 15 (930 h) | 9.06 / – | 8.71 / 0.190 | 8.61 / 0.282 | 8.00 / 0.303 | **7.74 / 0.345** |
+| city > 25 (436 h) | 12.94 / – | 12.60 / 0.180 | 12.26 / 0.284 | 11.36 / 0.334 | **11.00 / 0.359** |
+
+(Median absolute error in µg/m³ / within-hour Spearman, evaluated with the final, terrain-only trend. The first version of this table, with the traffic term, had summer ranking 0.149 vs IDW's 0.159, which was a miss; without the traffic term it is 0.167 vs 0.157.)
 
 - Removing the neighbours' offsets is what makes kriging work: kept, it is only marginally better than the trend.
-- **In summer kriging adds nothing over the trend alone** (1.50 vs 1.44 µg/m³; ranking 0.149 vs IDW's 0.159). The field is weak at clean levels, where sensor noise (±2 µg/m³) is as large as the signal.
-- Caveats: the four trend coefficients were fitted on all sensors (in-sample for them, identical for every method); the neighbour count was set to 24 after looking at the cross-validated numbers for 6/12/24/48 (gain from 12 to 24 is 0.07 µg/m³ and 0.01 in ranking; 48 is the same as 24), so that comparison is slightly optimistic. The hidden sensor's own offset (×1.6 SD) is part of what it is scored against and is unpredictable; this puts a ceiling on every correlation here.
+- **In summer kriging adds nothing over the trend alone for the error** (1.48 vs 1.46 µg/m³), only for the ranking (0.167 vs 0.132). The field is weak at clean levels, where sensor noise (±2 µg/m³) is as large as the signal.
+- Caveats: the two trend coefficients were fitted on all sensors (in-sample for them, identical for every method); the neighbour count was set to 24 after looking at the cross-validated numbers for 6/12/24/48 (gain from 12 to 24 is 0.07 µg/m³ and 0.01 in ranking; 48 is the same as 24), so that comparison is slightly optimistic. The hidden sensor's own offset (×1.6 SD) is part of what it is scored against and is unpredictable; this puts a ceiling on every correlation here.
 
 **Uncertainty.** Per-street SD (log1p units) = scale × √(nugget + offset variance + kriging variance), shrinking the explained part with the lead through ρ². The raw SD gave 80 % intervals that held 0.83 (heating) and 0.88 (summer) of the hidden readings; a per-season factor fitted on the training weeks (heating 0.88, summer 0.63; the summer noise is smaller at clean levels) brings them to **0.796 (heating), 0.798 (summer)**, 0.777 in polluted heating hours and 0.772 above 25 µg/m³. The level part of the uncertainty is added in Phase 3.
 
 ### Acceptance
 | Bar | Result |
 |---|---|
-| Leave-one-sensor-out median error below IDW over historical hours | **Met** in every cut (all 2.77 vs 3.07; heating 4.54 vs 5.05; summer 1.50 vs 1.59; polluted heating 7.78 vs 8.57) |
-| Within-hour Spearman not lower than IDW | **Met** overall (0.251 vs 0.225), heating (0.315 vs 0.266), polluted heating (0.341 vs 0.290). **Not met in summer: 0.149 vs 0.159** |
+| Leave-one-sensor-out median error below IDW over historical hours | **Met** in every cut (all 2.74 vs 3.09; heating 4.51 vs 5.06; summer 1.48 vs 1.60; polluted heating 7.74 vs 8.61) |
+| Within-hour Spearman not lower than IDW | **Met** in every cut: overall 0.262 vs 0.222, heating 0.321 vs 0.263, summer 0.167 vs 0.157, polluted heating 0.345 vs 0.282 |
 | 80 % intervals cover 75–85 %, heating and summer separately | **Met** (0.796 and 0.798) after the per-season scale; before it, summer was 0.88 |
 
-Live snapshot (`/api/validation`, one clean autumn evening, 259 sensors): kriging ρ 0.146 / median error 2.39, IDW 0.083 / 2.39, trend only 0.138 / 2.20. Nothing beats the trend on a clean day, in line with the summer rows.
+Live snapshot (`/api/validation`, one clean autumn evening, 273 sensors, re-measured with the final model): kriging ρ 0.02 / median error 2.56, IDW 0.01 / 2.82, trend only 0.04 / 2.35. Nothing beats the trend on a clean day, in line with the summer rows.
 
 ### Cost
 Once per sensor snapshot (every few minutes at most): kriging weights for 119k street segments take about 1.4 s (model init was 0.08 s). The 48 forecast hours take 1.0 s (was 1.3 s). End to end, a window build goes from about 1.4 s to 2.4 s.
@@ -300,7 +307,7 @@ Only windows where the episode is **not already under way at issue time** (143 w
 
 What this says:
 - The old rule fired in 141 of 164 test windows. Its POD is as good as the amber tier's, but nearly everything it says is false (FAR 0.71). The Peirce score of 0.13 is close to "always alert".
-- The new red tier is quiet and precise (FAR 0.12) but **misses a third of the episodes (6 of 32), and most of the genuine onsets (7 of 12)**: it mostly confirms an episode once the sensors show it. Persistence (0.49) is the right comparison for that, and the red tier beats it only modestly (0.64).
+- The new red tier is quiet and precise (FAR 0.12) but **misses a third of the episode windows (14 of 43), i.e. 6 of 32 distinct episodes, and most of the genuine onsets (7 of 12)**: it mostly confirms an episode once the sensors show it. Persistence (0.49) is the right comparison for that, and the red tier beats it only modestly (0.64).
 - The amber tier recovers the old rule's POD at 0.55 instead of 0.71 false alarms. So the design is: amber = "be alert", red = "it is happening or nearly certain".
 - On onset detection the model is **not clearly better than CAMS × sensor bias** (Peirce 0.50 amber vs 0.41, but FAR 0.71 vs 0.75, so a modest gain at best, with 12 episodes).
 
@@ -328,13 +335,13 @@ Solid-fuel home heating is the main winter source: NIMH (2020, via Breathe Citie
 | (c) Low-emission heating zone polygons | A thematic layer exists in the municipality's iSofMap viewer ([GIS-Sofia](https://gis-sofia.bg/en/post/new-in-isofmap-added-low-emission-zones-thematic-map)) under Ordinance of 15.12.2022 (Decision No. 931 of the Metropolitan Municipal Council). No open download or service endpoint is documented, and scraping a commercial viewer is not appropriate. **To ask:** Sofia Municipality / GIS-Sofia for the geometry. Not requested. |
 | (d) OSM proxy | **Built** (`make heating` → `data/lowrise.tif`, `data/buildings.tif`): 123,333 OSM buildings in the box; 77,075 count as house-like (house/detached/semidetached/terrace/bungalow/cabin tag, or ≤ 2 levels, or an untagged residential building with a footprint ≤ 200 m²). Rasterised like the other layers (35 m cells), averaged over 250 / 500 / 1000 m buffers. The district-heating area is **not** subtracted (no public polygon), so this is a ceiling on exposure, not an estimate. |
 
-### Tests (`python -m backend.ml.heating_check`, run on the committed code)
-**1. Sensor level: rank correlation with the persistent sensor offset** (for scale: traffic +0.22, terrain height −0.21):
+### Tests (`python -m backend.ml.heating_check`, run on the final terrain-only model; an earlier run with the traffic term in the baseline gave the same picture: best gain +0.041)
+**1. Sensor level: rank correlation with the persistent sensor offset** (for scale: terrain height −0.21):
 
 | feature | 250 m | 500 m | 1000 m |
 |---|---|---|---|
 | low-rise share | −0.00 [−0.12, +0.11] | +0.05 [−0.07, +0.17] | +0.10 [−0.02, +0.21] |
-| same, traffic and terrain taken out | +0.07 | +0.12 | +0.15 |
+| same, terrain taken out | +0.07 | +0.11 | +0.15 |
 | low-rise fraction of built-up area | −0.05 | −0.04 | −0.06 |
 
 Weakly positive, intervals include zero before adjustment, growing with the buffer.
@@ -345,19 +352,78 @@ Weakly positive, intervals include zero before adjustment, growing with the buff
 
 | street model | all heating-season hours | hours with city level > 15 |
 |---|---|---|
-| traffic + terrain (current) | 0.170 ± 0.005 | 0.192 ± 0.006 |
-| + low-rise share 250 m | 0.165 (−0.005) | 0.193 (+0.001) |
-| + low-rise share 500 m | 0.168 (−0.002) | 0.188 (−0.004) |
-| + low-rise share 1000 m | **0.210 (+0.041)** | **0.229 (+0.037)** |
-| + low-rise fraction 500 m | 0.165 (−0.004) | 0.201 (+0.009) |
+| terrain only (current) | 0.169 ± 0.007 | 0.188 ± 0.007 |
+| + low-rise share 250 m | 0.163 (−0.006) | 0.188 (−0.000) |
+| + low-rise share 500 m | 0.168 (−0.001) | 0.186 (−0.002) |
+| + low-rise share 1000 m | **0.213 (+0.045)** | **0.230 (+0.042)** |
+| + low-rise fraction 500 m | 0.169 (−0.000) | 0.202 (+0.015) |
 
 Each variant also carries its stagnation interaction (feature × S/100), as the other terms do.
 
 ### Acceptance and reading
-The bar was +0.05. The best variant gains **+0.041**: **not met**, so it stays out of the model. Two reasons not to read it as a near-miss to be rescued:
+The bar was +0.05. The best variant gains **+0.045**: **not met**, so it stays out of the model. Two reasons not to read it as a near-miss to be rescued:
 - it is the best of five variants tried, and only the 1000 m buffer moves at all. A 1 km average of low-rise cover is a smooth, city-scale surface (outskirts and villages versus the built-up centre), which is the same kind of structure the variogram found (range about 12 km) and the sensor-grouped CV can pick up without it being heating;
 - the mechanism test points the wrong way (test 2): heating smoke should show up as a winter-night excess at the sensor itself.
 
-What would settle it: the district-heating polygon (b) or census heating fuel (a). With them the proxy could be restricted to low-rise buildings **outside** the network, which is where the stoves are; as built it also counts low-rise houses on district heating or gas, which dilutes any signal. The construction-site check (above) was also negative, so the street-level model still has only traffic and terrain.
+What would settle it: the district-heating polygon (b) or census heating fuel (a). With them the proxy could be restricted to low-rise buildings **outside** the network, which is where the stoves are; as built it also counts low-rise houses on district heating or gas, which dilutes any signal. The construction-site check (above) was also negative, so the street-level model still has only terrain height.
 
 Nothing was added to `features.py` or the model; the rasters are data for the follow-up.
+
+
+## Phase 5: street level or neighbourhood level?
+
+**Recommendation: neighbourhood level (250 m cells) is the default; street colouring stays as an opt-in "indicative" layer. The router only says "cleanest" when the difference is larger than the model's uncertainty.**
+
+### Evidence
+Same held-out protocol as Phase 2 (whole weeks held out, every sensor hidden in turn and predicted from the others, 80 % intervals scaled per season), heating-season hours with a city level above 15 and above 25 µg/m³ (`python -m backend.ml.street_vs_area`):
+
+| Within-hour Spearman at a hidden sensor | city > 15 (930 h) | city > 25 (436 h) | all heating hours |
+|---|---|---|---|
+| trend only (terrain) | 0.200 | 0.177 | 0.181 |
+| **street-level field** (what the street map shows) | **0.349** | **0.355** | **0.322** |
+| field averaged over the 250 m square containing the sensor | 0.347 | 0.354 | 0.320 |
+| ... 500 m square | 0.348 | 0.355 | 0.320 |
+| ... 1 km square | 0.348 | 0.355 | 0.321 |
+| ... 2 km square | 0.340 | 0.349 | 0.314 |
+| 80 % intervals hold | 0.78 | 0.77 | 0.80 |
+
+(Both street and cell values are computed without the hidden sensor, with the same terrain trend added; the cell value is the mean of the field at a 3 × 3 grid of points in the square.) **Averaging the field over 250 m squares costs nothing**, and even 2 km squares cost 0.01. So the skill the sensors support lives at neighbourhood scale (the variogram says the same: range about 12 km, only a sixth of the variance below 1 km).
+
+Can anything rank streets that are close together? Share of sensor pairs in the same hour (heating season, city > 15) whose terrain-trend order matches the order of their readings (0.5 = chance, ties dropped):
+
+| distance | 0–250 m | 250–500 m | 0.5–1 km | 1–2 km | 2–5 km |
+|---|---|---|---|---|---|
+| pairs | 6,209 | 20,942 | 71,395 | 262,071 | 1,494,849 |
+| concordance | 0.55 | 0.51 | 0.47 | 0.54 | 0.56 |
+
+Pairs share sensors and hours, so the real uncertainty is larger than the naive 0.006–0.0004. Nothing is above 0.56 at any distance, and the shortest distances are no better than the longest.
+
+Intervals and calibration: 80 % intervals cover 0.78 / 0.77 in polluted heating hours (target 0.75–0.85); city-level 10 %/90 % quantiles cover well in the week-blocked evaluation but drift too narrow on the future split (Phase 3).
+
+### The decision rule, and where I departed from it
+The proposed rule was: within-hour Spearman below 0.3 in polluted heating-season hours → neighbourhood default. The measured value is **0.35, above the line**, so by the letter the street map stays. I did not follow it, because the rule assumes the Spearman measures street-level skill, and the direct test above shows the same skill from a 250 m cell map, which a street map cannot beat. If the street-by-street differences carried information, the street field would outrank its own cell average; it does not. This is a judgement; the street layer is kept (opt-in) so it can be compared.
+
+### What changed in the app
+- **CAI map**: defaults to 250 m cells (`/api/cai/areas`, the same cells the network view uses); a switch "Neighbourhoods | Streets (indicative)" brings back the street colouring and the "Why is this red?" panel, with a warning that street detail is not supported.
+- **Router** (`backend/cai/route_confidence.py`): the difference in mean PM2.5 between the fastest route and each alternative is compared with its uncertainty: the unstructured part of each street (nugget + offset variance) averaged over independent 150 m pieces of the *unshared* stretches only (shared streets cancel), plus the spatially correlated error between the two stretches (from the variogram), times the per-season interval scale. Distinguishable = difference beyond 1.28 standard errors. If no alternative is distinguishable, the route panel says **"All routes have about the same air right now"** and hides "Open cleanest in Google Maps". The 150 m piece length is an assumption the sensors cannot check.
+  Tried on 36 route requests (6 trips × hours 0/6/12 × live fixture and the winter demo): in 18 the cleanest route was the fastest route, in the others it differed in mean PM2.5 by **0.0–0.8 %** against an uncertainty of **4–10 %**. **None was distinguishable.** With this model, routing for cleaner air is within the noise on typical trips; the "cleanest" route changes the path but not the exposure the model can resolve.
+- **Validation card** (`/api/validation` → `trust`): sensors against the EEA station (raw vs calibrated error, ratio by humidity, typical error ±37 %, and the note that one station anchors it), the spatial stage (ranking and error vs the old method in polluted winter hours, 80 % coverage, offsets ±61 %, pattern scale), and the banner back-test (red tier and old rule, caught episodes and false alarms). The old "physics formula" rows are gone.
+- **Districts**: advice, dashboard and `/api/districts` carry a per-district level and chance, from the city forecast moved by the district's offset-adjusted sensors (Phase 3).
+
+### Acceptance
+| Bar | Result |
+|---|---|
+| Report Spearman and interval coverage for polluted heating-season hours (> 15, > 25) | Done, table above |
+| Neighbourhood default if Spearman < 0.3 | Rule not triggered (0.35); neighbourhood default adopted anyway on the cell-versus-street evidence |
+| Router offers "cleanest" only beyond combined uncertainty | Implemented; none of 36 sample requests qualified |
+| Validation card updated with reference-station agreement | Done |
+
+## Phase 6: limits and what is still missing
+
+- **One reference station.** Hipodruma is the only usable PM2.5 anchor, with 13 sensors within 1.5 km, 1,991 hours of 2026, three hours above 50 µg/m³. Everything above 40 µg/m³ is extrapolation. The calibrated city value is typically ±37 % of the station.
+- **The history is a sample**: one week in seven plus the 14 worst-CAMS episodes, so episode rates in the back-test are higher than climate, and the 2024/25 heating season used to choose the red threshold has only 5 non-episode windows.
+- **Future-days drift**: level intervals are too narrow on the last quarter of the history (above-p90 0.16).
+- **No heating map**: the strongest known winter source has no usable feature; the OSM proxy fails its bar. Needs census heating-fuel data, the district-heating polygon, or the low-emission-zone geometry (Phase 4 lists whom to ask).
+- **Observed heavy hours are under-predicted** (−5.4 µg/m³ on hours whose outcome was ≥ 25; an outcome-selected statistic, but real for the alert's recall: the red tier misses 6 of 32 episodes in the test winter).
+- **PM10 calibration** rests on nine autumn days; the live WAQI check overshoots (1.31×).
+- **Not done**: the Sensor.Community PM10 re-pull (archive not answering), ELAPSE surfaces (no public download), NIMH station forecasts.
