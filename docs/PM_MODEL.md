@@ -110,3 +110,93 @@ Sources: [Azarmi et al. 2016, London](https://pubs.rsc.org/en/content/articlehtm
 - Beats persistence at 6 h or more. **Met.**
 - Street ranking above the old formula on hidden sensors. **Met, narrowly** (0.16 vs 0.14).
 - Re-run `make train` monthly during the heating season and watch the episode-hour bias.
+
+
+---
+
+# Unified model: one calibrated PM2.5 behind every screen
+
+Branch `unified-pm-model`. The sections above describe the model as it was; the phases below change it. Each phase ends with a measured result. A negative result is reported, not tuned away.
+
+## Phase 0: one number for the banner, the chart and the map
+
+Before, three screens showed three PM2.5 numbers: the banner fired on the stagnation score, the chart plotted raw CAMS, the map used the learned model. Now the hourly **city level comes from the learned model** (`backend/alert.py`, the same `PmModel.level_pm` call the street map uses), and:
+
+- **Banner** is red when that level stays at or above 25 µg/m³ (EU 24 h limit) for 3 hours in a row, starting within 24 h or already running. Amber when any hour reaches 15 (WHO 24 h guideline). The stagnation score is supporting text ("the air is trapped, score 72") and a chart overlay, no longer the trigger. A trapped-air forecast with clean PM2.5 is now a green banner that says so (`test_clean_forecast_with_a_high_stagnation_score_is_not_a_red_banner`).
+- **Message** carries the expected value: "Tomorrow night 22:00–06:00: PM2.5 around 38 µg/m³. Sensitive groups should limit time outside." "Everyone" from 50 µg/m³.
+- **Chart** plots the model level; raw CAMS is a faint dashed, labelled line.
+- **Advice and dashboard** use the same alert object. District rows share the city level for now; per-district levels come with the spatial field (Phases 2–3). The district-map shading is still the score-times-elevation index.
+- Thresholds are in `backend/cai/config.py` (`PM_WATCH`, `PM_WARNING`, `PM_EVERYONE`, `ALERT_MIN_HOURS`).
+- Fallbacks, flagged in the alert's `basis`: no model file → CAMS × live-sensor bias (`cams_bias`); no PM series at all → the old stagnation rule (`stagnation`).
+- **Merge decision:** Phase 0 shipped on the branch together with Phase 1 (below), so the banner never showed uncalibrated numbers as final. The alert has a `scale` field (`sensor` or `reference`); the banner footnote says "citizen-sensor scale" whenever the model is not calibrated.
+
+## Phase 1: reference data and calibration
+
+### Data
+`make reference` (`backend/data_prep/reference_eea.py`) downloads hourly PM2.5 and PM10 from the EEA download API for the Sofia stations; coordinates and station type come from the EEA station metadata table, never guessed. Licence: EEA content is CC BY 4.0 ([legal notice](https://www.eea.europa.eu/en/legal-notice)); attribution: "European Environment Agency (EEA) e-reporting, reported by Bulgaria". `data/history/` stays git-ignored.
+
+What the API actually gives for Sofia:
+
+| | |
+|---|---|
+| PM2.5 stations | **BG0050A Hipodruma** (urban background) and BG0070A (rural-nearcity). That is all. BG0045A and BG0075A are not in Sofia. |
+| PM10 stations | BG0040A Nadezhda, BG0050A, BG0052A Druzhba, BG0073A Pavlovo (traffic), BG0079A Mladost (traffic) |
+| Coverage | dataset 1 (up-to-date stream): **2026-01-01 onwards only**. Dataset 2 (verified): empty for Bulgaria. Dataset 3 (AirBase): ends years before the sensor history. |
+| Time stamp | `Start` is UTC+1 all year; subtracting 1 h is right (correlation with the sensors peaks at lag 0 after the shift: r 0.75 vs 0.72 / 0.72 at ±1 h) |
+
+**BG0070A is excluded.** It has no daily cycle (12–13 µg/m³ at every hour), its level steps from about 16 to about 8 in June, and it correlates 0.25 with Hipodruma while the five PM10 stations correlate 0.63–0.79 with each other. No sensor is within 2 km of it to check it against.
+
+### What this means: the calibration rests on one station
+Only Hipodruma can anchor PM2.5. **13 sensors are within 1.5 km (7 within 1 km, 31 within 2 km, none within 500 m)**, giving 1,991 overlapping hours in 41 sampled weeks of 2026. Only 3 of those hours exceed 50 µg/m³ and 88 exceed 25. The calibration says nothing reliable about heavy episodes; it extrapolates.
+
+The README's claim that the municipal stations "report no PM2.5" is true of the WAQI feed only.
+
+### Method
+Unit: the hourly **median** of the sensors within R of the station against the station's hourly value (a median is what the city level uses, and it keeps each sensor's private offset out of the global curve; that offset belongs to Phase 2). 253 of the 254 sensors with a known type are SDS011, so "sensor type" cannot be tested and is not a feature. Evaluation: whole weeks held out (GroupKFold over weeks), never random rows.
+
+| Candidate | MAE µg/m³ | bias | r |
+|---|---|---|---|
+| raw sensors, no calibration | 5.29 | −4.98 | 0.750 |
+| a. ratio only | 4.05 | −0.16 | 0.747 |
+| b. log-linear + RH | 3.21 | −0.48 | 0.804 |
+| c. b + temperature | 3.24 | −0.47 | 0.800 |
+| **d. c + heating-season flag** | **3.16** | −0.45 | 0.802 |
+| e. gradient boosting (upper bound) | 3.36 | −0.94 | 0.777 |
+
+d is the best and the simplest within one standard error of the best by block-wise MAE (b is within 0.05 µg/m³ of it, so the temperature and season terms are worth little). The GBM is no better than the linear model: the inputs hold no more than this. Fitted: `log(1+ref) = 0.79 + 0.92·log(1+raw) − 0.63·RH + 0.15·T/10 + 0.31·heating`. A raw reading of 10 maps to about 20 at 35 % RH, 17 at 65 % and 14 at 90 % (winter or summer within 1 µg/m³). The factor falls as humidity rises: sensors under-read least when it is humid. That is the same physical direction as the known humidity over-read of optical sensors (particles swell), but around a baseline where Sofia's sensors read low. The calibrated median's own error is `sigma_log` = 0.37 (log units), which the spatial stage adds to each sensor's nugget.
+
+Disc radius barely matters (MAE 3.12 / 3.16 / 3.14 for 1 / 1.5 / 2 km). A last-quarter-of-the-year fit gives MAE 3.96, bias −0.95 (future check).
+
+### PM10 cross-check
+The PM10 sensor history is only the 9 autumn days of 2026 the archive gave before it stopped answering (a re-pull stalled; `make history --name sensors_pm10 --since 2026-01-01` is ready for when it answers). Against the five PM10 stations, 984 station-hours, RH only 26–82 %:
+
+- Same fit form, **RH coefficient −0.632 for PM10 against −0.609 for PM2.5**. Independent stations, a different pollutant, the same humidity behaviour.
+- Calibrated PM10 MAE 7.2 vs raw 15.3 µg/m³; median ratio per RH bin 0.91–1.01 up to 80 % RH, 1.35 above (n=70).
+- This PM10 fit is saved as a stop-gap for the live WAQI comparison; it is indicative, fitted on 9 days.
+
+### Acceptance (proposed bars)
+| Bar | Result |
+|---|---|
+| Median calibrated/reference ratio 0.85–1.15 in every RH bin, held-out weeks | **Met.** Sensors near the station: 0.97–1.01. Median of **all** calibrated sensors in the city: 0.93–1.02 (n per bin 214–636). |
+| MAE ≥ 40 % lower than raw | **Near-miss at city scale.** Near the station 40.3 % (3.16 vs 5.29). City median of all sensors: **39.3 %** (3.30 vs 5.44). Not loosened. |
+| Report the >25 and >50 bins with counts | >25 reference: 88 hours, median ratio 0.80, bias −6.4. **>50: 3 hours**, ratio 0.4. |
+
+The ratio in the high reference bins looks low partly by construction (binning on the outcome shows regression to the mean). Binning on the **calibrated** value instead: when the calibrated median is 25–50, the reference is 0.97 of it (n=66); 10–25: 0.99 (n=681); 0–10: 1.04 (n=1,244). So the calibration is not biased given what a user sees, but it cannot reach the highest values: it never predicted above 50.
+
+### Live WAQI check (PM10, one hour, 2026-10-17 around 21:30 local)
+Ratio of citizen to reference PM10 at five stations (6–19 sensors within 1.5 km each): raw **0.46×** (0.35–0.64), calibrated **1.31×** (0.99–1.60). The raw error was −0.78 in log units, the calibrated error +0.27, but it now overshoots at three of five stations. WAQI's PM10 is converted from AQI, the PM10 calibration was fitted on 9 days, and this is one night hour, so read it as "closer, not yet right".
+
+### Retrained level model (calibrated targets)
+`make calibrate train`. The model file now records that it was trained on calibrated values and which calibration; it refuses to load if the calibration file is missing or has changed (otherwise its input, the live city median, would be off by about 2×). Numbers are now in reference-scale µg/m³ (old rows were on the sensor scale: not comparable).
+
+| | Learned model | Old formula | CAMS × bias | Persistence |
+|---|---|---|---|---|
+| Error, hidden sensors + future days (MAE) | **4.67** | 5.67 | 5.29 | 4.86 |
+| Error, hidden sensors, all weeks | **7.24** | 10.28 | 9.84 | 7.69 |
+| Episode hours (CAMS ≥ 50): MAE / bias | **15.98 / −3.73** | 32.17 / +24.27 | 31.27 / +22.62 | 17.17 / −5.84 |
+| Street ranking within an hour | **0.16** (0.118 on the future split) | 0.12 | 0.00 | – |
+
+The learned model keeps its advantage on episode hours and still sits within ±5 µg/m³ of bias there. Within-hour street ranking is unchanged in kind (about 0.12–0.16). Calibration did not make the street part better, as expected: it scales values, it does not add spatial information.
+
+### Visible effect
+**The map and the sensor dots are about 2× more polluted than before on the same day** (median sensor ×1.87 across the history). This is a correction, not a regression: the sensors read about half of the reference station.

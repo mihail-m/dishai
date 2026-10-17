@@ -1,4 +1,4 @@
-.PHONY: dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: reference calibrate dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -52,6 +52,10 @@ dem:
 	$(PY) -m backend.data_prep.dem                  # Copernicus 30 m terrain -> data/dem.tif
 history:
 	$(PY) -m backend.data_prep.history              # Sensor.Community + Open-Meteo history -> data/history/ (~1 h, resumable)
+reference:
+	$(PY) -m backend.data_prep.reference_eea     # EEA hourly PM2.5/PM10 for Sofia -> data/history/reference.csv
+calibrate:
+	$(PY) -m backend.ml.calibrate                    # fit + evaluate the sensor calibration -> data/calibration.joblib
 train:
 	$(PY) -m backend.ml.train                       # fit + evaluate the PM2.5 model -> data/pm_model.joblib
 data: graph bikegraph roads ndvi lst canopy trees bake

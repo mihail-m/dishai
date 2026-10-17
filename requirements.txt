@@ -14,7 +14,8 @@ pyproj
 rasterio
 pystac-client
 planetary-computer
-# PM2.5 model (training also needs pandas)
+# PM2.5 model (training also needs pandas; pyarrow only to read the EEA reference parquet files)
+pyarrow
 scikit-learn
 joblib
 pandas

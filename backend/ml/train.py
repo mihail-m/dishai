@@ -32,6 +32,7 @@ from ..cai.features import compute_features
 from ..cai.graph import DATA, get_net
 from ..cai.score import HourCtx, hour_contexts, predict_pm
 from ..score import stagnation_score
+from . import calibration as calibration_mod
 from .pm_model import (DEV_CLIP, FEATURES, LEVEL_FEATURES, MAX_LEAD_H, S_IDX, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector,
                        now_vector, spatial_design, static_matrix)
 
@@ -59,8 +60,24 @@ def load_sensors() -> pd.DataFrame:
     return s
 
 
-def build_table(rng: np.random.Generator) -> tuple[pd.DataFrame, np.ndarray]:
+def calibrate_history(sens: pd.DataFrame, hrs: pd.DataFrame, cal) -> pd.DataFrame:
+    """Raw sensor-hours -> reference scale with the RH / temperature / month of that hour (Open-Meteo history, the same variables
+    the live calibration reads from the forecast). The raw value is kept as pm25_raw."""
+    wx = hrs[["relative_humidity_2m", "temperature_2m"]].rename(columns={"relative_humidity_2m": "rh", "temperature_2m": "temp"})
+    j = sens[["time"]].join(wx, on="time")
+    sens = sens.assign(pm25_raw=sens.pm25)
+    sens["pm25"] = cal.apply(sens.pm25.to_numpy(), j.rh.to_numpy(), j.temp.to_numpy(), sens.time.dt.month.to_numpy())
+    return sens
+
+
+def build_table(rng: np.random.Generator, calibrate: bool = True) -> tuple[pd.DataFrame, np.ndarray]:
     hrs, sens = load_hours(), load_sensors()
+    cal = calibration_mod.get("pm25") if calibrate else None
+    if cal is not None:
+        sens = calibrate_history(sens, hrs, cal)
+        print(f"sensor values calibrated to the reference scale ({cal.meta.get('candidate')}), median x{(sens.pm25 / sens.pm25_raw.clip(lower=0.1)).median():.2f}", file=sys.stderr)
+    else:
+        print("WARNING: training on raw sensor values (no calibration file or --raw)", file=sys.stderr)
     # outlier-robust city nowcast, same clip the live CaiModel applies
     med = sens.groupby("time").pm25.transform("median")
     sens["pm"] = sens.pm25.clip(0, 4 * med + 10)
@@ -267,9 +284,10 @@ def predict_pm_ml(model: PmModel, df: pd.DataFrame) -> np.ndarray:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--raw", action="store_true", help="train on raw sensor values (ignore data/calibration.joblib); the model is then flagged uncalibrated")
     ap.add_argument("--drop", default="", help="comma-separated feature columns to blank out (ablation), e.g. rh,t2m")
     args = ap.parse_args()
-    df, _ = build_table(np.random.default_rng(SEED))
+    df, _ = build_table(np.random.default_rng(SEED), calibrate=not args.raw)
     df = df.reset_index(drop=True)
     for c in filter(None, args.drop.split(",")):
         df[c] = np.nan
@@ -324,12 +342,14 @@ def main() -> int:
     print(f"\nepisode stress test: CAMS and sensors x5 -> predicted city level x{stress:.1f} (a model that caps would give ~x1)", file=sys.stderr)
     A["stress_x5_ratio"] = round(stress, 2)
 
+    cal = None if args.raw else calibration_mod.get("pm25")
     final = fit_all(df, alpha)
     names = [f"{c}{suffix}" for suffix in ("", " x S/100") for c in ("z(log T)", "z(elev)")]
     print("spatial coefficients:", dict(zip(names, np.round(final.spatial["coef"], 3))), file=sys.stderr)
     if not args.no_save:
         final.meta = {
-            "trained": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "rows": int(len(df)), "sensors": int(df.sensor.nunique()),
+            "trained": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "rows": int(len(df)),
+            "calibrated": cal is not None, "calibration_coef": cal.coef if cal is not None else None, "sensors": int(df.sensor.nunique()),
             "days": int(df.day.nunique()), "span": [str(df.day.min().date()), str(df.day.max().date())],
             "algorithm": "HistGradientBoosting (city level) x linear street deviation (traffic, terrain height)",
             "eval_unseen_sensors": A, "eval_unseen_sensors_future_days": B,

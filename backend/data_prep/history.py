@@ -55,6 +55,16 @@ async def live_sensors(c: httpx.AsyncClient) -> dict[int, str]:
     return out
 
 
+def save_types(types: dict[int, str]) -> int:
+    """data/history/sensor_types.csv (sensor,type): the calibration depends on the sensor model (SDS011 vs the Plantower family)."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    with open(OUT / "sensor_types.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["sensor", "type"])
+        w.writerows(sorted(types.items()))
+    return len(types)
+
+
 async def day_rows(c, sem, d: date, sid: int, typ: str) -> list[tuple] | None:
     """Hourly rows for one sensor-day; [] when it has no file (404); None when the request failed after retries."""
     url = (ARCHIVE if d >= NEW_LAYOUT_FROM else ARCHIVE_OLD).format(d=d.isoformat(), y=d.year, typ=typ, sid=sid)
@@ -111,7 +121,7 @@ def episode_days(n: int) -> list[date]:
     return sorted({x for d in chosen for x in (d, d + timedelta(days=1))})
 
 
-async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensors") -> None:
+async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensors", since: date | None = None) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     f = OUT / f"{name}.csv"
     done_f = OUT / (f"{name}_days_done.txt" if name != "sensors" else "days_done.txt")
@@ -121,9 +131,12 @@ async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensor
     wanted = [today - timedelta(days=k + j) for k in range(3, days, step) for j in (0, -1)]
     if episodes:
         wanted += [d for d in episode_days(episodes) if d not in wanted]
+    if since:
+        wanted = [d for d in wanted if d >= since]
     sem = asyncio.Semaphore(CONCURRENCY)
     async with httpx.AsyncClient(follow_redirects=True) as c:
         sensors = await live_sensors(c)
+        save_types(sensors)
         print(f"{len(sensors)} candidate PM sensors, {len(wanted)} days", file=sys.stderr)
         consecutive_bad = 0
         with open(f, "a", newline="") as fh:
@@ -174,22 +187,28 @@ async def fetch_series(url_t: str, out: str, days: int) -> None:
 
 
 async def main() -> None:
+    global CONCURRENCY
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--step", type=int, default=7)
     ap.add_argument("--episodes", type=int, default=14)
     ap.add_argument("--name", default="sensors", help="output file stem under data/history (e.g. sensors_pm10 for a separate PM10 pull)")
     ap.add_argument("--concurrency", type=int, default=CONCURRENCY)
+    ap.add_argument("--since", type=date.fromisoformat, help="skip days before this date (e.g. 2026-01-01: the EEA reference starts then)")
+    ap.add_argument("--types-only", action="store_true", help="only refresh data/history/sensor_types.csv from the live feed")
     ap.add_argument("--no-series", action="store_true", help="skip re-fetching weather/CAMS")
     ap.add_argument("--series-days", type=int, default=800, help="how far back weather/CAMS go (episodes are picked from this)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    global CONCURRENCY
     CONCURRENCY = a.concurrency
+    if a.types_only:
+        async with httpx.AsyncClient(follow_redirects=True) as c:
+            print(f"{save_types(await live_sensors(c))} sensor types -> {OUT / 'sensor_types.csv'}", file=sys.stderr)
+        return
     if not a.no_series:
         await fetch_series(WEATHER, "weather.csv", a.series_days)
         await fetch_series(CAMS, "cams.csv", a.series_days)
-    await fetch_sensors(a.days, a.step, a.episodes, a.name)
+    await fetch_sensors(a.days, a.step, a.episodes, a.name, a.since)
 
 
 if __name__ == "__main__":

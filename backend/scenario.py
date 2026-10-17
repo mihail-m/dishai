@@ -80,7 +80,7 @@ def summer_heatwave_hourly(day0: datetime) -> dict:
         peak = math.sin(math.pi * ((h - 7) / 14) ** 1.2) if 7 <= h <= 21 else 0.0
         t2m = 22.0 + (12.0 + (2.0 if day2 else 0.0)) * peak
         night = 1.0 - sun
-        pm = 14.0 + 6.0 * night + (2.0 if day2 else 0.0)
+        pm = 8.0 + 4.0 * night + (1.0 if day2 else 0.0)  # a clean mixed summer day; the story here is heat, not particulates
         return {
             "boundary_layer_height": round(650 + 1300 * sun),
             "wind_speed_10m": round(7.0 + 5.0 * sun, 1),
@@ -134,7 +134,9 @@ def birch_season_hourly(day0: datetime) -> dict:
 
 
 HOURLY = {"winter_inversion": winter_inversion_hourly, "summer_heatwave": summer_heatwave_hourly, "birch_season": birch_season_hourly}
-SENSOR_SCALE = {"winter_inversion": (2.2, 28.0), "summer_heatwave": (1.2, 4.0), "birch_season": (0.9, 2.0)}
+# Applied to RAW sensor readings (before calibration to the reference scale, which roughly doubles them): winter turns the live
+# autumn readings into an episode, the other two keep clean air.
+SENSOR_SCALE = {"winter_inversion": (2.2, 28.0), "summer_heatwave": (1.0, 1.0), "birch_season": (0.9, 1.0)}
 
 
 # Live sensor readings are re-scaled in the scenario so dots match the story.

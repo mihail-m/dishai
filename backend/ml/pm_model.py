@@ -29,7 +29,7 @@ LEVEL_FEATURES = HOUR_COLS + NOW_COLS
 FEATURES = STATIC_COLS + LEVEL_FEATURES  # layout of the training table
 SPATIAL_COLS = ["T", "elev"]  # the only street features that survived held-out-sensor testing
 MAX_LEAD_H = 47
-FORMAT = 2  # bump when the saved layout changes; older model files are then ignored
+FORMAT = 3  # bump when the saved layout changes; older model files are then ignored (3: targets on the calibrated reference scale)
 DEV_CLIP = 0.7  # |log street deviation| cap (about x2 / x0.5)
 S_IDX = HOUR_COLS.index("stagnation")
 
@@ -109,7 +109,15 @@ class PmModel:
         blob = joblib.load(path)
         if blob.get("format") != FORMAT or blob.get("features") != LEVEL_FEATURES:
             return None  # trained against another layout; fall back to the physics model
-        return cls(blob["level"], blob["spatial"], blob["meta"])
+        meta = blob["meta"]
+        if meta.get("calibrated"):
+            # The model's inputs (live city median) and targets are on the calibrated scale. If the calibration is missing or
+            # has changed since training, its numbers would be silently wrong by a factor of ~2, so do not use it.
+            from . import calibration
+            cal = calibration.get("pm25")
+            if cal is None or cal.coef != meta.get("calibration_coef"):
+                return None
+        return cls(blob["level"], blob["spatial"], meta)
 
     def save(self, path: Path = MODEL_PATH) -> None:
         import joblib

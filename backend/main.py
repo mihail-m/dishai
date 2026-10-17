@@ -22,6 +22,7 @@ from . import alert as alert_mod
 from . import geo, sensors as sensors_mod, waqi
 from .cache import Cache
 from .cai import config as C
+from .ml import calibration as calibration_mod
 from .scenario import HOURLY as SCENARIO_HOURLY, scenario_pm25
 from .score import clamp, label_for, stagnation_score
 
@@ -353,6 +354,42 @@ async def build_sensors_24h() -> list[dict]:
 
 
 
+async def current_conditions(scenario: str | None) -> dict:
+    """RH (%), temperature (deg C) and month at the current Sofia hour, for the sensor calibration. Missing values stay None
+    (the calibration then uses its training median and the sensors response says so)."""
+    now = sofia_now()
+    out = {"rh": None, "temp": None, "month": now.month}
+    try:
+        if scenario:
+            h = SCENARIO_HOURLY[scenario](now.replace(hour=0, minute=0, second=0, microsecond=0))
+        else:
+            weather, src = await cache.get("open_meteo_forecast", fetch_weather)
+            h = _rebase(weather["hourly"], now) if src == "fixture" else weather["hourly"]
+        i = h["time"].index(now.strftime("%Y-%m-%dT%H:00"))
+        out["rh"], out["temp"] = h.get("relative_humidity_2m", [None] * (i + 1))[i], h["temperature_2m"][i]
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def calibrate_records(recs: list[dict], cond: dict) -> tuple[list[dict], dict]:
+    """Raw Sensor.Community readings -> reference scale. Keeps the raw values as pm25_raw / pm10_raw. When no calibration file
+    exists the readings pass through unchanged and `calibrated` is False, so every screen can say the values are uncalibrated."""
+    cal25, cal10 = calibration_mod.get("pm25"), calibration_mod.get("pm10")
+    info = {"calibrated": cal25 is not None, "pm10_calibrated": cal10 is not None, "rh_used": cond.get("rh") is not None}
+    if not recs or (cal25 is None and cal10 is None):
+        return [{**r, "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs], info
+    args = (cond.get("rh"), cond.get("temp"), cond.get("month"))
+    pm25 = cal25.apply([r["pm25"] for r in recs], *args) if cal25 else [r["pm25"] for r in recs]
+    p10 = [r.get("pm10") for r in recs]
+    ok = [i for i, v in enumerate(p10) if v is not None]
+    if cal10 and ok:
+        cal = cal10.apply([p10[i] for i in ok], *args)
+        for i, v in zip(ok, cal):
+            p10[i] = round(float(v), 1)
+    return [{**r, "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10"), "pm25": round(float(a), 1), "pm10": b} for r, a, b in zip(recs, pm25, p10)], info
+
+
 async def build_sensors(scenario: str | None) -> dict:
     try:
         recs, src = await cache.get("sensor_community", fetch_sensors)
@@ -360,10 +397,9 @@ async def build_sensors(scenario: str | None) -> dict:
         raise HTTPException(503, "Sensors unavailable and no fixture saved yet") from exc
     if src in ("live", "cache"):
         recs = sensors_mod.fresh_only(recs)
-    out = []
-    for r in recs:
-        pm25 = scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]
-        out.append({**r, "pm25": pm25, "district": district_at(r["lon"], r["lat"])})
+    raw = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]} for r in recs]
+    recs, cal = calibrate_records(raw, await current_conditions(scenario))
+    out = [{**r, "district": district_at(r["lon"], r["lat"])} for r in recs]
     vals = [r["pm25"] for r in out]
     return {
         "scenario": scenario,
@@ -371,7 +407,9 @@ async def build_sensors(scenario: str | None) -> dict:
         "source": src,
         "count": len(out),
         "median_pm25": round(statistics.median(vals), 1) if vals else None,
-        "label": "Citizen sensors (Sensor.Community). Low-cost sensors drift and read high in humid air.",
+        **cal,
+        "label": ("Citizen sensors (Sensor.Community), calibrated to the EEA reference-station scale (they read about half of it raw)."
+                  if cal["calibrated"] else "Citizen sensors (Sensor.Community), NOT calibrated: they read roughly half of reference stations."),
         "sensors": out,
     }
 
@@ -390,8 +428,9 @@ COLLOCATION_MIN_SENSORS = 3
 
 
 def sensor_check(stations: list[dict], citizen: list[dict]) -> dict:
-    """Do the citizen sensors near each reference station read like the reference? PM10 is the only particulate
-    the stations report (no PM2.5), so that is what can be compared. Indicative: stations are hourly, sensors are now."""
+    """Do the citizen sensors near each reference station read like the reference? PM10 is the only particulate the WAQI feed
+    carries (the EEA stream has PM2.5 too, see ml/calibrate.py), so that is what can be compared live. `ratio` uses calibrated
+    sensor values when a PM10 calibration exists, `ratio_raw` the raw ones. Indicative: stations are hourly, sensors are now."""
     from .cai.graph import to_xy
 
     rows = []
@@ -405,10 +444,16 @@ def sensor_check(stations: list[dict], citizen: list[dict]) -> dict:
         if len(near) < COLLOCATION_MIN_SENSORS:
             continue
         med = statistics.median(near)
-        rows.append({"station": st["name"], "n_sensors": len(near), "citizen_pm10": round(med, 1), "reference_pm10": st["pm10"],
-                     "ratio": round(med / st["pm10"], 2) if st["pm10"] else None})
+        raw = [c.get("pm10_raw") if c.get("pm10_raw") is not None else c["pm10"] for i, c in enumerate(citizen)
+               if c.get("pm10") is not None and ((cx[i] - sx) ** 2 + (cy[i] - sy) ** 2) ** 0.5 <= COLLOCATION_RADIUS_M]
+        rows.append({"station": st["name"], "n_sensors": len(near), "citizen_pm10": round(med, 1), "citizen_pm10_raw": round(statistics.median(raw), 1),
+                     "reference_pm10": st["pm10"], "ratio": round(med / st["pm10"], 2) if st["pm10"] else None,
+                     "ratio_raw": round(statistics.median(raw) / st["pm10"], 2) if st["pm10"] else None})
     ratios = [r["ratio"] for r in rows if r["ratio"] is not None]
-    out = {"radius_m": COLLOCATION_RADIUS_M, "rows": rows, "median_ratio": round(statistics.median(ratios), 2) if ratios else None}
+    raw_ratios = [r["ratio_raw"] for r in rows if r["ratio_raw"] is not None]
+    out = {"radius_m": COLLOCATION_RADIUS_M, "rows": rows, "median_ratio": round(statistics.median(ratios), 2) if ratios else None,
+           "median_ratio_raw": round(statistics.median(raw_ratios), 2) if raw_ratios else None,
+           "calibrated": bool(calibration_mod.get("pm10"))}
     if ratios:
         m = out["median_ratio"]
         out["verdict"] = ("Citizen sensors read about the same as the reference stations" if 0.8 <= m <= 1.25
@@ -421,7 +466,7 @@ def sensor_check(stations: list[dict], citizen: list[dict]) -> dict:
 async def api_reference(scenario: str | None = ScenarioQ):
     """Municipal reference stations (PM10, NO2, O3) and how the citizen sensors compare. Live data only."""
     base = {"attribution": waqi.ATTRIBUTION, "pm25_available": False,
-            "note": "These stations report PM10, NO2, O3 and CO but not PM2.5, so they cannot calibrate the PM2.5 model directly."}
+            "note": "This live feed (WAQI) carries PM10, NO2, O3 and CO but not PM2.5. The PM2.5 calibration uses the EEA stream instead (Hipodruma, hourly)."}
     if Scenario(scenario):
         return {**base, "enabled": False, "reason": "Demo scenario: reference stations are real, so they are hidden.", "stations": []}
     if not waqi.enabled():
