@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PickingInfo } from "@deck.gl/core";
-import type { RouteResp, RouteStats, Scenario } from "../types";
+import type { Mode, RouteResp, RouteStats, Scenario } from "../types";
 import type { Stage } from "../stage";
 import { api2 } from "../api";
 import { PRESET_PAIRS, MAP_PROVIDER } from "../map/config";
@@ -18,6 +18,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
   const [to, setTo] = useState<LL | null>(PRESET_PAIRS[1].to as unknown as LL);
   const [picking, setPicking] = useState<"from" | "to" | null>(null);
   const [lam, setLam] = useState(2);
+  const [mode, setMode] = useState<Mode>("walk");
   const [res, setRes] = useState<RouteResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -32,13 +33,13 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
     let off = false;
     setBusy(true);
     const t = setTimeout(() => {
-      api2.route(from, to, lam, scenario, hourIndex)
+      api2.route(from, to, lam, scenario, hourIndex, mode)
         .then((r) => { if (!off) { setRes(r); setErr(null); setLabels({ from: r.from_label, to: r.to_label }); } })
         .catch((e: Error) => { if (!off) { setErr(e.message); setRes(null); } })
         .finally(() => !off && setBusy(false));
     }, 220);
     return () => { off = true; clearTimeout(t); };
-  }, [from, to, lam, scenario, hourIndex]);
+  }, [from, to, lam, scenario, hourIndex, mode]);
 
   const layers = useMemo(() => {
     const lines: { name: string; line: [number, number][]; width?: number; dashed?: boolean }[] = [];
@@ -85,7 +86,13 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
   return (
     <div className="grid gap-3">
       <div className="card grid gap-3 p-4">
-        <div className="text-sm font-semibold">Clean-air walking route <span className="faint font-normal">· indicative</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Clean-air {mode === "bike" ? "cycling" : "walking"} route <span className="faint font-normal">· indicative</span></div>
+          <div className="seg" role="group" aria-label="Travel mode">
+            <button aria-pressed={mode === "walk"} onClick={() => setMode("walk")}>🚶 Walk</button>
+            <button aria-pressed={mode === "bike"} onClick={() => setMode("bike")}>🚴 Cycle</button>
+          </div>
+        </div>
         {MAP_PROVIDER === "google" && <PlaceSearch onPick={(ll) => (picking === "to" ? setTo(ll) : setFrom(ll))} />}
         <div className="flex flex-wrap gap-2">
           <button className={`btn ${picking === "from" ? "btn-primary" : ""}`} onClick={() => setPicking(picking === "from" ? null : "from")}>
@@ -136,7 +143,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
             </tbody>
           </table>
           <p className="faint mt-2 text-[11px] leading-snug">
-            *Dose = modelled PM2.5 × minutes walked (µg·min/m³), % vs the fastest route. Balanced and cleanest are capped at +30 % time.
+            *Dose = modelled PM2.5 × minutes × relative breathing rate (µg·min/m³; cycling assumes 2× walking), % vs the fastest route. Balanced and cleanest are capped at +30 % time.
             {res.routes.cleanest.lambda_used !== undefined && res.routes.cleanest.lambda_used < 3 ? ` The cap limited the cleanest route to setting ${res.routes.cleanest.lambda_used}.` : ""}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -144,7 +151,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
             <a className="btn text-xs" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
           </div>
           <p className="faint mt-2 text-[11px]">
-            {res.google_status === "ok"
+            {res.google_status === "n/a" ? "Google baseline is walking-only; cycling uses our own router." : res.google_status === "ok"
               ? res.snapped.used ? `Cleanest route shown is Google's walking route through ${res.snapped.waypoints.length} of our waypoints (ETA ${res.snapped.eta_min} min).` : "Google snapped route unavailable; showing our own polyline."
               : res.google_status === "no_key" ? "Google baseline needs GOOGLE_ROUTES_SERVER_KEY (see README); routing and CAI never depend on it." : "Google Routes request failed; showing our own routes."}
           </p>

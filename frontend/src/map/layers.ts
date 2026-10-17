@@ -140,3 +140,70 @@ function tripsData(trips: [number, number][][]) {
 }
 
 export const fmtDose = (r: RouteStats) => `${Math.round(r.dose)} µg·min/m³`;
+
+// ---- areas (air / heat) and clean channels ---------------------------------------------------------------
+import { GridCellLayer } from "@deck.gl/layers";
+import type { AreasResp } from "../types";
+
+export interface AreaRow { lon: number; lat: number; mean: number; min: number; max: number; street_m: number; n: number; pm25?: number; anomaly?: number }
+
+export function areaRows(a: AreasResp): AreaRow[] {
+  const c = a.cells;
+  return c.lon.map((lon, i) => ({ lon, lat: c.lat[i], mean: c.mean[i], min: c.min[i], max: c.max[i], street_m: c.street_m[i], n: c.n[i], pm25: c.pm25?.[i], anomaly: c.anomaly?.[i] }));
+}
+
+/** Diverging cool-to-hot palette (ColorBrewer RdBu, colour-blind safe) centred on the city median. */
+export function heatColor(anomaly: number, range: number): [number, number, number] {
+  const t = Math.max(-1, Math.min(1, anomaly / Math.max(0.1, range)));
+  const cool: RGB = [33, 102, 172], mid: RGB = [247, 247, 247], hot: RGB = [178, 24, 43];
+  const [a, b, u] = t < 0 ? [mid, cool, -t] : [mid, hot, t];
+  return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * u)) as RGB;
+}
+
+export function areaLayer(a: AreasResp, rows: AreaRow[], scale: "relative" | "absolute"): Layer {
+  const means = rows.map((r) => r.mean).sort((x, y) => x - y);
+  const q = (p: number) => means[Math.floor((means.length - 1) * p)];
+  const lo = q(0.05), hi = q(0.95);
+  const heat = a.metric === "heat";
+  const range = Math.max(Math.abs(a.thresholds.cool ?? 0), Math.abs(a.thresholds.hot ?? 0), 1);
+  const extreme = (r: AreaRow) => (heat ? (r.anomaly ?? 0) >= (a.thresholds.hot ?? 99) || (r.anomaly ?? 0) <= (a.thresholds.cool ?? -99)
+    : r.mean >= (a.thresholds.clean ?? 101) || r.mean <= (a.thresholds.dirty ?? -1));
+  return new GridCellLayer<AreaRow>({
+    id: "areas", data: rows, getPosition: (r: AreaRow) => [r.lon, r.lat], cellSize: a.cell_m, coverage: 0.96, extruded: false, material: false,
+    getFillColor: (r: AreaRow) => {
+      const c = heat ? heatColor(r.anomaly ?? 0, range)
+        : caiColor(scale === "relative" ? ((r.mean - lo) / Math.max(1, hi - lo)) * 100 : r.mean);
+      return [...c, extreme(r) ? 215 : 120] as never; // the cleanest/dirtiest (or coolest/hottest) 10 % stand out
+    },
+    pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 90],
+    updateTriggers: { getFillColor: [a.metric, a.time, scale, a.mode] },
+  } as never);
+}
+
+const CHANNEL: RGB = [0, 105, 92];
+
+export function segmentLayers(n: NetworkResp, opts: { channels: boolean; other: boolean }): Layer[] {
+  const maxUse = Math.max(1, ...n.segments.map((s) => s.usage_clean));
+  const w = (s: Seg) => 2 + 7 * Math.sqrt(s.usage_clean / maxUse);
+  const out: Layer[] = [];
+  if (opts.other) {
+    out.push(new PathLayer<Seg>({
+      id: "net-other", data: n.segments.filter((s) => !s.channel), getPath: (d: Seg) => d.path, getColor: [70, 80, 95, 110] as never,
+      getWidth: 1.5, widthUnits: "pixels", capRounded: true, jointRounded: true,
+    } as never));
+  }
+  if (opts.channels) {
+    const ch = n.segments.filter((s) => s.channel);
+    out.push(
+      new PathLayer<Seg>({ id: "net-channel-casing", data: ch, getPath: (d: Seg) => d.path, getColor: [255, 255, 255, 235] as never,
+        getWidth: (d: Seg) => w(d) + 4, widthUnits: "pixels", capRounded: true, jointRounded: true } as never),
+      new PathLayer<Seg>({ id: "net-channel", data: ch, getPath: (d: Seg) => d.path, getColor: [...CHANNEL, 255] as never,
+        getWidth: w, widthUnits: "pixels", capRounded: true, jointRounded: true, pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 200] } as never),
+    );
+  }
+  return out;
+}
+
+export function chokepointLayers(n: NetworkResp, selected: Chokepoint | null): Layer[] {
+  return networkStatic(n, false, selected).slice(1); // the chokepoint highlight, dots and rank labels from the original builder
+}

@@ -33,7 +33,8 @@ export default function App() {
   const [geometry, setGeometry] = useState<Geometry | null>(null);
   const [values, setValues] = useState<CaiValues | null>(null);
   const [relative, setRelative] = useState(false);
-  const [extra, setExtra] = useState<{ layers: Layer[]; base: "full" | "dim" | "off"; cursor?: string }>({ layers: [], base: "full" });
+  const [extra, setExtra] = useState<{ layers: Layer[]; base: "full" | "dim" | "off"; cursor?: string; legend?: React.ReactNode }>({ layers: [], base: "full" });
+  const tooltip = useRef<Parameters<Stage["set"]>[0]["tooltip"]>(undefined);
   const pick = useRef<((i: PickingInfo) => void) | undefined>(undefined);
   const mapHandle = useRef<MapHandle>(null);
 
@@ -71,7 +72,7 @@ export default function App() {
   }, [scenario, hourIndex, fc]);
 
   const stage: Stage = useMemo(() => ({
-    set: (s) => { pick.current = s.onPick; setExtra({ layers: s.layers, base: s.base, cursor: s.cursor }); },
+    set: (s) => { pick.current = s.onPick; tooltip.current = s.tooltip; setExtra({ layers: s.layers, base: s.base, cursor: s.cursor, legend: s.legend }); },
     map: mapHandle, geometry, values, sensors, reference, relative, setRelative,
   }), [geometry, values, sensors, reference, relative]);
   // views call stage.set from effects; keep that function identity stable
@@ -118,8 +119,8 @@ export default function App() {
         <div className={mapTab ? "grid gap-4 lg:grid-cols-[1fr_380px]" : "hidden"}>
           <div className="grid content-start gap-3">
             <div className="card relative h-[min(64vh,640px)] min-h-[440px] overflow-hidden">
-              {mapTab && <MapLegend tab={tab as "map" | "route" | "network"} />}
-              <BaseMap layers={layers} active={mapTab} handle={mapHandle} cursor={extra.cursor} onClick={(i) => pick.current?.(i)} />
+              {mapTab && <MapLegend tab={tab as "map" | "route" | "network"} custom={extra.legend} />}
+              <BaseMap layers={layers} active={mapTab} handle={mapHandle} cursor={extra.cursor} onClick={(i) => pick.current?.(i)} tooltip={(i) => tooltip.current?.(i) ?? null} />
             </div>
             {hourControls}
             {tab === "map" && fc && (

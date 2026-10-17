@@ -17,6 +17,7 @@ interface Props {
   layers: Layer[];
   onClick?: (info: PickingInfo) => void;
   cursor?: string;
+  tooltip?: (i: PickingInfo) => { html: string; style?: Record<string, string> } | null;
   active: boolean; // false when the tab hides the map (it stays mounted to keep the GPU buffers)
   handle?: Ref<MapHandle>;
 }
@@ -24,7 +25,7 @@ interface Props {
 // Deck.gl overlay shared by both providers: only `setProps` and `finalize` are needed.
 type Overlay = { setProps: (p: Record<string, unknown>) => void; finalize?: () => void };
 
-export default function BaseMap({ layers, onClick, cursor, active, handle }: Props) {
+export default function BaseMap({ layers, onClick, cursor, tooltip, active, handle }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const overlay = useRef<Overlay | null>(null);
   const resize = useRef<() => void>(() => {});
@@ -33,6 +34,8 @@ export default function BaseMap({ layers, onClick, cursor, active, handle }: Pro
   clickRef.current = onClick;
   const cursorRef = useRef(cursor);
   cursorRef.current = cursor;
+  const tipRef = useRef(tooltip);
+  tipRef.current = tooltip;
   const [provider, setProvider] = useState<"google" | "maplibre">(MAP_PROVIDER);
   const [note, setNote] = useState<string | null>(null);
   useImperativeHandle(handle, () => ({
@@ -47,6 +50,7 @@ export default function BaseMap({ layers, onClick, cursor, active, handle }: Pro
     let cleanup = () => {};
     const deckProps = {
       onClick: (info: PickingInfo) => clickRef.current?.(info),
+      getTooltip: (info: PickingInfo) => tipRef.current?.(info) ?? null,
       getCursor: ({ isHovering, isDragging }: { isHovering: boolean; isDragging: boolean }) =>
         cursorRef.current ?? (isDragging ? "grabbing" : isHovering ? "pointer" : "grab"),
     };

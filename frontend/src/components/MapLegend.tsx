@@ -4,7 +4,7 @@ const Line = ({ c, dashed, w = 3 }: { c: string; dashed?: boolean; w?: number })
 );
 
 /** What every mark on the map means. Shown over the map on the three map tabs. */
-export default function MapLegend({ tab }: { tab: "map" | "route" | "network" }) {
+export default function MapLegend({ tab, custom }: { tab: "map" | "route" | "network"; custom?: React.ReactNode }) {
   const rows: React.ReactNode[] =
     tab === "map"
       ? [
@@ -29,7 +29,7 @@ export default function MapLegend({ tab }: { tab: "map" | "route" | "network" })
   return (
     <div className="card pointer-events-none absolute bottom-3 left-3 z-10 max-w-[min(360px,80%)] p-2.5 text-[11px] leading-snug shadow-sm" aria-label="Map legend">
       <div className="mb-1 font-semibold">How to read this map</div>
-      <ul className="grid gap-1">{rows.map((r, i) => <li key={i} className="flex flex-wrap items-center">{r}</li>)}</ul>
+      {tab === "network" && custom ? custom : <ul className="grid gap-1">{rows.map((r, i) => <li key={i} className="flex flex-wrap items-center">{r}</li>)}</ul>}
     </div>
   );
 }

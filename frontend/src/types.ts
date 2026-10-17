@@ -1,6 +1,7 @@
 export type Level = "good" | "watch" | "warning";
 export type Scenario = "live" | "winter_inversion";
 export type Profile = "driver" | "wood_heater" | "vulnerable";
+export type Mode = "walk" | "bike";
 
 export interface Hour {
   time: string; score: number; label: Level; blh: number; wind10m: number; t2m: number; t925: number;
@@ -68,7 +69,7 @@ export interface RouteStats {
 export interface RouteResp {
   from: [number, number]; to: [number, number]; from_label: string; to_label: string; hour: number; time: string; scenario: string | null;
   routes: { fastest: RouteStats; balanced: RouteStats; cleanest: RouteStats; chosen?: RouteStats };
-  google_status: "ok" | "no_key" | "error"; google_baseline: RouteStats | null;
+  google_status: "ok" | "no_key" | "error" | "n/a"; mode?: Mode; google_baseline: RouteStats | null;
   snapped: { used: boolean; polyline: [number, number][]; eta_min: number | null; waypoints: [number, number][] };
   open_in_google_maps: string; open_in_google_maps_clean: string; note: string;
 }
@@ -79,7 +80,8 @@ export interface Chokepoint {
 export interface NetworkResp {
   n_od: number; hour: number; time: string; scenario: string | null; median_dose_change_pct: number; median_time_change_pct: number;
   share_cleaner: number; when_cleaner: { n: number; median_dose_change_pct: number; median_time_change_pct: number }; note: string; chokepoints: Chokepoint[]; trips: [number, number][][];
-  segments: { id: number; path: [number, number][]; usage_clean: number; usage_fast: number; cai: number }[];
+  segments: { id: number; path: [number, number][]; usage_clean: number; usage_fast: number; cai: number; channel: boolean }[];
+  mode: Mode; channel_cai_cut: number; n_channel_segments: number;
 }
 export interface ValidationBlock {
   n: number; spearman: number | null; median_abs_error: number; verdict: "weak" | "moderate" | "reasonable"; hour: string;
@@ -96,4 +98,12 @@ export interface RefStation {
 export interface ReferenceResp {
   enabled: boolean; reason?: string; attribution: string; pm25_available: boolean; note: string; stations: RefStation[];
   sensor_check?: { radius_m: number; median_ratio: number | null; verdict?: string; rows: { station: string; n_sensors: number; citizen_pm10: number; reference_pm10: number; ratio: number | null }[] };
+}
+
+export interface AreaCells { lon: number[]; lat: number[]; mean: number[]; max: number[]; min: number[]; street_m: number[]; n: number[]; pm25?: number[]; anomaly?: number[] }
+export interface AreaPlace { lon: number; lat: number; value: number; street_m: number; place: string }
+export interface AreasResp {
+  metric: "air" | "heat"; mode: Mode; cell_m: number; unit: string; hour?: number; time?: string; scenario?: string | null; reference?: number;
+  thresholds: { clean?: number; dirty?: number; hot?: number; cool?: number }; stats: { median: number; p10: number; p90: number; min: number; max: number };
+  cells: AreaCells; extremes: { best: AreaPlace[]; worst: AreaPlace[] }; note: string;
 }

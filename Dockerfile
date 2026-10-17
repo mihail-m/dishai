@@ -12,6 +12,8 @@ RUN npx vite build
 FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+# rasterio's wheel needs libexpat, which python:slim omits
+RUN apt-get update && apt-get install -y --no-install-recommends libexpat1 && rm -rf /var/lib/apt/lists/*
 COPY requirements-prod.txt ./
 RUN pip install --no-cache-dir -r requirements-prod.txt
 COPY backend/ ./backend/

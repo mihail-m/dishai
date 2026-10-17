@@ -28,18 +28,20 @@ export const clamp = (x: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, 
 export const levelOf = (s: number) => (s >= 60 ? "warning" : s >= 35 ? "watch" : "good") as "good" | "watch" | "warning";
 export const LEVEL_TEXT = { good: "Good", watch: "Watch", warning: "Inversion warning" } as const;
 
-import type { CaiValues, EdgeExplain, NetworkResp, ReferenceResp, RouteResp, Validation } from "./types";
+import type { AreasResp, CaiValues, EdgeExplain, Mode, NetworkResp, ReferenceResp, RouteResp, Validation } from "./types";
 export const api2 = {
   values: (s: Scenario, hour?: number) => j<CaiValues>(`/api/cai/values?${[q(s), hour != null ? `hour=${hour}` : ""].filter(Boolean).join("&")}`),
   edge: (id: number, s: Scenario, hour?: number) =>
     j<EdgeExplain>(`/api/cai/edge?id=${id}&${[q(s), hour != null ? `hour=${hour}` : ""].filter(Boolean).join("&")}`),
-  route: async (from: [number, number], to: [number, number], lam: number, s: Scenario, hour?: number): Promise<RouteResp> => {
-    const url = `/api/route?from=${from.join(",")}&to=${to.join(",")}&lambda=${lam}${hour != null ? `&hour=${hour}` : ""}${s === "live" ? "" : `&scenario=${s}`}`;
+  route: async (from: [number, number], to: [number, number], lam: number, s: Scenario, hour?: number, mode: Mode = "walk"): Promise<RouteResp> => {
+    const url = `/api/route?from=${from.join(",")}&to=${to.join(",")}&lambda=${lam}&mode=${mode}${hour != null ? `&hour=${hour}` : ""}${s === "live" ? "" : `&scenario=${s}`}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { detail?: string }).detail ?? `${r.status}`);
     return r.json();
   },
-  network: (s: Scenario, hour?: number) => j<NetworkResp>(`/api/network?${[q(s), hour != null ? `hour=${hour}` : ""].filter(Boolean).join("&")}`),
+  network: (s: Scenario, hour?: number, mode: Mode = "walk") => j<NetworkResp>(`/api/network?${[q(s), hour != null ? `hour=${hour}` : "", `mode=${mode}`].filter(Boolean).join("&")}`),
+  areas: (s: Scenario, hour: number | undefined, mode: Mode, metric: "air" | "heat") =>
+    j<AreasResp>(`/api/cai/areas?${[q(s), hour != null ? `hour=${hour}` : "", `mode=${mode}`, `metric=${metric}`].filter(Boolean).join("&")}`),
   reference: (s: Scenario) => j<ReferenceResp>(`/api/reference?${q(s)}`),
   validation: (s: Scenario) => j<Validation>(`/api/validation?${q(s)}`),
 };
