@@ -29,7 +29,11 @@ LEVEL_FEATURES = HOUR_COLS + NOW_COLS
 FEATURES = STATIC_COLS + LEVEL_FEATURES  # layout of the training table
 SPATIAL_COLS = ["T", "elev"]  # the only street features that survived held-out-sensor testing
 MAX_LEAD_H = 47
-FORMAT = 3  # bump when the saved layout changes; older model files are then ignored (3: targets on the calibrated reference scale)
+FORMAT = 4  # bump when the saved layout changes; older model files are then ignored (3: targets on the calibrated scale, 4: quantile level)
+LEAD_EDGES = (5, 23)  # lead buckets for the conformal interval widening: 0-5 h, 6-23 h, 24-47 h
+LEVEL_SPLIT = 15.0  # ... times two level classes: p50 below / at-or-above this (ug/m3)
+N_BUCKETS = 6
+Z80 = 1.2815515655446004
 DEV_CLIP = 0.7  # |log street deviation| cap (about x2 / x0.5)
 S_IDX = HOUR_COLS.index("stagnation")
 
@@ -81,12 +85,40 @@ def spatial_design(static: np.ndarray, stagnation: float, mean: np.ndarray, std:
     return np.column_stack([z, z * sf])
 
 
+def interval_bucket(lead, level50) -> np.ndarray:
+    """Which conformal correction applies: lead bucket (0-5, 6-23, 24+ h) x level class (below / above LEVEL_SPLIT)."""
+    lb = np.digitize(np.asarray(lead, dtype=float), LEAD_EDGES, right=True)
+    return 2 * lb + (np.asarray(level50) >= LEVEL_SPLIT).astype(int)
+
+
 @dataclass
 class PmModel:
-    """Level estimator + spatial coefficients + the metadata the API shows next to them."""
+    """Level estimators + spatial coefficients + the metadata the API shows next to them.
+
+    `level` is the median (p50) model of the log ratio to the anchor. `q_lo`/`q_hi` are the p10/p90 models; `conf_lo`/`conf_hi` widen
+    them per bucket so that, on out-of-fold hours, 10 % of readings fall below the p10 and 10 % above the p90 (split-conformal)."""
     level: object
     spatial: dict  # mean, std (of SPATIAL_COLS over sensors), coef (4)
     meta: dict = field(default_factory=dict)
+    q_lo: object = None
+    q_hi: object = None
+    conf_lo: np.ndarray = None  # (N_BUCKETS,) log-ratio units
+    conf_hi: np.ndarray = None
+    corr: float = 0.9  # correlation of the level error between hours of one window (back-test); used by the alert probability
+
+    def level_quantiles(self, hour_vecs, now_vecs) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(u_lo, u_50, u_hi): log1p of the city PM2.5 at p10 / p50 / p90 for each (hour, nowcast) row. Without the quantile models
+        the interval collapses to the median (callers then treat the level as exact)."""
+        hv, nv = np.atleast_2d(np.asarray(hour_vecs, dtype=float)), np.atleast_2d(np.asarray(now_vecs, dtype=float))
+        X = np.hstack([hv, nv]).astype("float32")
+        base = np.log1p([anchor(h[0], n[1]) for h, n in zip(hv, nv)])
+        f50 = self.level.predict(X)
+        u50 = base + f50
+        if self.q_lo is None or self.q_hi is None or self.conf_lo is None:
+            return u50, u50, u50
+        b = interval_bucket(nv[:, 0], np.expm1(u50))
+        lo, hi = base + self.q_lo.predict(X) - self.conf_lo[b], base + self.q_hi.predict(X) + self.conf_hi[b]
+        return np.minimum(lo, u50), u50, np.maximum(hi, u50)
 
     def level_pm(self, hour_vec: list[float], now_vec: list[float]) -> float:
         x = np.asarray([hour_vec + now_vec], dtype="float32")
@@ -118,8 +150,10 @@ class PmModel:
             cal = calibration.get("pm25")
             if cal is None or cal.coef != meta.get("calibration_coef"):
                 return None
-        return cls(blob["level"], blob["spatial"], meta)
+        return cls(blob["level"], blob["spatial"], meta, blob.get("q_lo"), blob.get("q_hi"), blob.get("conf_lo"), blob.get("conf_hi"),
+                   float(blob.get("corr", 0.9)))
 
     def save(self, path: Path = MODEL_PATH) -> None:
         import joblib
-        joblib.dump({"format": FORMAT, "level": self.level, "spatial": self.spatial, "meta": self.meta, "features": LEVEL_FEATURES}, path, compress=3)
+        joblib.dump({"format": FORMAT, "level": self.level, "spatial": self.spatial, "meta": self.meta, "features": LEVEL_FEATURES,
+                     "q_lo": self.q_lo, "q_hi": self.q_hi, "conf_lo": self.conf_lo, "conf_hi": self.conf_hi, "corr": self.corr}, path, compress=3)

@@ -33,7 +33,7 @@ from ..cai.graph import DATA, get_net
 from ..cai.score import HourCtx, hour_contexts, predict_pm
 from ..score import stagnation_score
 from . import calibration as calibration_mod
-from .pm_model import (DEV_CLIP, FEATURES, LEVEL_FEATURES, MAX_LEAD_H, S_IDX, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector,
+from .pm_model import (N_BUCKETS, DEV_CLIP, interval_bucket, FEATURES, LEVEL_FEATURES, MAX_LEAD_H, S_IDX, SPATIAL_COLS, STATIC_COLS, PmModel, hour_vector,
                        now_vector, spatial_design, static_matrix)
 
 HIST = DATA / "history"
@@ -208,12 +208,60 @@ def level_X(df: pd.DataFrame) -> np.ndarray:
     return X.to_numpy()
 
 
-def fit_level(df: pd.DataFrame) -> HistGradientBoostingRegressor:
-    """City-level model: one row per (hour, a few random leads); target is log(1 + city median) - log(1 + anchor)."""
+QUANTILES = (0.1, 0.5, 0.9)
+
+
+def fit_level(df: pd.DataFrame, q: float = 0.5) -> HistGradientBoostingRegressor:
+    """City-level model: one row per (hour, a few random leads); target is log(1 + city median) - log(1 + anchor).
+    q = 0.5 is the median (the central estimate everywhere); 0.1 and 0.9 give the interval."""
     d = df.groupby("time").head(4)
-    est = HistGradientBoostingRegressor(max_iter=250, learning_rate=0.05, max_leaf_nodes=12, min_samples_leaf=40,
+    est = HistGradientBoostingRegressor(loss="quantile", quantile=q, max_iter=250, learning_rate=0.05, max_leaf_nodes=12, min_samples_leaf=40,
                                         l2_regularization=2.0, random_state=SEED)
     return est.fit(level_X(d), np.log1p(hour_median(df).loc[d.index]) - np.log1p(anchors(d)))
+
+
+def level_target(df: pd.DataFrame) -> np.ndarray:
+    return (np.log1p(hour_median(df)) - np.log1p(anchors(df))).to_numpy()
+
+
+def fit_level_set(df: pd.DataFrame, folds: int = 4) -> dict:
+    """p10 / p50 / p90 estimators plus split-conformal widening per bucket from week-blocked out-of-fold predictions inside `df`.
+    The raw quantile fits are over-confident out of sample (about 19 % of readings fall below the p10 instead of 10 %); the widening
+    is the empirical 90 % quantile of how far readings fall outside, per lead bucket and level class."""
+    week = ((df.day - df.day.min()).dt.days // 7).to_numpy()
+    oof = {q: np.zeros(len(df)) for q in QUANTILES}
+    for tr, te in GroupKFold(folds).split(df, groups=week):
+        for q in QUANTILES:
+            oof[q][te] = fit_level(df.iloc[tr], q).predict(level_X(df.iloc[te]))
+    y = level_target(df)
+    b = interval_bucket(df.lead.to_numpy(), np.expm1(np.log1p(anchors(df)) + oof[0.5]))
+    lo, hi = np.zeros(N_BUCKETS), np.zeros(N_BUCKETS)
+    for k in range(N_BUCKETS):
+        s = b == k
+        if s.sum() > 500:
+            lo[k], hi[k] = np.quantile(oof[0.1][s] - y[s], 0.9), np.quantile(y[s] - oof[0.9][s], 0.9)
+    return {"q10": fit_level(df, 0.1), "q50": fit_level(df, 0.5), "q90": fit_level(df, 0.9), "conf_lo": lo, "conf_hi": hi}
+
+
+def level_set_predict(ls: dict, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(u_lo, u_50, u_hi) = log1p of the city level at p10 / p50 / p90 for every row of df."""
+    X, base = level_X(df), np.log1p(anchors(df))
+    u50 = base + ls["q50"].predict(X)
+    b = interval_bucket(df.lead.to_numpy(), np.expm1(u50))
+    lo, hi = base + ls["q10"].predict(X) - ls["conf_lo"][b], base + ls["q90"].predict(X) + ls["conf_hi"][b]
+    return np.minimum(lo, u50), u50, np.maximum(hi, u50)
+
+
+def coverage(df: pd.DataFrame, u_lo, u_hi) -> dict:
+    """Share of readings below the p10 and above the p90, overall and by slice (target 0.10 each)."""
+    y = np.log1p(hour_median(df).to_numpy())
+    heating = np.isin(df.time.dt.month, [10, 11, 12, 1, 2, 3])
+    pm = np.expm1(y)
+    slices = {"all": np.ones(len(df), bool), "heating": heating, "summer": ~heating, "0-5h": (df.lead <= 5).to_numpy(),
+              "6-23h": ((df.lead >= 6) & (df.lead <= 23)).to_numpy(), "24-47h": (df.lead >= 24).to_numpy(),
+              "episode_cams50": (df.cams25 >= EPISODE_CAMS).to_numpy(), "truth_ge_25": pm >= 25, "truth_ge_15_heating": (pm >= 15) & heating}
+    return {k: {"rows": int(s.sum()), "below_p10": round(float((y[s] < u_lo[s]).mean()), 3), "above_p90": round(float((y[s] > u_hi[s]).mean()), 3)}
+            for k, s in slices.items() if s.sum() > 200}
 
 
 def anchors(df: pd.DataFrame) -> np.ndarray:
@@ -309,6 +357,14 @@ def main() -> int:
     A = compare(df, lvl * np.exp(dev), dev)
     A["level_only"] = metrics(df, lvl)
 
+    # Interval check: refit the p10 / p50 / p90 set (with its conformal widening) on the other weeks, score the held-out weeks.
+    u = [np.zeros(len(df)) for _ in range(3)]
+    for tr, te in GroupKFold(5).split(df, groups=week):
+        out = level_set_predict(fit_level_set(df.iloc[tr]), df.iloc[te])
+        for k in range(3):
+            u[k][te] = out[k]
+    A["quantile_coverage"] = coverage(df, u[0], u[2])
+
     # B. unseen sensors AND unseen future days
     days = np.sort(df.day.unique())
     cut = days[int(len(days) * 0.75)]
@@ -320,12 +376,14 @@ def main() -> int:
     dev_b = spatial_predict(te, np.asarray(model_b.spatial["coef"]), np.asarray(model_b.spatial["mean"]), np.asarray(model_b.spatial["std"]))
     B = compare(te, predict_pm_ml(model_b, te), dev_b)
     B["level_only"] = metrics(te, level_predict(model_b.level, te))
+    B["quantile_coverage"] = coverage(te, *[level_set_predict(fit_level_set(tr), te)[k] for k in (0, 2)])
 
     for label, res in (("A. unseen sensors + unseen weeks (5-fold)", A), ("B. unseen sensors + future days", B)):
         print(f"\n{label}", file=sys.stderr)
         print(pd.DataFrame({k: v for k, v in res.items() if isinstance(v, dict) and "mae" in v}).T.to_string(), file=sys.stderr)
         print("by lead:", json.dumps(res["by_lead"]), file=sys.stderr)
         print("episode hours (CAMS >= 50):", json.dumps(res.get("episodes")), file=sys.stderr)
+        print("p10/p90 coverage (target 0.10 / 0.10):", json.dumps(res.get("quantile_coverage")), file=sys.stderr)
 
     from sklearn.inspection import permutation_importance
     t = te.groupby("time").head(2)
@@ -344,6 +402,8 @@ def main() -> int:
 
     cal = None if args.raw else calibration_mod.get("pm25")
     final = fit_all(df, alpha)
+    ls = fit_level_set(df)
+    final.level, final.q_lo, final.q_hi, final.conf_lo, final.conf_hi = ls["q50"], ls["q10"], ls["q90"], ls["conf_lo"], ls["conf_hi"]
     names = [f"{c}{suffix}" for suffix in ("", " x S/100") for c in ("z(log T)", "z(elev)")]
     print("spatial coefficients:", dict(zip(names, np.round(final.spatial["coef"], 3))), file=sys.stderr)
     if not args.no_save:

@@ -10,6 +10,8 @@ export interface Hour {
   pm25: number | null; pm10: number | null; aqi: number | null; is_night: boolean;
   /** learned city-level PM2.5 (the number every screen uses); `pm25` above is the raw CAMS regional forecast */
   pm25_model: number | null; level: Level;
+  /** 10th and 90th percentile of the learned city-level estimate (null when the model has no interval) */
+  pm25_p10?: number | null; pm25_p90?: number | null;
   pollen?: Record<string, number | null> | null;
 }
 export interface Alert {
@@ -18,6 +20,8 @@ export interface Alert {
   level: Level; label: string; audience: "none" | "sensitive" | "everyone";
   mean_pm25?: number; peak_pm25: number | null; trapped: boolean;
   basis: "model" | "cams_bias" | "stagnation"; scale: "sensor" | "reference";
+  /** chance (0-1) that the city level stays at or above the EU limit for 3 h in a row within 24 h; null without an interval model */
+  probability: number | null; p_red?: number; p_watch?: number; peak_p90?: number | null;
 }
 export interface Window { start: string; end: string; start_hhmm: string; end_hhmm: string }
 export interface Forecast {

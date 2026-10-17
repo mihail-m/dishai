@@ -292,8 +292,10 @@ async def build_forecast(scenario: str | None) -> dict:
         sensor_pm = []
     pm_model = alert_mod.get_model()
     levels, basis = alert_mod.city_levels(hours, now_idx, sensor_pm, pm_model)
-    for h, v in zip(hours, levels):
+    band = alert_mod.level_band(hours, now_idx, sensor_pm, pm_model) if basis == "model" else None
+    for i, (h, v) in enumerate(zip(hours, levels)):
         h["pm25_model"] = v
+        h["pm25_p10"], h["pm25_p90"] = (round(float(band[0][i]), 1), round(float(band[2][i]), 1)) if band is not None else (None, None)
         h["level"] = alert_mod.level_for_pm(v) if v is not None else h["label"]
     calibrated = bool(pm_model and pm_model.meta.get("calibrated"))
     return {
@@ -303,7 +305,7 @@ async def build_forecast(scenario: str | None) -> dict:
         "generated_at": now.strftime("%Y-%m-%dT%H:%M"),
         "now_index": now_idx,
         "grid": {"lat": LAT, "lon": LON},
-        "alert": alert_mod.build_alert(times, levels, scores, now_idx, now, basis, calibrated),
+        "alert": alert_mod.build_alert(times, levels, scores, now_idx, now, basis, calibrated, band, alert_mod.alert_settings(pm_model)),
         "best_window": alert_mod.best_window(times, levels if basis != "stagnation" else scores, now_idx),
         "pm_basis": basis,
         "hours": hours,

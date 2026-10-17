@@ -221,7 +221,7 @@ The kriging weights (streets × sensors, sparse) and variances are computed once
 ### What the data say
 | | |
 |---|---|
-| Offsets | SD **0.48** in log1p units (×1.6), lag-1 autocorrelation of the hourly residual 0.86. Stable: first vs second half of the weeks, **r = 0.85** on 247 sensors. Hundreds of effectively independent hours per sensor, so the shrinkage factor is ≈1 for nearly all (253/257 of today's live sensors have an offset). |
+| Offsets | SD **0.48** in log1p units (×1.6), lag-1 autocorrelation of the hourly residual 0.86. Stable: first vs second half of the weeks, **r = 0.85** on 247 sensors. Hundreds of effectively independent hours per sensor, so the shrinkage factor is ≈1 for nearly all (249 of 252 of today's live sensors have an offset). |
 | Variogram (exponential, all hours) | nugget 0.072, partial sill 0.150, **range a = 12.6 km** (practical range about 38 km) |
 | by season | heating: 0.082 / 0.174 / 8.8 km · summer: 0.066 / 0.122 / 17.4 km · polluted heating hours (city > 15): 0.106 / 0.182 / 6.7 km |
 | Empirical semivariance | below 300 m about 0.06 · 0.6–1.3 km about 0.09 · 4 km 0.11 · 7 km 0.14 · 14 km 0.17 |
@@ -259,3 +259,56 @@ Live snapshot (`/api/validation`, one clean autumn evening, 259 sensors): krigin
 
 ### Cost
 Once per sensor snapshot (every few minutes at most): kriging weights for 119k street segments take about 1.4 s (model init was 0.08 s). The 48 forecast hours take 1.0 s (was 1.3 s). End to end, a window build goes from about 1.4 s to 2.4 s.
+
+## Phase 3: probabilistic city level and alert
+
+### What changed
+- The city level is now three gradient-boosted **quantile** models (p10, p50, p90) of the log ratio to CAMS. The p50 replaces the old squared-error model as the central value everywhere (slightly better: MAE 7.22 vs 7.24 hidden sensors/all weeks; 4.65 vs 4.67 future days). `PmModel` format 4.
+- The raw quantile fits are over-confident out of sample (about 19 % of readings fell below the p10 instead of 10 %). They are widened by **split-conformal** corrections per lead bucket (0–5, 6–23, 24–47 h) × level class (p50 below / above 15 µg/m³), taken from week-blocked out-of-fold residuals.
+- The banner shows a **probability**: P(city level ≥ 25 µg/m³ for ≥ 3 hours in a row, somewhere in the next 24 h). Hourly values are two-piece normals through the p10/p50/p90; the standardised errors of consecutive hours follow an AR(1) process with φ = 0.88 (measured: lag-1 correlation 0.89, lag-2 0.77, lag-3 0.67, lag-6 0.50, lag-12 0.34; AR(1) gives 0.88 / 0.78 / 0.68 / 0.47 / 0.22). Common random numbers make P monotone in the level (unit-tested).
+- Banner: **red from P ≥ 0.7** (`p_red`), **amber ("possible episode") from P ≥ 0.2** (`p_watch`), the message carries the chance: "Tomorrow night 22:00–06:00: PM2.5 around 38 µg/m³ (85 % chance). Sensitive groups should limit time outside." The chart draws the 10th–90th percentile band. Both values and φ live in the model file (`meta.alert`), config has the same values as fallbacks.
+- **The red threshold p\*=0.7 is the output of the stated rule** (maximum Peirce skill on the training period, heating season 2024/25). **The amber threshold 0.2 is a policy choice, not fitted** ("a 1-in-5 chance deserves a heads-up"); I set it before the final back-test but after an earlier back-test run had shown the sweep, so it is not untouched by the test period.
+
+### Quantile coverage (target 0.10 below p10, 0.10 above p90)
+Week-blocked 5-fold (every fold refits the quantile models and the widening on the other weeks) and the future split (first 75 % of days / 75 % of sensors, scored on the rest):
+
+| Slice | 5-fold: below p10 / above p90 | Future days: below p10 / above p90 |
+|---|---|---|
+| all | 0.085 / 0.080 | 0.039 / **0.163** |
+| heating season | 0.072 / 0.096 | 0.017 / 0.221 (7.7k rows) |
+| summer | 0.103 / 0.058 | 0.043 / 0.152 |
+| lead 0–5 h · 6–23 h · 24–47 h | 0.080 / 0.082 · 0.087 / 0.081 · 0.090 / 0.077 | 0.053 / 0.094 · 0.033 / 0.188 · 0.023 / 0.253 |
+| CAMS ≥ 50 hours | 0.101 / 0.032 | no such hours in the test split |
+| observed city level ≥ 25 (selected on the outcome) | 0.007 / 0.174 | – |
+
+Within ±5 points in the 5-fold evaluation. **Not within ±5 points on the future split**: readings in the last quarter of the history fall above the p90 16 % of the time (22 % in the heating-season rows, 25 % at 24–47 h): the intervals drift too narrow when the model is asked about later days than it was trained on. I did not tune that away. The last row is a selection effect (conditioning on a high outcome), not a defect, but it says the upper tail is where the model is least certain.
+
+### Back-test: the new alert against the old rules
+Windows = the 24 h after issue times 00/06/12/18 local with the live nowcast at issue time; observed episode = calibrated city median ≥ 25 for ≥ 3 h in a row; probabilities are out of fold (whole weeks held out). 336 windows (203 in heating season, 77 with an episode). p\* chosen on heating season 2024/25 (39 windows, only 5 without an episode: a thin base), evaluated on 2025/26 + October 2026 (164 windows, 43 with an episode). The history is one week in seven plus the 14 worst-CAMS days, so episodes are over-represented against the climate: the false-alarm ratios are for this sample.
+
+| Test period (164 windows, 32 distinct episodes) | alerts | POD | false-alarm ratio | Peirce | episodes missed | median lead |
+|---|---|---|---|---|---|---|
+| **New: red, P ≥ 0.7** | 33 | 0.67 | **0.12** | **0.64** | 6 | 18 h |
+| **New: amber tier, P ≥ 0.2** | 91 | **0.95** | **0.55** | 0.54 | 1 | 18 h |
+| Phase 0 rule (median level ≥ 25 for 3 h) | 37 | 0.67 | 0.22 | 0.61 | 6 | 18 h |
+| Old rule: stagnation score ≥ 60 in any hour | 141 | 0.95 | 0.71 | 0.13 | 1 | 18 h |
+| Persistence (city already ≥ 25 at issue) | 21 | 0.49 | 0.00 | 0.49 | 9 | 12 h |
+| Raw CAMS ≥ 25 for 3 h | 129 | 1.00 | 0.67 | 0.29 | 0 | 18 h |
+| CAMS × live-sensor bias ≥ 25 for 3 h | 101 | 0.95 | 0.59 | 0.46 | 0 | 18 h |
+
+Only windows where the episode is **not already under way at issue time** (143 windows, 12 episodes): red POD 0.36 / FAR 0.33 / 7 of 12 episodes missed; amber POD 0.91 / FAR 0.71 / 1 missed; old rule POD 0.91 / FAR 0.83; CAMS × bias POD 0.91 / FAR 0.75 / 0 missed.
+
+What this says:
+- The old rule fired in 141 of 164 test windows. Its POD is as good as the amber tier's, but nearly everything it says is false (FAR 0.71). The Peirce score of 0.13 is close to "always alert".
+- The new red tier is quiet and precise (FAR 0.12) but **misses a third of the episodes (6 of 32), and most of the genuine onsets (7 of 12)**: it mostly confirms an episode once the sensors show it. Persistence (0.49) is the right comparison for that, and the red tier beats it only modestly (0.64).
+- The amber tier recovers the old rule's POD at 0.55 instead of 0.71 false alarms. So the design is: amber = "be alert", red = "it is happening or nearly certain".
+- On onset detection the model is **not clearly better than CAMS × sensor bias** (Peirce 0.50 amber vs 0.41, but FAR 0.71 vs 0.75, so a modest gain at best, with 12 episodes).
+
+### Acceptance (proposed bars)
+| Bar | Result |
+|---|---|
+| Episode-hour bias within ±5 µg/m³ (calibrated units) | **Met on the hours the app flags** (CAMS ≥ 50: +0.2 in the back-test, −3.3 in training CV). **Not met on hours selected by the observed outcome ≥ 25: −5.4 µg/m³** (1,192 hours), partly a selection effect but real: heavy hours are under-predicted. |
+| POD ≥ the old rule's at a lower false-alarm ratio | **Not met by the red tier** (POD 0.67 vs 0.95). **Met by the amber tier** (0.95 vs 0.95, FAR 0.55 vs 0.71). |
+| Quantile coverage within ±5 points | Met in 5-fold, **not met on the future split** (above p90 0.16) |
+
+Additional caveats: P is about the calibrated *sensor* median. Against the EEA station the calibrated median still has a typical error of about 37 % (`sigma_log` 0.37), which is not in P. Hourly value limits are applied to 24 h guideline numbers (screening, not compliance).

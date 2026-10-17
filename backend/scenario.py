@@ -136,7 +136,7 @@ def birch_season_hourly(day0: datetime) -> dict:
 HOURLY = {"winter_inversion": winter_inversion_hourly, "summer_heatwave": summer_heatwave_hourly, "birch_season": birch_season_hourly}
 # Applied to RAW sensor readings (before calibration to the reference scale, which roughly doubles them): winter turns the live
 # autumn readings into an episode, the other two keep clean air.
-SENSOR_SCALE = {"winter_inversion": (2.2, 28.0), "summer_heatwave": (1.0, 1.0), "birch_season": (0.9, 1.0)}
+SENSOR_SCALE = {"winter_inversion": (2.2, 28.0), "summer_heatwave": (0.8, 0.5), "birch_season": (0.9, 1.0)}
 
 
 # Live sensor readings are re-scaled in the scenario so dots match the story.

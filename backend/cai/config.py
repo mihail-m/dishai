@@ -85,6 +85,10 @@ HEAT_MAX_SHARE = 0.5  # at most half the cost can come from heat
 # exertion (EAQI "poor" starts at 50 for hourly PM2.5). Applied to hourly values, so they are a screening cut, not a compliance test.
 PM_WATCH, PM_WARNING, PM_EVERYONE = 15.0, 25.0, 50.0
 ALERT_MIN_HOURS = 3  # the banner turns red only when the level stays at or above PM_WARNING this many hours in a row
+# Probabilistic alert (backend/ml/backtest.py writes the fitted values into the model file; these are the fallbacks):
+ALERT_P = 0.5  # red when P(>= PM_WARNING for ALERT_MIN_HOURS in a row, next 24 h) reaches this: maximises Peirce skill on heating season 2024/25
+ALERT_P_WATCH = 0.2  # amber ("episode possible") from here. A policy choice (a 1-in-5 chance is worth a heads-up), not fitted
+ALERT_PHI = 0.88  # lag-1 correlation of the level error between consecutive hours (back-test)
 # Maps PM2.5 onto the 0-100 stagnation-score scale for code that still mixes the two (the exercise-slot picker): PM_WARNING == 60.
 PM_TO_SCORE = 60.0 / PM_WARNING
 

@@ -101,3 +101,69 @@ def test_levels_from_the_model_use_the_nowcast(tmp_path):
 
 def test_model_cache_follows_the_file(tmp_path):
     assert alert.get_model(tmp_path / "missing.joblib") is None
+
+
+# ---- probabilistic alert --------------------------------------------------------------------------------------------------
+import numpy as np  # noqa: E402
+
+
+def band(mid, spread=0.35, n=48):
+    """(p10, p50, p90) in ug/m3 for a flat level `mid`, with +-spread in log1p units."""
+    u = np.log1p(np.full(n, float(mid)))
+    return np.expm1(u - spread), np.expm1(u), np.expm1(u + spread)
+
+
+def run_p(mid, spread=0.35, p_red=0.7, p_watch=0.2):
+    lo, md, hi = band(mid, spread)
+    pm = list(np.round(md, 1))
+    times, scores = series(pm)
+    return alert.build_alert(times, pm, scores, 12, NOW, "model", True, (lo, md, hi), {"p_red": p_red, "p_watch": p_watch, "phi": 0.88})
+
+
+def test_probability_is_monotone_in_the_level_and_the_spread():
+    ps = [float(alert.exceed_probability(*[np.log1p(a[:24]) for a in band(m)])) for m in (5, 10, 15, 20, 24, 27, 35, 60)]
+    assert ps == sorted(ps) and ps[0] < 0.01 and ps[-1] > 0.99
+    narrow = float(alert.exceed_probability(*[np.log1p(a[:24]) for a in band(20, 0.1)]))
+    wide = float(alert.exceed_probability(*[np.log1p(a[:24]) for a in band(20, 0.6)]))
+    assert wide > narrow  # below the limit, more uncertainty means more chance of crossing it
+
+
+def test_a_certain_episode_is_red_and_carries_its_probability():
+    a = run_p(40)
+    assert a["active"] and a["level"] == "warning" and a["probability"] > 0.99 and "chance" in a["message"]
+
+
+def test_a_possible_episode_is_amber_not_red():
+    a = run_p(22)  # median just under the limit, upper band well over it
+    assert 0.2 <= a["probability"] < 0.7
+    assert not a["active"] and a["level"] == "watch" and a["message"].startswith("Possible episode")
+
+
+def test_a_clean_forecast_stays_green_even_with_a_wide_band():
+    a = run_p(5, spread=0.6)
+    assert a["level"] == "good" and a["probability"] < 0.01 and not a["active"]
+
+
+def test_thresholds_move_the_banner():
+    mid = 22
+    lo_t, hi_t = run_p(mid, p_red=0.3)["level"], run_p(mid, p_red=0.95)["level"]
+    assert lo_t == "warning" and hi_t == "watch"
+
+
+def test_settings_come_from_the_model_file_or_config():
+    assert alert.alert_settings(None) == {"p_red": C.ALERT_P, "p_watch": C.ALERT_P_WATCH, "phi": C.ALERT_PHI}
+    m = PmModel.load()
+    if m is not None and m.meta.get("alert"):
+        s = alert.alert_settings(m)
+        assert 0 < s["p_watch"] < s["p_red"] <= 1 and 0 < s["phi"] < 1
+
+
+def test_level_band_is_ordered_and_follows_the_nowcast():
+    m = PmModel.load()
+    if m is None or m.q_lo is None:
+        pytest.skip("no trained quantile model")
+    lo, mid, hi = alert.level_band(hours(), 12, [30.0] * 30, m)
+    assert (lo <= mid + 1e-9).all() and (mid <= hi + 1e-9).all() and (hi > lo).all()
+    lo2, mid2, hi2 = alert.level_band(hours(), 12, [3.0] * 30, m)
+    assert mid[12:36].sum() > mid2[12:36].sum()
+    assert alert.level_band(hours(), 12, [3.0], None) is None

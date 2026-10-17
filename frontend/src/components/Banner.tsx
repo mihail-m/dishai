@@ -18,8 +18,8 @@ const SCENARIO_SRC: Record<string, string> = {
 function detail(a: Alert): string {
   const score = Math.round(a.peak_score);
   if (a.basis === "stagnation") return `Peak stagnation score ${score} of 100. No PM2.5 estimate is available right now.`;
-  if (a.active) {
-    return `Peak ${Math.round(a.peak_pm25 ?? 0)} µg/m³${a.peak_time ? ` around ${hhmm(a.peak_time)}` : ""}.`
+  if (a.active || (a.probability != null && a.level === "watch" && a.start)) {
+    return `Peak ${Math.round(a.peak_pm25 ?? 0)} µg/m³${a.peak_time ? ` around ${hhmm(a.peak_time)}` : ""}${a.peak_p90 != null ? `, up to ${Math.round(a.peak_p90)} in the upper range` : ""}.`
       + (a.trapped ? ` The air is trapped near the ground (stagnation score ${score} of 100).` : "");
   }
   if (a.level === "watch") return `WHO 24 h guideline is ${PM_WATCH} µg/m³; the EU limit is ${PM_WARNING}.`;
