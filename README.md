@@ -58,9 +58,9 @@ street CAI and selection, citizen/reference sensors, walking/cycling routes, are
 Leaflet is connected through the [deck.gl Leaflet adapter](https://visgl.github.io/deck.gl-community/docs/modules/leaflet/api-reference/deck-overlay).
 Optional Google Places search remains available with a browser key regardless of the selected map.
 
-The forecast slider covers **24 hourly slots starting with the current Sofia hour**, including tomorrow when needed.
-Street colours are loaded together in one compact forecast snapshot. Opening the route planner or network view
-preloads all 24 hours for its current settings; progress appears below the slider. Once it says **24 hours ready**,
+The forecast slider covers **48 hourly slots starting with the current Sofia hour** (`WINDOW_HOURS`; the demo scenarios are 24 h replays),
+including tomorrow when needed. Street colours are loaded together in one compact forecast snapshot. Opening the route planner or network view
+preloads every hour of the window for its current settings; progress appears below the slider. Once it says **all hours ready**,
 scrubbing uses memory without fetching each hour. Changing endpoints, travel mode or route preference prepares
 a new set; recent sets are reused when switching tabs. Heat is a static summer layer and is loaded once per mode.
 
@@ -169,7 +169,7 @@ GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when ch
 `/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/areas?metric=air|heat&mode=walk|bike` (area cells) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
 `/api/route?from=lat,lng&to=lat,lng&lambda=&hour=&mode=walk|bike` `/api/network?hour=&mode=` `/api/validation` `/api/reference`. All accept `scenario=winter_inversion|summer_heatwave|birch_season`.
 
-`GET /api/forecast/window` returns the current 24-hour display forecast, original hour indices, sensor snapshot,
+`GET /api/forecast/window` returns the current display forecast (48 hours live, 24 in a demo scenario), original hour indices, sensor snapshot,
 and base64-encoded uint8 street CAI arrays (one byte per segment per hour). `POST /api/forecast/refresh` rebuilds
 it after expiring upstream data. Pass its `id` as `forecast_id` to edge, area, route and network requests to keep
 all results on that same forecast even across refresh or midnight. Unknown/evicted IDs return 409 and require

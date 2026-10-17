@@ -18,8 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import advice as advice_mod
+from . import alert as alert_mod
 from . import geo, sensors as sensors_mod, waqi
 from .cache import Cache
+from .cai import config as C
 from .scenario import HOURLY as SCENARIO_HOURLY, scenario_pm25
 from .score import clamp, label_for, stagnation_score
 
@@ -199,55 +201,6 @@ def _hhmm(t: str) -> str:
     return t[11:16]
 
 
-def _window(times: list[str], scores: list[float], now_idx: int, now: datetime) -> dict:
-    """First contiguous warning run that starts within 24 h of now (or is already active)."""
-    n = len(scores)
-    start = None
-    for i in range(now_idx, min(now_idx + 24, n)):
-        if label_for(scores[i]) == "warning":
-            start = i
-            break
-    horizon = scores[now_idx : now_idx + 24]
-    peak_i = now_idx + max(range(len(horizon)), key=lambda k: horizon[k]) if horizon else now_idx
-    base = {"peak_score": round(scores[peak_i], 1) if n else 0, "peak_time": times[peak_i] if n else None}
-    if start is None:
-        return {"active": False, **base, "message": "No inversion warning in the next 24 hours."}
-    end = start
-    while end + 1 < n and label_for(scores[end + 1]) == "warning":
-        end += 1
-    end_time = (datetime.strptime(times[end], "%Y-%m-%dT%H:%M") + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
-    start_dt = datetime.strptime(times[start], "%Y-%m-%dT%H:%M")
-    in_progress = start == now_idx
-    if in_progress:
-        msg = f"Inversion in progress until {_hhmm(end_time)}"
-    else:
-        same_day = start_dt.date() == now.date()
-        night = start_dt.hour >= 17 or start_dt.hour < 5
-        day = ("tonight" if night else "today") if same_day else ("tomorrow night" if night else "tomorrow")
-        msg = f"Inversion expected {day} {_hhmm(times[start])} to {_hhmm(end_time)}"
-    return {
-        "active": True,
-        "in_progress": in_progress,
-        "start": times[start],
-        "end": end_time,
-        "start_hhmm": _hhmm(times[start]),
-        "end_hhmm": _hhmm(end_time),
-        "hours": end - start + 1,
-        **base,
-        "message": msg,
-    }
-
-
-def _best_window(times: list[str], scores: list[float], now_idx: int) -> dict | None:
-    """Best daytime (10:00-18:00) two-hour slot in the next 24 h: lowest score."""
-    cands = [i for i in range(now_idx, min(now_idx + 24, len(scores) - 1)) if 10 <= int(times[i][11:13]) <= 17]
-    if not cands:
-        return None
-    i = min(cands, key=lambda k: scores[k] + scores[k + 1])
-    end = (datetime.strptime(times[i], "%Y-%m-%dT%H:%M") + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
-    return {"start": times[i], "end": end, "start_hhmm": _hhmm(times[i]), "end_hhmm": _hhmm(end)}
-
-
 async def build_forecast(scenario: str | None) -> dict:
     now = sofia_now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -328,6 +281,18 @@ async def build_forecast(scenario: str | None) -> dict:
     now_key = now.strftime("%Y-%m-%dT%H:00")
     now_idx = times.index(now_key) if now_key in times else 0
     worst = max(sources.values(), key=lambda s: SOURCE_RANK.get(s, 4))
+
+    # One PM2.5 level per hour from the learned model, shared by the banner, the chart, the advice and the street map.
+    try:
+        sensor_pm = [s["pm25"] for s in (await build_sensors(scenario))["sensors"]]
+    except HTTPException:
+        sensor_pm = []
+    pm_model = alert_mod.get_model()
+    levels, basis = alert_mod.city_levels(hours, now_idx, sensor_pm, pm_model)
+    for h, v in zip(hours, levels):
+        h["pm25_model"] = v
+        h["level"] = alert_mod.level_for_pm(v) if v is not None else h["label"]
+    calibrated = bool(pm_model and pm_model.meta.get("calibrated"))
     return {
         "scenario": scenario,
         "source": worst,
@@ -335,10 +300,11 @@ async def build_forecast(scenario: str | None) -> dict:
         "generated_at": now.strftime("%Y-%m-%dT%H:%M"),
         "now_index": now_idx,
         "grid": {"lat": LAT, "lon": LON},
-        "alert": _window(times, scores, now_idx, now),
-        "best_window": _best_window(times, scores, now_idx),
+        "alert": alert_mod.build_alert(times, levels, scores, now_idx, now, basis, calibrated),
+        "best_window": alert_mod.best_window(times, levels if basis != "stagnation" else scores, now_idx),
+        "pm_basis": basis,
         "hours": hours,
-        "note": "Score is our own indicative proxy, not a validated model.",
+        "note": "PM2.5 is our learned city-level estimate; the stagnation score is an indicative proxy, not a validated model.",
     }
 
 
@@ -541,15 +507,16 @@ async def api_advice(
     sc = Scenario(scenario)
     d = get_district(district)
     fc = await build_forecast(sc)
-    times = [h["time"] for h in fc["hours"]]
-    series = _district_scores(fc, d["factor"])
+    series = _district_scores(fc, d["factor"])  # stagnation score scaled by the district's elevation factor: supporting context
     ni = fc["now_index"]
-    alert = _window(times, series, ni, datetime.strptime(fc["generated_at"], "%Y-%m-%dT%H:%M"))
-    best = _best_window(times, series, ni)
+    alert = fc["alert"]  # the same object the banner shows
+    best = fc["best_window"]
     peak = max(series[ni : ni + 24]) if series else 0
-    level = label_for(peak)
+    level = alert["level"]
     zone = zone_for(d)
-    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], series[ni : ni + 24], "pollen_allergy" in toggles)
+    # the exercise-slot picker mixes PM2.5 with heat and pollen penalties on the score scale (see C.PM_TO_SCORE)
+    penalty = [h["pm25_model"] * C.PM_TO_SCORE if h.get("pm25_model") is not None else x for h, x in zip(fc["hours"], series)]
+    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], penalty[ni : ni + 24], "pollen_allergy" in toggles)
     return {
         "profile": profile,
         "toggles": sorted(set(toggles)),
@@ -559,6 +526,7 @@ async def api_advice(
             "level": level,
             "current_score": round(series[ni], 1),
             "peak_score": round(peak, 1),
+            "peak_pm25": alert.get("peak_pm25"),
             "alert": alert,
             "best_window": best,
         },
@@ -673,7 +641,7 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
             {
                 "district": d["name"],
                 "peak_24h": round(peak, 1),
-                "level": label_for(peak),
+                "level": fc["alert"]["level"],  # city-level PM2.5 alert; districts are ranked by score x leads
                 "leads": leads,
                 "sample_leads": seed,
                 "submitted_leads": real,

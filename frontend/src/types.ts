@@ -8,11 +8,16 @@ export interface Hour {
   time: string; score: number; label: Level; blh: number; wind10m: number; t2m: number; t925: number;
   inversion_delta: number; wind925: number; cloud: number; apparent?: number; radiation?: number | null; rh?: number | null;
   pm25: number | null; pm10: number | null; aqi: number | null; is_night: boolean;
+  /** learned city-level PM2.5 (the number every screen uses); `pm25` above is the raw CAMS regional forecast */
+  pm25_model: number | null; level: Level;
   pollen?: Record<string, number | null> | null;
 }
 export interface Alert {
   active: boolean; in_progress?: boolean; start?: string; end?: string; start_hhmm?: string; end_hhmm?: string;
-  hours?: number; peak_score: number; peak_time: string | null; message: string;
+  hours?: number; peak_score: number; peak_score_time: string | null; peak_time: string | null; message: string;
+  level: Level; label: string; audience: "none" | "sensitive" | "everyone";
+  mean_pm25?: number; peak_pm25: number | null; trapped: boolean;
+  basis: "model" | "cams_bias" | "stagnation"; scale: "sensor" | "reference";
 }
 export interface Window { start: string; end: string; start_hhmm: string; end_hhmm: string }
 export interface Forecast {
@@ -49,7 +54,7 @@ export interface PollenSummary {
 export interface Conditions { heat: HeatSummary; pollen: PollenSummary; activity: { start_hhmm: string; end_hhmm: string } | null }
 export interface Advice {
   profile: Profile; toggles: Toggle[]; district: string; conditions: Conditions;
-  status: { level: Level; current_score: number; peak_score: number; alert: Alert; best_window: Window | null };
+  status: { level: Level; current_score: number; peak_score: number; peak_pm25: number | null; alert: Alert; best_window: Window | null };
   zone: { zone: "inner" | "outer" | null; illustrative: boolean; label: string; basis: string };
   cards: Card[]; grant_note: string;
 }

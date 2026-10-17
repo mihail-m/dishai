@@ -35,7 +35,8 @@ def test_forecast_offline_uses_fixture(client):
 def test_scenario_has_strong_night_inversion(client):
     r = client.get("/api/forecast?scenario=winter_inversion").json()
     assert r["source"] == "scenario" and len(r["hours"]) == 48
-    assert r["alert"]["active"]
+    assert r["alert"]["active"] and r["alert"]["basis"] == "model" and r["alert"]["level"] == "warning"
+    assert all(h["pm25_model"] is not None and h["level"] in ("good", "watch", "warning") for h in r["hours"])
     assert max(h["score"] for h in r["hours"]) > 90
     assert max(h["pm25"] for h in r["hours"]) > 80
     assert min(h["score"] for h in r["hours"]) < 60  # daytime relief

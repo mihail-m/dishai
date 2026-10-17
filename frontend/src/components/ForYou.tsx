@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Advice, DistrictsFC, Profile, Scenario, Toggle } from "../types";
-import { LEVEL_TEXT, api } from "../api";
+import { PM_LEVEL_TEXT, api } from "../api";
 import Wizard from "./Wizard";
 
 const PROFILES: { id: Profile; label: string; hint: string }[] = [
@@ -96,8 +96,8 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
         <>
           <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
             <div>
-              <div className="text-lg font-semibold">{adv.district}: {LEVEL_TEXT[adv.status.level]} in the next 24 h</div>
-              <div className="muted text-sm">{adv.status.alert.message} · district peak score {Math.round(adv.status.peak_score)}</div>
+              <div className="text-lg font-semibold">{adv.district}: {PM_LEVEL_TEXT[adv.status.level]} in the next 24 h</div>
+              <div className="muted text-sm">{adv.status.alert.message}{adv.status.alert.trapped ? ` · air is trapped (stagnation score ${Math.round(adv.status.peak_score)})` : ""}</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className={`badge ${levelPill(adv.conditions.heat.level)}`} title={adv.conditions.heat.peak_c != null ? `Peak feels-like ${Math.round(adv.conditions.heat.peak_c)}°C at ${adv.conditions.heat.peak_hhmm}` : undefined}>
@@ -106,7 +106,7 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
               <span className={`badge ${levelPill(adv.conditions.pollen.level)}`} title={adv.conditions.pollen.available ? adv.conditions.pollen.types.map((x) => `${x.label} ${x.grains}/m³`).join(", ") || "No measurable pollen" : "No pollen data"}>
                 {adv.conditions.pollen.available ? POLLEN_TEXT[adv.conditions.pollen.level] : "Pollen: no data"}
               </span>
-              <span className={`badge pill-${adv.status.level}`}>{LEVEL_TEXT[adv.status.level]}</span>
+              <span className={`badge pill-${adv.status.level}`}>{PM_LEVEL_TEXT[adv.status.level]}</span>
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

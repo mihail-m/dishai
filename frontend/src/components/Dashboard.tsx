@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Dashboard as D, NetworkResp, Scenario } from "../types";
-import { LEVEL_TEXT, api, api2 } from "../api";
+import { PM_LEVEL_TEXT, api, api2 } from "../api";
 import { caiCss } from "../map/cai";
 import { MEASURE_COLOR } from "../views/NetworkView";
 
@@ -50,7 +50,7 @@ export default function Dashboard({ scenario, active }: { scenario: Scenario; ac
                 <span className="flex items-center gap-3">
                   <span className="faint w-4 text-sm tabular-nums">{i + 1}</span>
                   <span className="font-semibold">{h.district}</span>
-                  <span className={`badge pill-${h.level}`}>{LEVEL_TEXT[h.level]}</span>
+                  <span className={`badge pill-${h.level}`}>{PM_LEVEL_TEXT[h.level]}</span>
                 </span>
                 <span className="muted text-sm tabular-nums">{Math.round(h.peak_24h)} × {h.leads} = <b className="text-[var(--ink)]">{Math.round(h.hotspot_index)}</b></span>
               </li>

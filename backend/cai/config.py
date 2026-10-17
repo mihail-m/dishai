@@ -66,6 +66,14 @@ HEAT_RANGE_K = 8.0
 HEAT_GATE_FROM_C, HEAT_GATE_RANGE_C = 26.0, 8.0  # apparent temperature
 HEAT_MAX_SHARE = 0.5  # at most half the cost can come from heat
 
+# --- alert thresholds on the city-level PM2.5 (what the banner, chart and advice use) --------------------------------
+# 15 = WHO 24 h guideline, 25 = EU 24 h limit (the same anchors as AIR_PM below), 50 = level at which even healthy people should cut
+# exertion (EAQI "poor" starts at 50 for hourly PM2.5). Applied to hourly values, so they are a screening cut, not a compliance test.
+PM_WATCH, PM_WARNING, PM_EVERYONE = 15.0, 25.0, 50.0
+ALERT_MIN_HOURS = 3  # the banner turns red only when the level stays at or above PM_WARNING this many hours in a row
+# Maps PM2.5 onto the 0-100 stagnation-score scale for code that still mixes the two (the exercise-slot picker): PM_WARNING == 60.
+PM_TO_SCORE = 60.0 / PM_WARNING
+
 # --- 7. outputs ------------------------------------------------------------------------------------------
 # PM2.5 (ug/m3) -> air score (100 clean .. 0 worst), piecewise linear through health anchors rather than one straight line to 60:
 # 5 = WHO annual guideline, 15 = WHO 24 h guideline, 25 = EU 24 h limit. A calm autumn day (3 ug/m3) is therefore ~88, not ~95,
