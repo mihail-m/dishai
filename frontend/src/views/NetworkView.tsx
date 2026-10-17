@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PickingInfo } from "@deck.gl/core";
 import type { AreasResp, Chokepoint, Mode, NetworkResp, Scenario } from "../types";
 import type { Stage } from "../stage";
+import { useHourlyPreload } from "../forecast";
 import { api2 } from "../api";
 import { caiCss } from "../map/cai";
 import { areaLayer, areaRows, chokepointLayers, flowLayer, heatColor, segmentLayers } from "../map/layers";
@@ -24,9 +25,7 @@ function Toggle({ on, set, label, hint }: { on: boolean; set: (b: boolean) => vo
 export default function NetworkView({ stage, scenario, hourIndex }: Props) {
   const [mode, setMode] = useState<Mode>("walk");
   const [metric, setMetric] = useState<"air" | "heat">("air");
-  const [net, setNet] = useState<NetworkResp | null>(null);
-  const [areas, setAreas] = useState<AreasResp | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [heatAreas, setHeatAreas] = useState<{ key: string; value: AreasResp } | null>(null);
   const [sel, setSel] = useState<Chokepoint | null>(null);
   const [showAreas, setShowAreas] = useState(true);
   const [showChannels, setShowChannels] = useState(true);
@@ -38,23 +37,29 @@ export default function NetworkView({ stage, scenario, hourIndex }: Props) {
   const { set } = stage;
   const heat = metric === "heat";
 
+  const window = stage.forecast;
+  const key = window ? `${window.id}:network:${mode}` : null;
+  const history = useHourlyPreload<{ net: NetworkResp; areas: AreasResp }>(key, window?.hours ?? [], hourIndex,
+    async (hour, signal) => {
+      const opts = { forecastId: window!.id, signal };
+      const [net, areas] = await Promise.all([api2.network(scenario, hour, mode, opts), api2.areas(scenario, hour, mode, "air", opts)]);
+      return { net, areas };
+    });
+  const net = history.value?.net ?? null;
+  const areas = heat ? (heatAreas?.key === key ? heatAreas.value : null) : history.value?.areas ?? null;
+  const err = history.status.error;
+  const { reportPreload } = stage;
+  useEffect(() => { reportPreload("network", history.status); }, [reportPreload, key, history.status.loaded, history.status.error]);
   useEffect(() => {
-    let off = false;
-    setNet(null); setErr(null); setSel(null);
-    const timer = setTimeout(() => {
-      api2.network(scenario, hourIndex, mode).then((n) => !off && setNet(n)).catch((e: Error) => !off && setErr(e.message));
-    }, 250);
-    return () => { off = true; clearTimeout(timer); };
-  }, [scenario, hourIndex, mode]);
-
-  // heat is a static summer snapshot: it does not depend on the hour
+    setSel((old) => old ? net?.chokepoints.find((c) => c.street === old.street) ?? null : null);
+  }, [net]);
   useEffect(() => {
-    let off = false;
-    const timer = setTimeout(() => {
-      api2.areas(scenario, heat ? undefined : hourIndex, mode, metric).then((a) => !off && setAreas(a)).catch(() => !off && setAreas(null));
-    }, 200);
-    return () => { off = true; clearTimeout(timer); };
-  }, [scenario, mode, metric, heat ? 0 : hourIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!window || !key) return;
+    const controller = new AbortController();
+    api2.areas(scenario, undefined, mode, "heat", { forecastId: window.id, signal: controller.signal })
+      .then((value) => { if (!controller.signal.aborted) setHeatAreas({ key, value }); }).catch(() => {});
+    return () => controller.abort();
+  }, [key]);
 
   useEffect(() => {
     if (!flow || !net) return;

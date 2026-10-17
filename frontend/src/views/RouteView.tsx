@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { PickingInfo } from "@deck.gl/core";
 import type { Mode, RouteResp, RouteStats, Scenario } from "../types";
 import type { Stage } from "../stage";
+import { useHourlyPreload } from "../forecast";
 import { api2 } from "../api";
 import { PRESET_PAIRS, GOOGLE_KEY } from "../map/config";
 import { markerLayer, routeLayers, ROUTE_COLORS } from "../map/layers";
@@ -19,27 +20,37 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
   const [picking, setPicking] = useState<"from" | "to" | null>(null);
   const [lam, setLam] = useState(2);
   const [mode, setMode] = useState<Mode>("walk");
-  const [res, setRes] = useState<RouteResp | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [googleResult, setGoogleResult] = useState<{ key: string; value: RouteResp } | null>(null);
   const [focus, setFocus] = useState<string>("cleanest");
   const [labels, setLabels] = useState<{ from: string; to: string }>({ from: PRESET_PAIRS[1].label.split(" → ")[0].split(": ").pop() ?? "", to: PRESET_PAIRS[1].label.split(" → ")[1] ?? "" });
   const pickRef = useRef(picking);
   pickRef.current = picking;
   const { set } = stage;
 
+  const window = stage.forecast;
+  const routeKey = window && from && to ? `${window.id}:route:${mode}:${from.join()}:${to.join()}:${lam}` : null;
+  const history = useHourlyPreload<RouteResp>(routeKey, window?.hours ?? [], hourIndex,
+    (hour, signal) => api2.route(from!, to!, lam, scenario, hour, mode, { forecastId: window!.id, signal, includeGoogle: false }), 220);
+  const googleKey = `${routeKey}:${hourIndex}`;
+  const res = googleResult?.key === googleKey ? googleResult.value : history.value;
+  const err = history.status.error;
+  const busy = history.status.loaded < history.status.total;
+  const { reportPreload } = stage;
+  useEffect(() => { reportPreload("route", history.status); }, [reportPreload, routeKey, history.status.loaded, history.status.error]);
   useEffect(() => {
-    if (!from || !to) return;
-    let off = false;
-    setBusy(true);
-    const t = setTimeout(() => {
-      api2.route(from, to, lam, scenario, hourIndex, mode)
-        .then((r) => { if (!off) { setRes(r); setErr(null); setLabels({ from: r.from_label, to: r.to_label }); } })
-        .catch((e: Error) => { if (!off) { setErr(e.message); setRes(null); } })
-        .finally(() => !off && setBusy(false));
-    }, 220);
-    return () => { off = true; clearTimeout(t); };
-  }, [from, to, lam, scenario, hourIndex, mode]);
+    if (res) setLabels({ from: res.from_label, to: res.to_label });
+  }, [res]);
+  // Preload our own routes; optional billed Google requests only enrich the
+  // currently selected hour, never all 24 hours in the background.
+  useEffect(() => {
+    if (!history.value?.google_available || !from || !to || !window) return;
+    const controller = new AbortController();
+    const ownRoute = history.value;
+    api2.route(from, to, lam, scenario, hourIndex, mode, { forecastId: window.id, signal: controller.signal })
+      .then((value) => { if (!controller.signal.aborted) setGoogleResult({ key: googleKey, value }); })
+      .catch(() => { if (!controller.signal.aborted) setGoogleResult({ key: googleKey, value: { ...ownRoute, google_status: "error" } }); });
+    return () => controller.abort();
+  }, [googleKey, history.value?.google_available]);
 
   const layers = useMemo(() => {
     const lines: { name: string; line: [number, number][]; width?: number; dashed?: boolean }[] = [];
@@ -151,7 +162,8 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
             <a className="btn text-xs" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
           </div>
           <p className="faint mt-2 text-[11px]">
-            {res.google_status === "n/a" ? "Google baseline is walking-only; cycling uses our own router." : res.google_status === "ok"
+            {res.google_available && googleResult?.key !== googleKey ? "Loading Google's walking comparison for this hour…"
+              : res.google_status === "n/a" ? "Google baseline is walking-only; cycling uses our own router." : res.google_status === "ok"
               ? res.snapped.used ? `Cleanest route shown is Google's walking route through ${res.snapped.waypoints.length} of our waypoints (ETA ${res.snapped.eta_min} min).` : "Google snapped route unavailable; showing our own polyline."
               : res.google_status === "no_key" ? "Google baseline needs GOOGLE_ROUTES_SERVER_KEY (see README); routing and CAI never depend on it." : "Google Routes request failed; showing our own routes."}
           </p>

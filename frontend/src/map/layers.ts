@@ -14,7 +14,7 @@ export const ROUTE_COLORS: Record<string, RGB> = {
 };
 
 /** The street-level CAI: one PathLayer over ~119k segments from binary arrays. */
-export function caiLayer(g: Geometry, cai: number[], relative: boolean, mode: "full" | "dim"): Layer {
+export function caiLayer(g: Geometry, cai: ArrayLike<number>, relative: boolean, mode: "full" | "dim"): Layer {
   const { colors, widths } = buildAttributes(g, cai, relative, mode === "dim" ? 70 : 235);
   return new PathLayer({
     id: "cai",

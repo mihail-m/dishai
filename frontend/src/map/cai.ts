@@ -41,13 +41,13 @@ export const caiCss = (v: number) => `rgb(${caiColor(v).join(",")})`;
 
 const WIDTH_M = [14, 9, 6, 3]; // by road class, metres (scales with zoom)
 
-export function stretch(cai: number[]): { lo: number; hi: number } {
+export function stretch(cai: ArrayLike<number>): { lo: number; hi: number } {
   const s = Float32Array.from(cai).sort();
   return { lo: s[Math.floor(s.length * 0.05)], hi: s[Math.floor(s.length * 0.95)] };
 }
 
 /** Per-vertex colour/width arrays for a binary deck.gl PathLayer. relative=true stretches p5..p95 to 0..100. */
-export function buildAttributes(g: Geometry, cai: number[], relative: boolean, alpha = 235) {
+export function buildAttributes(g: Geometry, cai: ArrayLike<number>, relative: boolean, alpha = 235) {
   const P = g.coords.length / 2;
   const colors = new Uint8Array(P * 4);
   const widths = new Float32Array(P);

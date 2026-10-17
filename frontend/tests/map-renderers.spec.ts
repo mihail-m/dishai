@@ -28,7 +28,8 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
       await expect(page.getByText("Demo Avenue", { exact: true })).toBeVisible({ timeout: 1500 });
     }).toPass({ timeout: 20_000 });
     await page.getByRole("button", { name: "Close", exact: true }).click();
-    await page.locator("#hour").fill("18");
+    await expect(page.locator("#hour")).toBeEnabled();
+    await page.locator("#hour").fill("6");
     await expect(page.getByText("Background 30 µg/m³", { exact: false })).toBeVisible();
     await clickCenter(page);
     await expect(page.getByText("30 µg/m³ PM2.5", { exact: true })).toBeVisible();

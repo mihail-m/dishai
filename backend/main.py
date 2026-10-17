@@ -691,7 +691,12 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
 
 from .cai_api import make_router  # noqa: E402
 
-cai_router = make_router(build_forecast, build_sensors, Scenario, ScenarioQ, build_sensors_24h, district_at)
+def refresh_forecast_sources():
+    cache.expire(("open_meteo_forecast", "open_meteo_air_quality", "sensor_community", "sensor_community_24h", "waqi_stations"))
+
+
+cai_router = make_router(build_forecast, build_sensors, Scenario, ScenarioQ, build_sensors_24h, district_at,
+                         refresh_sources=refresh_forecast_sources, now=lambda: sofia_now())
 app.include_router(cai_router)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 

@@ -3,6 +3,7 @@ import type { Forecast, Scenario, EdgeExplain } from "../types";
 import type { Stage } from "../stage";
 import { api2 } from "../api";
 import { caiCss } from "../map/cai";
+import { useHourlyPreload } from "../forecast";
 import { highlightLayer } from "../map/layers";
 import Explain from "../components/Explain";
 import Timeline from "../components/Timeline";
@@ -14,20 +15,29 @@ interface Props { stage: Stage; fc: Forecast | null; scenario: Scenario; hourInd
 const LEGEND = [[100, "clean"], [75, "good"], [55, "moderate"], [35, "poor"], [15, "bad"], [0, "worst"]] as const;
 
 export default function CaiView({ stage, fc, scenario, hourIndex, setHourIndex }: Props) {
-  const [edge, setEdge] = useState<EdgeExplain | null>(null);
+  const [edgeId, setEdgeId] = useState<number | null>(null);
+  const window = stage.forecast;
+  const hour = window?.hours[hourIndex] ?? 0;
+  const history = useHourlyPreload<EdgeExplain>(window && edgeId != null ? `${window.id}:edge:${edgeId}` : null,
+    window?.hours ?? [], hour, (i, signal) => api2.edge(edgeId!, scenario, i, { forecastId: window!.id, signal }));
+  const edge = history.value;
+  const { reportPreload } = stage;
+  useEffect(() => {
+    reportPreload("map", edgeId == null ? { loaded: 24, total: 24, error: null } : history.status);
+  }, [reportPreload, edgeId, history.status.loaded, history.status.error]);
   const { set } = stage;
 
   useEffect(() => {
     set({
       layers: edge ? [highlightLayer(edge.geometry)] : [], base: "full", cursor: undefined,
       onPick: (info) => {
-        if (info.layer?.id === "cai" && info.index >= 0) api2.edge(info.index, scenario, hourIndex).then(setEdge).catch(() => {});
+        if (info.layer?.id === "cai" && info.index >= 0) setEdgeId(info.index);
       },
     });
     return () => set({ layers: [], base: "off" });
   }, [set, scenario, hourIndex, edge]);
 
-  useEffect(() => setEdge(null), [scenario]);
+  useEffect(() => setEdgeId(null), [scenario]);
   const v = stage.values;
 
   return (
@@ -49,9 +59,9 @@ export default function CaiView({ stage, fc, scenario, hourIndex, setHourIndex }
         </p>
         {v && <p className="muted mt-1 text-xs tabular-nums">Background {v.background} µg/m³ · sensor bias ×{v.bias} · stagnation {Math.round(v.stagnation)} · heat weight {v.heat_weight}</p>}
       </div>
-      <Explain e={edge} onClose={() => setEdge(null)} />
+      <Explain e={edge} onClose={() => setEdgeId(null)} />
       <ReferenceCard ref_={stage.reference} />
-      <ValidationCard scenario={scenario} />
+      <ValidationCard key={window?.id} scenario={scenario} />
       {fc && (
         <div className="card p-4 lg:hidden"><Timeline fc={fc} hourIndex={hourIndex} onPick={setHourIndex} /></div>
       )}

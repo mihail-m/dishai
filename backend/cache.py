@@ -20,6 +20,12 @@ class Cache:
     def clear(self) -> None:
         self._store.clear()
 
+    def expire(self, keys: tuple[str, ...]) -> None:
+        """Force the next read upstream, retaining the last good value for outages."""
+        for key in keys:
+            if key in self._store:
+                self._store[key] = (0.0, self._store[key][1])
+
     async def get(self, key: str, fetcher: Callable[[], Awaitable[Any]], persist: bool = True) -> tuple[Any, str]:
         """Return (data, source). source is one of: live, cache, stale, fixture.
 

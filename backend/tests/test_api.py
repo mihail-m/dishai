@@ -236,3 +236,87 @@ def test_cycling_routes_and_network(client, monkeypatch):
     ch = [s for s in n["segments"] if s["channel"]]
     assert len(ch) == n["n_channel_segments"] > 0
     assert all(s["usage_clean"] >= 2 and s["cai"] >= n["channel_cai_cut"] for s in ch)  # channels are well used AND cleaner than the 60th pct
+
+
+def test_preloaded_forecast_is_next_24_hours_across_midnight(client, monkeypatch):
+    import base64
+    from datetime import datetime
+    monkeypatch.setattr(main, "sofia_now", lambda: datetime(2026, 10, 17, 23, 35, tzinfo=main.TZ))
+    response = client.post("/api/forecast/refresh?scenario=winter_inversion")
+    assert response.status_code == 200
+    window = response.json()
+    assert window["hours"] == list(range(23, 47))
+    assert window["forecast"]["now_index"] == 0
+    assert window["forecast"]["hours"][0]["time"] == "2026-10-17T23:00"
+    assert window["forecast"]["hours"][-1]["time"] == "2026-10-18T22:00"
+    assert len(window["values"]) == 24
+    for value in window["values"]:
+        scores = base64.b64decode(value["cai_base64"])
+        assert len(scores) > 100000 and max(scores) <= 100
+    edge = client.get(f"/api/cai/edge?id=500&hour=46&scenario=winter_inversion&forecast_id={window['id']}").json()
+    assert edge["time"] == window["values"][-1]["time"]
+    assert edge["cai"] == base64.b64decode(window["values"][-1]["cai_base64"])[500]
+    assert client.get("/api/forecast/window?scenario=winter_inversion").json()["id"] == window["id"]
+
+
+def test_refresh_bypasses_cache_and_old_snapshot_remains_consistent(client, monkeypatch):
+    import copy
+    calls = []
+    weather = main.cache._load_fixture("open_meteo_forecast")
+    air = main.cache._load_fixture("open_meteo_air_quality")
+    # Match fixture dates to today, just as offline fallback does.
+    weather["hourly"] = main._rebase(weather["hourly"], main.sofia_now())
+    air["hourly"] = main._rebase(air["hourly"], main.sofia_now())
+    async def fetch_weather():
+        calls.append("weather")
+        return copy.deepcopy(weather)
+    async def fetch_air():
+        calls.append("air")
+        return copy.deepcopy(air)
+    monkeypatch.setattr(main, "fetch_weather", fetch_weather)
+    monkeypatch.setattr(main, "fetch_air_quality", fetch_air)
+    first = client.post("/api/forecast/refresh").json()
+    old_edge = client.get(f"/api/cai/edge?id=500&hour={first['hours'][0]}&forecast_id={first['id']}").json()
+    air["hourly"]["pm2_5"] = [99.0] * len(air["hourly"]["time"])
+    second = client.post("/api/forecast/refresh").json()
+    assert calls == ["weather", "air", "weather", "air"]
+    assert first["id"] != second["id"]
+    assert second["forecast"]["hours"][0]["pm25"] == 99
+    assert first["forecast"]["hours"][0]["pm25"] != 99
+    assert client.get(f"/api/cai/edge?id=500&hour={first['hours'][0]}&forecast_id={first['id']}").json() == old_edge
+
+
+def test_snapshot_validation_and_network_hour(client):
+    assert client.get("/api/cai/edge?id=0&forecast_id=missing").status_code == 409
+    window = client.post("/api/forecast/refresh?scenario=winter_inversion").json()
+    assert client.get(f"/api/cai/edge?id=0&forecast_id={window['id']}").status_code == 409
+    hour = window["hours"][-1]
+    network = client.get(f"/api/network?hour={hour}&scenario=winter_inversion&forecast_id={window['id']}").json()
+    assert network["hour"] == hour
+    assert network["time"] == window["forecast"]["hours"][-1]["time"]
+
+
+def test_route_preload_does_not_call_google(client, monkeypatch):
+    from backend import google_routes as gr
+    monkeypatch.setenv("GOOGLE_ROUTES_SERVER_KEY", "x")
+    async def forbidden(*args, **kwargs):
+        pytest.fail("Preloading must not make billed Google requests")
+    monkeypatch.setattr(gr, "walk", forbidden)
+    window = client.post("/api/forecast/refresh?scenario=winter_inversion").json()
+    response = client.get(f"/api/route?from=42.6934,23.3331&to=42.7120,23.3230&scenario=winter_inversion&include_google=false&forecast_id={window['id']}")
+    assert response.status_code == 200
+    assert response.json()["google_available"] is True
+    assert response.json()["routes"]["cleanest"]["polyline"]
+
+
+def test_expiring_upstream_cache_keeps_stale_fallback(tmp_path):
+    import asyncio
+    cache = Cache(fixture_dir=tmp_path)
+    async def good():
+        return {"saved": True}
+    async def check():
+        assert (await cache.get("weather", good))[1] == "live"
+        cache.expire(("weather",))
+        value, source = await cache.get("weather", _boom)
+        assert value == {"saved": True} and source == "stale"
+    asyncio.run(check())

@@ -58,17 +58,28 @@ street CAI and selection, citizen/reference sensors, walking/cycling routes, are
 Leaflet is connected through the [deck.gl Leaflet adapter](https://visgl.github.io/deck.gl-community/docs/modules/leaflet/api-reference/deck-overlay).
 Optional Google Places search remains available with a browser key regardless of the selected map.
 
+The forecast slider covers **24 hourly slots starting with the current Sofia hour**, including tomorrow when needed.
+Street colours are loaded together in one compact forecast snapshot. Opening the route planner or network view
+preloads all 24 hours for its current settings; progress appears below the slider. Once it says **24 hours ready**,
+scrubbing uses memory without fetching each hour. Changing endpoints, travel mode or route preference prepares
+a new set; recent sets are reused when switching tabs. Heat is a static summer layer and is loaded once per mode.
+
+**Refresh forecast** fetches weather, air quality and sensors again, bypasses the upstream cache, and rebuilds
+the full window. The selected time is kept if it remains in the new window. A failed refresh keeps the previous
+forecast; upstream outages are still labelled as stale/saved data. Automatic checks continue every five minutes.
+Google route enrichment, when configured, runs only for the selected hour, not for every background preload.
+
 Map interaction regression tests live in `frontend/tests`: from `frontend/`, run `npm ci`,
 `npx playwright install chromium`, then `npm run test:maps`. They cover both Leaflet and MapLibre
 with deterministic API responses and tiles, including street picking, route endpoints, heat/area tooltips,
-animated flows, camera alignment and renderer switching. To use an installed Chrome instead,
+animated flows, camera alignment, renderer switching, 24-hour playback without requests and refresh failure/races. To use an installed Chrome instead,
 set `PLAYWRIGHT_CHANNEL=chrome` before running the tests.
 
 ## Screens
 
 | Screen | What it shows | Plan measure it supports |
 |---|---|---|
-| **Clean Air map** | Street-level CAI, 48 h slider, citizen sensors, "Why is this red?" breakdown, honest validation card, stagnation-score timeline | A.3.4 early warning, A.3.3 self-cleaning potential of the air |
+| **Clean Air map** | Street-level CAI, preloaded 24 h slider, citizen sensors, "Why is this red?" breakdown, honest validation card, stagnation-score timeline | A.3.4 early warning, A.3.3 self-cleaning potential of the air |
 | **Route planner** | Fastest / balanced / cleanest walk, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
 | **Clean-air network** | 400 seeded random walks: clean-route usage (width) coloured by CAI, flow pulses along clean corridors, ranked **chokepoints** with suggested measures | A.4.3, A.4.4, A.4.7, C.1.1 |
 | **For me** | Profile cards (driver / wood or coal heater / vulnerable), zone lookup, C.3.2 eligibility wizard (anonymous lead) | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
@@ -155,6 +166,13 @@ GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when ch
 `/api/forecast` `/api/sensors` `/api/districts` `/api/advice` `/api/leads` `/api/dashboard` (v1) ·
 `/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
 `/api/route?from=lat,lng&to=lat,lng&lambda=&hour=` `/api/network?hour=` `/api/validation` `/api/reference`. All accept `scenario=winter_inversion`.
+
+`GET /api/forecast/window` returns the current 24-hour display forecast, original hour indices, sensor snapshot,
+and base64-encoded uint8 street CAI arrays (one byte per segment per hour). `POST /api/forecast/refresh` rebuilds
+it after expiring upstream data. Pass its `id` as `forecast_id` to edge, area, route and network requests to keep
+all results on that same forecast even across refresh or midnight. Unknown/evicted IDs return 409 and require
+refreshing. Four snapshots and 48 hourly networks are retained in memory. The legacy `/api/forecast` still
+returns the full upstream series, used internally for daily validation and existing API clients.
 
 ## Honest caveats
 

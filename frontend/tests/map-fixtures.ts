@@ -12,7 +12,19 @@ const choke = { rank: 1, street: "Demo Junction", street_bg: "Демо", distric
   max_fast_usage: 20, mean_cai: 40, length_m: 100, lon: 23.34, lat: 42.705,
   segments: [[[23.335, 42.705], [23.345, 42.705]]], measures: [{ id: "A.4.7", label: "Street washing", why: "Demo measure" }] };
 
+export function forecastWindow(scenario: string | null = null, revision = 0, start = 12) {
+  const indices = Array.from({ length: 24 }, (_, i) => start + i);
+  return {
+    id: `test-${scenario ?? "live"}-${revision}`,
+    forecast: { scenario, source: scenario ? "scenario" : "fixture", sources: {}, generated_at: hours[start].time, now_index: 0, alert, best_window: null, hours: hours.slice(start, start + 24), note: "Test forecast" },
+    hours: indices,
+    values: indices.map((hour) => ({ hour, time: hours[hour].time, scenario, cai_base64: Buffer.from([80 - hour]).toString("base64"), background: 12 + hour + revision * 10, bias: 1, heat_weight: 0, stagnation: 30 })),
+    sensors: { scenario, simulated: !!scenario, source: "fixture", count: 1, median_pm25: 12, label: "Test sensors", sensors: [{ id: 1, lat: 42.70, lon: 23.31, pm25: 12, pm10: 20, district: "Sredets" }] },
+  };
+}
+
 export async function mockMapApi(page: Page) {
+  let revision = 0;
   // Deterministic tiles: browser tests require neither an OSM connection nor API keys.
   await page.route("https://tile.openstreetmap.org/**", (route) => route.fulfill({
     contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAACv0lEQVR4nO3TMQ0AMAzAsPLn2mMMBqNHLBlAnsy+haw5L4BDBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxA2gcjvSnmKuFl2AAAAABJRU5ErkJggg==", "base64"),
@@ -24,6 +36,8 @@ export async function mockMapApi(page: Page) {
     const mode = url.searchParams.get("mode") ?? "walk";
     let data: unknown;
     switch (url.pathname) {
+      case "/api/forecast/window": data = forecastWindow(scenario, revision); break;
+      case "/api/forecast/refresh": data = forecastWindow(scenario, ++revision); break;
       case "/api/forecast": data = { scenario, source: scenario ? "scenario" : "fixture", sources: {}, generated_at: time, now_index: 12, alert, best_window: null, hours, note: "Test forecast" }; break;
       case "/api/districts": data = { type: "FeatureCollection", features: [], meta: {} }; break;
       case "/api/sensors": data = { scenario, simulated: !!scenario, source: "fixture", count: 1, median_pm25: 12, label: "Test sensors", sensors: [{ id: 1, lat: 42.70, lon: 23.31, pm25: 12, pm10: 20, district: "Sredets" }] }; break;

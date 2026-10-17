@@ -1,8 +1,10 @@
 """CAI, routing, network and validation endpoints (PLAN2). Mounted by backend.main."""
 import asyncio
+import base64
 import logging
 import struct
 import time
+import uuid
 from typing import Literal
 
 import numpy as np
@@ -26,13 +28,16 @@ CLASS_CODE = {"major": 0, "collector": 1, "local": 2, "path": 3}
 Mode = Literal["walk", "bike"]
 
 
-def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, build_sensors_24h=None, district_at=None) -> APIRouter:
+def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, build_sensors_24h=None, district_at=None,
+                refresh_sources=None, now=None) -> APIRouter:
     r = APIRouter()
     district_at = district_at or (lambda lon, lat: None)
     static: dict = {}
     models: dict[tuple, tuple[float, dict, CaiModel]] = {}
     networks: dict[tuple, dict] = {}
+    snapshots: dict[str, dict] = {}
     locks = {"static": asyncio.Lock(), "model": asyncio.Lock(), "network": asyncio.Lock()}
+    snapshot_lock = asyncio.Lock()
 
     async def get_static(mode: str = "walk") -> tuple[Net, Features, Router]:
         if mode == "bike" and not has_mode("bike"):
@@ -46,9 +51,17 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
                 static[("namer", mode)] = await asyncio.to_thread(Namer, static[("v", mode)][0], district_at)
         return static[("v", mode)]
 
-    async def get_model(scenario: str | None, mode: str = "walk") -> tuple[CaiModel, dict, Router, Net]:
+    async def get_model(scenario: str | None, mode: str = "walk", forecast_id: str | None = None) -> tuple[CaiModel, dict, Router, Net]:
         net, feats, router = await get_static(mode)
         async with locks["model"]:
+            if forecast_id:
+                snapshot = snapshots.get(forecast_id)
+                if not snapshot or snapshot["forecast"]["scenario"] != scenario:
+                    raise HTTPException(409, "Forecast snapshot expired. Refresh the 24-hour forecast.")
+                if mode not in snapshot["models"]:
+                    fc, sens = snapshot["forecast"], snapshot["sensors"]
+                    snapshot["models"][mode] = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens["sensors"])
+                return snapshot["models"][mode], snapshot["forecast"], router, net
             hit = models.get((scenario, mode))
             if hit and time.time() - hit[0] < MODEL_TTL:
                 return hit[2], hit[1], router, net
@@ -56,12 +69,62 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
             sens = await build_sensors(scenario)
             model = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens["sensors"])
             models[(scenario, mode)] = (time.time(), fc, model)
-            networks.clear() if len(networks) > 12 else None
             return model, fc, router, net
 
     def hour_of(h: int | None, fc: dict) -> int:
         n = len(fc["hours"])
         return fc["now_index"] if h is None else max(0, min(int(h), n - 1))
+
+    async def forecast_window(sc: str | None, refresh: bool = False):
+        # Publish a complete immutable snapshot. A failed refresh leaves existing
+        # snapshots usable, including routes that are still being preloaded.
+        async with snapshot_lock:
+            clock_hour = now().strftime("%Y-%m-%dT%H:00") if now else None
+            if not refresh:
+                for snapshot in reversed(list(snapshots.values())):
+                    payload = snapshot["payload"]
+                    if (payload["forecast"]["scenario"] == sc and time.time() - snapshot["created"] < MODEL_TTL
+                            and (clock_hour is None or payload["forecast"]["hours"][0]["time"] == clock_hour)):
+                        return payload
+            elif refresh_sources:
+                refresh_sources()
+            fc, sens = await asyncio.gather(build_forecast(sc), build_sensors(sc))
+            start = fc["now_index"]
+            indices = list(range(start, start + 24))
+            if len(fc["hours"]) < start + 24 or (clock_hour and fc["hours"][start]["time"] != clock_hour):
+                raise HTTPException(503, "A complete forecast for the next 24 hours is unavailable. Try refreshing again.")
+            net, feats, _ = await get_static()
+
+            def prepare():
+                model = CaiModel(net, feats, fc["hours"], start, sens["sensors"])
+                values = []
+                for i in indices:
+                    h = model.hour(i)
+                    values.append({"hour": i, "time": h["ctx"].time, "scenario": sc,
+                                   "cai_base64": base64.b64encode(h["cai"][net.und_rep].tobytes()).decode("ascii"),
+                                   "background": round(h["B"], 1), "bias": round(model.bias, 2),
+                                   "heat_weight": round(h["ctx"].g, 2), "stagnation": round(h["ctx"].stagnation, 1)})
+                return model, values
+
+            model, values = await asyncio.to_thread(prepare)
+            ident = uuid.uuid4().hex
+            payload = {"id": ident, "forecast": {**fc, "hours": fc["hours"][start:start + 24], "now_index": 0},
+                       "hours": indices, "values": values, "sensors": sens}
+            snapshots[ident] = {"created": time.time(), "forecast": fc, "sensors": sens, "models": {"walk": model}, "payload": payload}
+            # Bound memory while allowing an old tab/refresh to finish safely.
+            while len(snapshots) > 4:
+                snapshots.pop(next(iter(snapshots)))
+            if refresh:
+                models.clear()
+            return payload
+
+    @r.get("/api/forecast/window")
+    async def get_forecast_window(scenario: str | None = scenario_query):
+        return await forecast_window(parse_scenario(scenario))
+
+    @r.post("/api/forecast/refresh")
+    async def refresh_forecast_window(scenario: str | None = scenario_query):
+        return await forecast_window(parse_scenario(scenario), refresh=True)
 
     # ---------------------------------------------------------------------------------------
     @r.get("/api/cai/geometry")
@@ -91,8 +154,8 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         }
 
     @r.get("/api/cai/edge")
-    async def edge(id: int, hour: int | None = None, scenario: str | None = scenario_query):
-        model, fc, _, net = await get_model(parse_scenario(scenario))
+    async def edge(id: int, hour: int | None = None, scenario: str | None = scenario_query, forecast_id: str | None = None):
+        model, fc, _, net = await get_model(parse_scenario(scenario), forecast_id=forecast_id)
         if not 0 <= id < len(net.und_rep):
             raise HTTPException(404, "unknown segment")
         e = int(net.und_rep[id])
@@ -146,11 +209,11 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
     # ---------------------------------------------------------------------------------------
     @r.get("/api/cai/areas")
     async def areas(hour: int | None = None, mode: Mode = "walk", metric: Literal["air", "heat"] = "air",
-                    cell: int = Query(int(C.AREA_CELL_M), ge=100, le=1000), scenario: str | None = scenario_query):
+                    cell: int = Query(int(C.AREA_CELL_M), ge=100, le=1000), scenario: str | None = scenario_query, forecast_id: str | None = None):
         """Area cells (square, `cell` m) with the length-weighted mean of the streets inside.
         metric=air: Clean Air Index (and modelled PM2.5) for the hour. metric=heat: Landsat surface temperature (summer snapshot)."""
         sc = parse_scenario(scenario)
-        model, fc, _, net = await get_model(sc, mode)
+        model, fc, _, net = await get_model(sc, mode, forecast_id)
         i = hour_of(hour, fc)
         h = model.hour(i)
         feats = model.feats
@@ -189,9 +252,10 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
     async def route(
         from_: str = Query(alias="from"), to: str = Query(...), lam: float | None = Query(None, alias="lambda", ge=0, le=3),
         hour: int | None = None, mode: Mode = "walk", scenario: str | None = scenario_query,
+        forecast_id: str | None = None, include_google: bool = True,
     ):
         o, d = _pt(from_, "from"), _pt(to, "to")
-        model, fc, router, net = await get_model(parse_scenario(scenario), mode)
+        model, fc, router, net = await get_model(parse_scenario(scenario), mode, forecast_id)
         i = hour_of(hour, fc)
         h = model.hour(i)
         try:
@@ -205,6 +269,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
             "from": o, "to": d, "hour": i, "time": h["ctx"].time, "scenario": parse_scenario(scenario), "mode": mode,
             "from_label": static[("namer", mode)].point(*o), "to_label": static[("namer", mode)].point(*d),
             "routes": routes, "google_status": "no_key", "google_baseline": None,
+            "google_available": mode == "walk" and google_routes.enabled(),
             "snapped": {"used": False, "polyline": clean, "eta_min": None, "waypoints": []},
             "open_in_google_maps": google_routes.maps_url(o, d),
             "note": "Indicative: modelled PM2.5; " + ("cycling at 15 km/h with an assumed 2x breathing rate" if mode == "bike" else "walking at 4.8 km/h") + "; routes follow OpenStreetMap data.",
@@ -215,7 +280,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         out["open_in_google_maps_clean"] = google_routes.maps_url(o, d, wp_latlng)
         if mode == "bike":
             out["google_status"] = "n/a"  # Routes API cycling is a higher billing tier: not used
-        elif google_routes.enabled():
+        elif include_google and google_routes.enabled():
             base = await google_routes.walk(o, d)
             if base:
                 try:
@@ -237,28 +302,31 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
 
     # ---------------------------------------------------------------------------------------
     @r.get("/api/network")
-    async def network(hour: int | None = None, mode: Mode = "walk", scenario: str | None = scenario_query):
+    async def network(hour: int | None = None, mode: Mode = "walk", scenario: str | None = scenario_query, forecast_id: str | None = None):
         sc = parse_scenario(scenario)
-        model, fc, router, net = await get_model(sc, mode)
+        model, fc, router, net = await get_model(sc, mode, forecast_id)
         i = hour_of(hour, fc)
-        key = (sc, i, mode)
+        key = (model, i, mode)
         async with locks["network"]:
             if key not in networks:
                 h = model.hour(i)
                 feats = static[("v", mode)][1]
                 networks[key] = await asyncio.to_thread(compute_network, net, router, h["cr"], h["pm"], h["cai"], feats)
-        if "named" not in networks[key]:
+            cached = networks[key]
+            while len(networks) > 48:
+                networks.pop(next(iter(networks)))
+        if "named" not in cached:
             kept = []
-            for c in networks[key]["chokepoints"]:  # Latin name for the UI, Cyrillic kept, plus the district
+            for c in cached["chokepoints"]:  # Latin name for the UI, Cyrillic kept, plus the district
                 c["street_bg"], c["street"] = c["street"], translit(c["street"])
                 c["district"] = district_at(c["lon"], c["lat"])
                 if c["district"]:  # the walkable bbox spills into neighbouring municipalities Sofia cannot act on
                     kept.append(c)
-            networks[key]["chokepoints"] = kept[: C.CHOKEPOINT_TOP]
-            for i, c in enumerate(networks[key]["chokepoints"], start=1):
-                c["rank"] = i
-            networks[key]["named"] = True
-        out = dict(networks[key])
+            cached["chokepoints"] = kept[: C.CHOKEPOINT_TOP]
+            for rank, c in enumerate(cached["chokepoints"], start=1):
+                c["rank"] = rank
+            cached["named"] = True
+        out = dict(cached)
         out.update({"hour": i, "time": model.ctxs[i].time, "scenario": sc, "mode": mode})
         return out
 

@@ -43,7 +43,7 @@ export default function Timeline({ fc, hourIndex, onPick }: Props) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <figure>
-        <figcaption className="mb-1 text-sm font-semibold">Stagnation score, next 48 h <span className="faint font-normal">(0–100, higher traps more pollution)</span></figcaption>
+        <figcaption className="mb-1 text-sm font-semibold">Stagnation score, next 24 h <span className="faint font-normal">(0–100, higher traps more pollution)</span></figcaption>
         <div className="h-[190px]" aria-label="Line chart of the hourly stagnation score">
           <ResponsiveContainer>
             <AreaChart data={data} margin={{ top: 6, right: 8, left: -18, bottom: 0 }} onClick={pick}>

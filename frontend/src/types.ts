@@ -17,6 +17,9 @@ export interface Forecast {
   scenario: string | null; source: string; sources: Record<string, string>; generated_at: string;
   now_index: number; alert: Alert; best_window: Window | null; hours: Hour[]; note: string;
 }
+export interface ForecastWindow {
+  id: string; forecast: Forecast; hours: number[]; values: CaiValues[]; sensors: SensorsResp;
+}
 export interface Sensor { id: number; lat: number; lon: number; pm25: number; pm10: number | null; district: string | null }
 export interface SensorsResp {
   scenario: string | null; simulated: boolean; source: string; count: number; median_pm25: number | null;
@@ -52,7 +55,7 @@ export interface Dashboard {
 
 // ---- PLAN2: Clean Air Index, routes, network ------------------------------------------------------
 export interface CaiValues {
-  hour: number; time: string; scenario: string | null; cai: number[]; pm25: number[]; background: number; bias: number;
+  hour: number; time: string; scenario: string | null; cai: ArrayLike<number>; pm25?: number[]; background: number; bias: number;
   heat_weight: number; stagnation: number;
 }
 export interface EdgeExplain {
@@ -67,6 +70,7 @@ export interface RouteStats {
   dose_change_pct: number; time_change_pct?: number; polyline: [number, number][]; steps_m?: number; eta_min?: number; snapped_share?: number;
 }
 export interface RouteResp {
+  google_available?: boolean;
   from: [number, number]; to: [number, number]; from_label: string; to_label: string; hour: number; time: string; scenario: string | null;
   routes: { fastest: RouteStats; balanced: RouteStats; cleanest: RouteStats; chosen?: RouteStats };
   google_status: "ok" | "no_key" | "error" | "n/a"; mode?: Mode; google_baseline: RouteStats | null;
