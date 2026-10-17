@@ -312,3 +312,52 @@ What this says:
 | Quantile coverage within ±5 points | Met in 5-fold, **not met on the future split** (above p90 0.16) |
 
 Additional caveats: P is about the calibrated *sensor* median. Against the EEA station the calibrated median still has a typical error of about 37 % (`sigma_log` 0.37), which is not in P. Hourly value limits are applied to 24 h guideline numbers (screening, not compliance).
+
+## Phase 4: residential heating feature
+
+**Result: it does not enter the model. A close call at one buffer, contradicted by the mechanism check, so it stays a lead.**
+
+### Why this was tried
+Solid-fuel home heating is the main winter source: NIMH (2020, via Breathe Cities) attributes 42 % of Sofia's PM emissions to it, Sofia Municipality (2024, via IEEP 2026) about 80 % of winter exceedances, from roughly 32,000 households. District heating (Toplofikatsia) serves about 70 % of households. Since January 2025 a low-emission heating zone bans wood and coal in parts of nine districts where gas or district heating exists (about 1,660 households, so it changes little at city scale). The model's only street features are traffic and terrain.
+
+### Data: what exists and what was done
+| Option | Status |
+|---|---|
+| (a) NSI 2021 census, dwellings by heating fuel | Not found at a useful level. The public NSI dwellings release has totals for the country and the region (Sofia region 755,889 dwellings), no heating breakdown, and no breakdown below region. **To ask:** NSI (nsi.bg, Census 2021 results; regional office Sofia-city) for the table "dwellings by main heating energy source" by municipality and, if it exists, by district/neighbourhood. I could not send this request. |
+| (b) Toplofikatsia network / service area | No public polygon found. **To ask:** Toplofikatsia Sofia EAD or the Sofia Municipality Directorate for Energy, or Sofiaplan GIS. Not requested. |
+| (c) Low-emission heating zone polygons | A thematic layer exists in the municipality's iSofMap viewer ([GIS-Sofia](https://gis-sofia.bg/en/post/new-in-isofmap-added-low-emission-zones-thematic-map)) under Ordinance of 15.12.2022 (Decision No. 931 of the Metropolitan Municipal Council). No open download or service endpoint is documented, and scraping a commercial viewer is not appropriate. **To ask:** Sofia Municipality / GIS-Sofia for the geometry. Not requested. |
+| (d) OSM proxy | **Built** (`make heating` → `data/lowrise.tif`, `data/buildings.tif`): 123,333 OSM buildings in the box; 77,075 count as house-like (house/detached/semidetached/terrace/bungalow/cabin tag, or ≤ 2 levels, or an untagged residential building with a footprint ≤ 200 m²). Rasterised like the other layers (35 m cells), averaged over 250 / 500 / 1000 m buffers. The district-heating area is **not** subtracted (no public polygon), so this is a ceiling on exposure, not an estimate. |
+
+### Tests (`python -m backend.ml.heating_check`, run on the committed code)
+**1. Sensor level: rank correlation with the persistent sensor offset** (for scale: traffic +0.22, terrain height −0.21):
+
+| feature | 250 m | 500 m | 1000 m |
+|---|---|---|---|
+| low-rise share | −0.00 [−0.12, +0.11] | +0.05 [−0.07, +0.17] | +0.10 [−0.02, +0.21] |
+| same, traffic and terrain taken out | +0.07 | +0.12 | +0.15 |
+| low-rise fraction of built-up area | −0.05 | −0.04 | −0.06 |
+
+Weakly positive, intervals include zero before adjustment, growing with the buffer.
+
+**2. Within-sensor contrast** (winter nights Dec–Feb 22–06 minus summer nights Jun–Aug, per sensor; 242 sensors; the sensor is its own control, so calibration and siting cancel): a heating source should make the contrast larger where low-rise housing is dense. It does not: rank correlation −0.07 / −0.02 / +0.02 for the low-rise share, and **−0.13 to −0.14 (intervals just excluding zero) for the low-rise fraction**; the top-quartile minus bottom-quartile contrast is −0.05 to −0.09 (share) and −0.19 to −0.21 (fraction) log units. The winter-night excess is, if anything, smaller in low-rise areas.
+
+**3. Does the model need it?** Held-out sensors, heating-season hours, within-hour Spearman, sensor-grouped 5-fold, three repeats, street part only:
+
+| street model | all heating-season hours | hours with city level > 15 |
+|---|---|---|
+| traffic + terrain (current) | 0.170 ± 0.005 | 0.192 ± 0.006 |
+| + low-rise share 250 m | 0.165 (−0.005) | 0.193 (+0.001) |
+| + low-rise share 500 m | 0.168 (−0.002) | 0.188 (−0.004) |
+| + low-rise share 1000 m | **0.210 (+0.041)** | **0.229 (+0.037)** |
+| + low-rise fraction 500 m | 0.165 (−0.004) | 0.201 (+0.009) |
+
+Each variant also carries its stagnation interaction (feature × S/100), as the other terms do.
+
+### Acceptance and reading
+The bar was +0.05. The best variant gains **+0.041**: **not met**, so it stays out of the model. Two reasons not to read it as a near-miss to be rescued:
+- it is the best of five variants tried, and only the 1000 m buffer moves at all. A 1 km average of low-rise cover is a smooth, city-scale surface (outskirts and villages versus the built-up centre), which is the same kind of structure the variogram found (range about 12 km) and the sensor-grouped CV can pick up without it being heating;
+- the mechanism test points the wrong way (test 2): heating smoke should show up as a winter-night excess at the sensor itself.
+
+What would settle it: the district-heating polygon (b) or census heating fuel (a). With them the proxy could be restricted to low-rise buildings **outside** the network, which is where the stoves are; as built it also counts low-rise houses on district heating or gas, which dilutes any signal. The construction-site check (above) was also negative, so the street-level model still has only traffic and terrain.
+
+Nothing was added to `features.py` or the model; the rasters are data for the follow-up.

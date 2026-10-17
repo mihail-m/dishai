@@ -1,4 +1,4 @@
-.PHONY: reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: heating reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -46,6 +46,8 @@ construction-activity:
 	$(PY) -m backend.data_prep.construction_activity   # Sentinel-2 bare-soil/NDVI per site -> data/construction_activity.csv (~5 min)
 construction-districts:
 	$(PY) -m backend.data_prep.construction_districts  # share of each district under construction -> public/data
+heating:
+	$(PY) -m backend.data_prep.heating_osm      # OSM low-rise housing share (home-heating proxy) -> data/lowrise.tif, data/buildings.tif
 construction:
 	$(PY) -m backend.data_prep.construction   # OSM construction sites -> data/construction.tif
 dem:
