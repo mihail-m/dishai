@@ -60,6 +60,7 @@ def main() -> int:
     ap.add_argument("--no-local", action="store_true")
     ap.add_argument("--no-coords", action="store_true")
     ap.add_argument("--tag", default="")
+    ap.add_argument("--sensor-frac", type=float, default=1.0, help="learning curve: share of the training sensors the trees may learn from")
     a = ap.parse_args()
     M.LOCAL = not a.no_local
     rng = np.random.default_rng(SEED)
@@ -77,7 +78,8 @@ def main() -> int:
         p.sd_scale = S.fit_sd_scale(d, p, o["offset"], o["post_var"], train_cols, rng)
         tr_hours = S.rng_pick(rng, S.pick_eval_hours(d, train_cols, rng), a.train_hours)
         te_hours = S.pick_eval_hours(d, test_cols, rng)
-        tr = make_rows(w, p, o["offset"], o["post_var"], tr_hours, sensor_fold != k)
+        keep = np.random.default_rng(SEED + k).random(len(d.ids)) < a.sensor_frac
+        tr = make_rows(w, p, o["offset"], o["post_var"], tr_hours, (sensor_fold != k) & keep)
         te = make_rows(w, p, o["offset"], o["post_var"], te_hours, sensor_fold == k)
         out = {}
         for name, r in (("tr", tr), ("te", te)):

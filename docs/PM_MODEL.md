@@ -474,6 +474,21 @@ The standard remedy: keep kriging and let the trees learn what is left over, tra
 
 The local weather grid, the nearby temperature sensors and the GHSL buildings do not improve the held-out prediction; the ML step is slightly worse than kriging alone.
 
+### Is it too little data? A learning curve
+ML on top of kriging, development folds 0 and 1, median error (µg/m³, all hours) of kriging alone vs kriging plus the ML correction, as the trees get more training hours or more training sensors:
+
+| training data | kriging | + ML | change |
+|---|---|---|---|
+| 100 hours | 2.534 | 2.515 | −0.8 % |
+| 400 hours | 2.497 | 2.436 | −2.4 % |
+| 700 hours | 2.494 | 2.441 | −2.1 % |
+| 1,500 hours | 2.494 | 2.441 | −2.1 % |
+| 700 hours, 25 % of the training sensors | 2.494 | 2.534 | +1.6 % (worse) |
+| 700 hours, 50 % of the training sensors | 2.494 | 2.479 | −0.6 % |
+| 700 hours, all training sensors | 2.494 | 2.441 | −2.1 % |
+
+More hours of the same sensors stop helping at about 400. More sensors help steadily (from worse than nothing to a 2 % gain), but even doubling them would plausibly stay in single digits, against the 50 % that knowing each sensor's offset would give (and the gain did not replicate on the held-out folds 2-4). The limit is not the number of rows; it is that each new sensor brings its own unknowable offset.
+
 ### Why: the sensors' offsets are not about the place
 The last column is the key. If the model knew each hidden sensor's persistent offset (its stable deviation from what the trend and the neighbours predict), the error would halve and the ranking would jump from 0.25–0.35 to about 0.8. So about 85 % of the ranking among sensors is that one number per sensor. Is it the air of the place, or the instrument? Offsets of neighbouring sensors are **uncorrelated**:
 
