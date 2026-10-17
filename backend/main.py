@@ -1,5 +1,6 @@
 """Inversion Watch API."""
 import asyncio
+import json
 import logging
 import os
 import statistics
@@ -91,6 +92,10 @@ def _load_districts() -> list[dict]:
 
 
 DISTRICTS = _load_districts()
+try:  # share of each district under OSM construction (python -m backend.data_prep.construction_districts); optional
+    CONSTRUCTION = json.loads((DATA_DIR / "construction_districts.json").read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    CONSTRUCTION = None
 DISTRICT_BY_NAME = {d["name"].lower(): d for d in DISTRICTS}
 LEZ = geo.load_features(DATA_DIR / "lez_illustrative.geojson")
 _point_district: dict[tuple[float, float], str | None] = {}
@@ -559,7 +564,8 @@ async def api_advice(
         },
         "zone": zone,
         "conditions": cond,
-        "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone, cond, toggles),
+        "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone,
+                                           {**cond, "construction": advice_mod.construction_context(CONSTRUCTION, d["name"])}, toggles),
         "grant_note": advice_mod.GRANT_NOTE,
     }
 

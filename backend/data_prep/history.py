@@ -111,10 +111,10 @@ def episode_days(n: int) -> list[date]:
     return sorted({x for d in chosen for x in (d, d + timedelta(days=1))})
 
 
-async def fetch_sensors(days: int, step: int, episodes: int) -> None:
+async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensors") -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    f = OUT / "sensors.csv"
-    done_f = OUT / "days_done.txt"
+    f = OUT / f"{name}.csv"
+    done_f = OUT / (f"{name}_days_done.txt" if name != "sensors" else "days_done.txt")
     done = set(done_f.read_text().split()) if done_f.exists() else set()
     new = not f.exists()
     today = date.today()
@@ -178,12 +178,18 @@ async def main() -> None:
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--step", type=int, default=7)
     ap.add_argument("--episodes", type=int, default=14)
+    ap.add_argument("--name", default="sensors", help="output file stem under data/history (e.g. sensors_pm10 for a separate PM10 pull)")
+    ap.add_argument("--concurrency", type=int, default=CONCURRENCY)
+    ap.add_argument("--no-series", action="store_true", help="skip re-fetching weather/CAMS")
     ap.add_argument("--series-days", type=int, default=800, help="how far back weather/CAMS go (episodes are picked from this)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    await fetch_series(WEATHER, "weather.csv", a.series_days)
-    await fetch_series(CAMS, "cams.csv", a.series_days)
-    await fetch_sensors(a.days, a.step, a.episodes)
+    global CONCURRENCY
+    CONCURRENCY = a.concurrency
+    if not a.no_series:
+        await fetch_series(WEATHER, "weather.csv", a.series_days)
+        await fetch_series(CAMS, "cams.csv", a.series_days)
+    await fetch_sensors(a.days, a.step, a.episodes, a.name)
 
 
 if __name__ == "__main__":

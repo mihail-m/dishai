@@ -112,10 +112,12 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {adv.cards.map((c) => (
               <article key={c.id} className="card flex flex-col p-4" style={c.severity === "action" ? { borderColor: "var(--accent)" } : undefined}>
-                <span className="badge self-start" style={{ background: measureColor[c.measure.id] ?? "var(--accent)", borderColor: "transparent", color: "#fff" }}>
-                  {c.measure.label}
-                </span>
-                <h3 className="mt-2 text-base font-semibold leading-snug">{c.title}</h3>
+                {c.measure && (
+                  <span className="badge self-start" style={{ background: measureColor[c.measure.id] ?? "var(--accent)", borderColor: "transparent", color: "#fff" }}>
+                    {c.measure.label}
+                  </span>
+                )}
+                <h3 className={`${c.measure ? "mt-2 " : ""}text-base font-semibold leading-snug`}>{c.title}</h3>
                 <p className="muted mt-1 text-sm">{c.body}</p>
                 {c.id === "zone_lookup" && (
                   <div className="mt-3 rounded-lg p-2.5 text-sm font-semibold" style={{ background: "var(--surface-2)" }}>

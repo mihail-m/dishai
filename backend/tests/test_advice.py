@@ -150,3 +150,10 @@ def test_demo_scenarios_drive_the_new_cards(client):
         assert fc["scenario"] == sc and len(fc["hours"]) == 48 and not fc["alert"]["active"]
         assert client.get(f"/api/sensors?scenario={sc}").json()["simulated"] is True
     assert client.get("/api/forecast?scenario=nope").status_code == 422
+
+
+def test_construction_card_only_for_sensitive_users_in_busy_districts():
+    data = {"high_from_pct": 1.0, "districts": {"Studentski": {"share_pct": 6.1, "n_sites": 272}, "Bankya": {"share_pct": 0.06, "n_sites": 1}}}
+    assert advice.construction_context(data, "Studentski") == {"share_pct": 6.1, "n_sites": 272}
+    assert advice.construction_context(data, "Bankya") is None and advice.construction_context(None, "Studentski") is None
+    assert advice.construction_context(data, "Unknown") is None

@@ -74,10 +74,28 @@ Rebuild: `make dem history construction train` (history takes about an hour and 
 |---|---|
 | CAMS NO₂, SO₂, CO, O₃ as inputs (from the Bagging-GBDT paper's pollutant list) | no gain: average error 5.13 vs 5.10 without, episode-hour error 12.9 vs 12.7 |
 | Tree canopy, NDVI, surface heat, richer street models | memorised individual sensors, no generalisation |
-| **Buildings under construction** (OSM `landuse`/`building=construction`, 1,842 areas, about 5 km²) | street ranking 0.03; sensors within 150 m of sites read slightly *lower*, not higher (correlation with the sensor offset −0.004, +0.044 after traffic and terrain). Shown as context in "Why is this red?" but not in the score. |
+| **Buildings under construction** (OSM, 1,881 areas, about 5 km²) | no effect on PM2.5 under any cut, see "Construction sites" below. Shown as context in "Why is this red?", not in the score. |
 | Live-sensor PM10/PM2.5 ratio (dust vs smoke) | **not tested**: needs the PM10 history re-download, paused. The downloader already keeps PM10 for when it is re-run. |
 
-The construction layer is coarse: OSM sites have no start or end dates and coverage is incomplete, so a real effect near active sites could be hidden. Sofia's building-permit data with dates would be the better test.
+
+## Construction sites: what we know and how to improve it
+
+**Data.** OSM closed areas tagged `landuse=construction` (1,007) or `building=construction` (873). Median footprint 450 m² (buildings) and 1,700 m² (land). Dating is poor: 39 have a start or opening date, 236 a `check_date` since 2024, so most could be finished or abandoned. No public Sofia permit register was found (see sources below); GIS-Sofia says it supplies cadastral and construction-plan data on request.
+
+**Result** (`python -m backend.ml.construction_check`). No cut shows an effect on PM2.5 at the 261 sensors. Rank correlation with a sensor's persistent offset stays between −0.03 and +0.07 for radius 50–500 m, big or small sites, buildings or land, recently checked sites. It is also flat on workday daytime, dry and windy hours (within-hour +0.03 to +0.05), where dust should be strongest. A within-sensor design (workday vs weekend, same hours, sensor as its own control) gives −1.6% (95% interval −8.5% to +5.9%) near sites. The test could detect about ±0.12 in rank correlation, and traffic and terrain (0.13–0.14) were detectable, so any effect on PM2.5 is smaller than those.
+
+**Why that is plausible.** Construction dust is mostly coarse. One site study estimated 207 kg/yr PM10 against 59.5 kg/yr PM2.5 and modelled hourly means of 112 vs 11 µg/m³ (Čavić et al. 2025); a London study found PM10 limit exceedances next to sites (Azarmi et al. 2016). PM10 is where a signal would show, and it is not in the history yet (only 9 days: PM10/PM2.5 1.81 near sites vs 1.71 elsewhere, and 1.79 vs 1.65 at night, so not specific to working hours).
+
+**What was tried to improve it**
+1. **PM10 instead of PM2.5: not run yet.** The Sensor.Community archive stopped answering from this machine after a fast download (it works for others; the live API is fine). `backend/data_prep/history.py` now runs slowly, writes to its own file (`--name sensors_pm10`), and stops instead of recording empty days. A waiter script restarts it when the archive answers. Then rerun `python -m backend.ml.construction_check` (PM10 pre-specified check below). Only 9 days of PM10 exist today.
+2. **Sentinel-2 activity per site** (`make construction-activity`, 10 m bands inside each footprint, this summer vs last): 1,389 of 1,881 sites scored, 877 bare now, 65 cleared since last year. Sensors near **bare-now** sites: +0.07 to +0.08 rank correlation (interval includes 0). Sensors near **cleared-since** sites: +0.11 to +0.12, but only 9 to 30 sensors, the interval barely excludes 0 at one radius, and the "green now" control scores +0.12 on the same partial measure. Treat as a lead, not a result.
+3. **More OSM tags:** only 2 of 1,881 sites were last checked before 2023, so dropping stale ones changes nothing; weighting by building height (24 sensors near tall sites) gives +0.04.
+4. **Dated permits: skipped.** A public register exists ([nag.sofia.bg](https://nag.sofia.bg/RegisterBuildingPermitsPortal/Index)) but it has no export, no coordinates, and a copyright notice requiring written consent, so it needs an agreement with the municipality.
+5. **Advice note, shipped:** asthma and kids/older-relative users in the busiest third of districts (and at least 10 mapped sites) get a "Many building sites in your district" card. It says dust is mostly coarse and not in the PM2.5 map, and that OSM sites are undated. District shares come from `public/data/construction_districts.json` (`make construction-districts`; Studentski 6.1% and Lozenets 4.1% are highest).
+
+**The one check that would settle it (pre-specified, so it is not another look at many cuts):** on PM10, for sites flagged cleared-since at 300 m, compare workday vs weekend at 9-17 per sensor against sensors with no site within 300 m. If the interval excludes zero on PM10, add a site-activity term to the PM10-aware model.
+
+Sources: [Azarmi et al. 2016, London](https://pubs.rsc.org/en/content/articlehtml/2016/em/c5em00549c) · [Čavić et al. 2025, Serbia](https://acta.bibl.u-szeged.hu/88696/1/proceedings_of_isaep_2025_282-285.pdf) · [Petit et al. 2022, Wallonia (Sentinel-1/2)](https://doaj.org/article/f74a70981b184ab9a7614c9c79528519) · [GIS-Sofia data provision](https://gis-sofia.bg/en/services/cadastre-and-spatial-planning/provision-of-data) · [OSM start_date](https://wiki.openstreetmap.org/wiki/Start_date)
 
 ## Limits to keep in mind
 

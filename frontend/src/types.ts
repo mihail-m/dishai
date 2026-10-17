@@ -36,7 +36,7 @@ export type DistrictsFC = GeoJSON.FeatureCollection<GeoJSON.Geometry, DistrictPr
 };
 export interface Card {
   id: string; title: string; body: string; severity: "info" | "action"; cta?: string;
-  measure: { id: string; label: string };
+  measure: { id: string; label: string } | null;  // null: advice with no Sofia climate-plan measure behind it
 }
 export interface HeatSummary {
   level: "none" | "caution" | "high" | "extreme"; peak_c: number | null; peak_hhmm: string | null;
