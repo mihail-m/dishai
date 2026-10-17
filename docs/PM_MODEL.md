@@ -581,3 +581,38 @@ The Sofia calibration rests on one reference station (13–14 sensors, 91 hours 
 **The high end, which one station could not test.** Reliability by the calibrated value (leave-one-city-out, all cities): when the calibrated reading is above 25 µg/m³ the station reads a median **1.06×** that value (6,942 hours); above 50, **0.95×** (786 hours). A flexible model (gradient boosting) gives 1.03 and 1.04 and 7 % lower error overall (2.96 vs 3.17), but no better on Sofia (3.33), so the simple form stays. The "−8 µg/m³ bias when the station reads > 25" is selection on the outcome (regression to the mean), not a bias given the sensor reading.
 
 **Decision.** No change to the app's calibration: the pooled fit is not better on Sofia (3.31 vs 3.22). What changes is the confidence: the form, the humidity slope and the behaviour above 50 µg/m³ are now backed by 52 stations instead of one, and the earlier caveat that values above ~40 µg/m³ were pure extrapolation is replaced by "checked against other cities". Caveats: 34 of the 52 stations are German, whose aerosol differs from Sofia's winter smoke; the Sofia heating-season term is untested outside Sofia; the pooled test uses 2026 only.
+
+
+## Is Sofia representative? The local model in six other cities (`python -m backend.ml.transfer_eval`)
+
+A fair worry: the conclusions might hold for Sofia's sensors and not in general. So every city took a turn as the hidden test city. Data: whole outdoor Sensor.Community networks of Sofia, Berlin (172 sensors), Cologne (139), Stuttgart (129), Budapest (45), Plovdiv (29) and Skopje (26), the same 87 sample days of 2026 (`backend/data_prep/city_networks.py`), raw sensor scale. The model is the weather-free local model of the pooled-era test: a kriged backbone per city (its own offsets and variogram), plus trees on **city-agnostic place features only** (height above the surrounding 3 km, GHSL building height / volume / population at 150, 400, 1000 m) and the neighbours' residuals; **no coordinates, no city identifier**. In each test city, sensors and weeks are both held out; the trees are trained on the other six cities (O), on the city's own training rows (A) or on both (C).
+
+**How the sensors behave (identical procedure in every city):**
+
+| | Sofia | Berlin | Cologne | Stuttgart | Budapest | Plovdiv | Skopje |
+|---|---|---|---|---|---|---|---|
+| sensors | 261 | 172 | 139 | 129 | 45 | 29 | 26 |
+| SD of the persistent offset (log1p) | 0.57 | 0.68 | 0.40 | 0.63 | 0.56 | 0.84 | 0.59 |
+| correlation of a sensor's offset with its nearest neighbour's (< 400 m; pairs) | +0.17 (159) | +0.15 (39) | +0.09 (39) | −0.24 (48) | +0.36 (14) | −0.48 (10) | – (4) |
+
+Offsets are as large and as unrelated to their neighbours' elsewhere as in Sofia (a pooled value of about +0.1, noisy for the small networks). **The finding that most of what separates one sensor from another is sensor-specific is not a Sofia peculiarity.**
+
+**Hidden-sensor skill of the kriging backbone differs a lot by city, and Sofia is the best, not the worst case.** Within-hour Spearman, all hours: Sofia 0.20, Budapest 0.16, Cologne 0.13, Skopje 0.10, Stuttgart 0.05, Plovdiv 0.05, Berlin 0.02 (and −0.17 for Berlin's polluted winter hours): in Berlin and Stuttgart, with 130–170 sensors, neighbours say almost nothing about a hidden sensor's rank. So Sofia's sensors are, if anything, more informative about each other than a typical city's.
+
+**Do trees trained on other cities help?** Median error change versus kriging alone, all hours (negative = better); within-hour ranking in brackets (kriging → with trees):
+
+| test city | kriging error | own trees (A) | other cities (O) | both (C) |
+|---|---|---|---|---|
+| Sofia | 1.875 | +0.6 % | −0.3 % | **−1.5 %** (0.199 → 0.203) |
+| Berlin | 1.284 | −0.4 % | −2.1 % | −2.1 % |
+| Cologne | 0.966 | +2.8 % | +1.2 % | +0.1 % |
+| Stuttgart | 1.128 | −0.9 % | −2.7 % | −1.6 % |
+| Budapest | 1.256 | +1.4 % | −2.5 % | **−3.3 %** |
+| Plovdiv | 1.160 | −4.7 % | **−5.6 %** | −5.1 % |
+| Skopje | 2.219 | +3.9 % | −2.7 % | −0.7 % |
+
+Training on other cities' sensors lowers the error in 6 of 7 cities (mean −2.1 %), and "both" in 6 of 7 (mean −2.0 %), against the city's own rows alone, which help in 3 of 7. Pooling across cities is therefore the better way to train the local model: the gain is small but consistent, and it comes with no city-specific input. The ranking is not reliably improved (changes of −0.07 to +0.2, no pattern; the small networks have too few close pairs and test sensors for it to be measured). In Sofia's polluted winter hours nothing beats kriging (7.86 → 7.86 own, 8.47 other cities, 7.93 both).
+
+**Reading.** The local model's ceiling is set by the sensors, not by Sofia or the amount of data: more cities lower the error by a couple of percent in most places, while knowing each sensor's own offset would halve it. What would change this is what the earlier sections already point to: separating the instrument from the place (co-located reference or duplicate sensors, or sensor metadata).
+
+Caveats: only the raw scale is tested (no calibration, no terrain trend); the place features are the few that exist for every city (height above surroundings, GHSL), without canopy, surface heat or OSM layers; German cities are over-represented; the small cities' ranking metrics are noisy; each network is today's sensor population (pulled from the live list), observed on the same 87 sample days.

@@ -22,18 +22,18 @@ BOX = (42.60, 42.80, 23.15, 23.55)
 
 
 class Era:
-    def __init__(self, name: str, df: pd.DataFrame):
-        """df: sensor, lat, lon, t (hour, naive), pm25 (raw)."""
+    def __init__(self, name: str, df: pd.DataFrame, box=BOX, xy_fn=None, min_present: int = MIN_PRESENT):
+        """df: sensor, lat, lon, t (hour, naive), pm25 (raw). box = (south, north, west, east); xy_fn(lon, lat) -> metres (default: the Sofia projection)."""
         self.name = name
-        df = df[df.lat.between(BOX[0], BOX[1]) & df.lon.between(BOX[2], BOX[3]) & df.pm25.between(0, 500)]
+        df = df[df.lat.between(box[0], box[1]) & df.lon.between(box[2], box[3]) & df.pm25.between(0, 500)]
         loc = df.groupby("sensor")[["lat", "lon"]].median()
         self.ids = loc.index.to_numpy()
-        self.xy = np.column_stack(to_xy(loc.lon.to_numpy(), loc.lat.to_numpy()))
+        self.xy = np.column_stack((xy_fn or to_xy)(loc.lon.to_numpy(), loc.lat.to_numpy()))
         times = pd.DatetimeIndex(sorted(df.t.unique()))
         si, ti = pd.Series(np.arange(len(self.ids)), index=self.ids), pd.Series(np.arange(len(times)), index=times)
         U = np.full((len(self.ids), len(times)), np.nan)
         U[si.reindex(df.sensor).to_numpy(), ti.reindex(df.t).to_numpy()] = np.log1p(df.pm25.to_numpy())
-        keep = np.isfinite(U).sum(0) >= MIN_PRESENT
+        keep = np.isfinite(U).sum(0) >= min_present
         self.U, self.times = U[:, keep], times[keep]
         self.L = np.nanmedian(self.U, axis=0)
         self.E0 = self.U - self.L[None, :]
