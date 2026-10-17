@@ -15,6 +15,11 @@ USE_ML = True
 # (the network tab runs one 400-route computation per hour), so this trades reach against load time.
 WINDOW_HOURS = 48
 
+# How the live sensors correct the learned model street by street: "krige" = regression kriging in log space with per-sensor offsets
+# removed and an uncertainty per street (backend/cai/krige.py, data/spatial.joblib); "idw" = the older inverse-distance mean of the
+# raw residuals, kept for comparison and as the fallback when the spatial file is missing.
+SPATIAL_METHOD = "krige"
+
 # --- 1. regional level: CAMS bias-corrected by live sensors, then IDW residual ---------------------
 BIAS_MIN, BIAS_MAX = 0.5, 2.0
 CAMS_FLOOR = 2.0  # ug/m3; avoid dividing by a near-zero model value
@@ -51,6 +56,15 @@ TRAFFIC_GRID_M = 25.0
 RUSH = [0.4, 0.4, 0.4, 0.4, 0.45, 0.6, 0.8, 1.0, 1.0, 1.0, 0.8, 0.7,
         0.7, 0.7, 0.75, 0.85, 0.95, 1.0, 1.0, 1.0, 0.8, 0.65, 0.5, 0.4]
 WEEKEND_FACTOR = 0.75
+# The two curves above are only the fallback. With GOOGLE_ROUTES_SERVER_KEY set, backend/traffic.py measures the hour-of-week
+# shape from Google travel times; the quietest hour of the week then maps to RUSH_FLOOR (an assumption: share of peak traffic
+# volume at the quietest hour) and the busiest to 1.0.
+RUSH_FLOOR = 0.4
+# Live traffic scales the street's traffic term by (live / typical travel-time index) of the nearest arterial corridor, clipped,
+# and the effect fades over the forecast hours.
+LIVE_MULT_MIN, LIVE_MULT_MAX = 0.7, 1.8
+LIVE_FADE_H = 2.0
+LIVE_REACH_M = 800.0  # distance over which a corridor's live reading carries to streets next to it
 
 # --- 3. ventilation amplifier from the v1 stagnation score S (0..100) ----------------------------------
 VENT_GAIN = 1.0  # A(t) = 1 + VENT_GAIN * S / 100

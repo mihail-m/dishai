@@ -19,7 +19,9 @@ from scipy.spatial import cKDTree
 from . import config as C
 from .features import Features
 from .graph import Net, to_xy
+from ..ml import calibration as calibration_mod
 from ..ml.pm_model import MAX_LEAD_H, STATIC_COLS, PmModel, hour_vector, now_vector, static_matrix
+from . import krige
 
 
 def rush_factor(hour: int, weekend: bool) -> float:
@@ -112,6 +114,13 @@ def predict_pm(T, G, ctx: HourCtx, B: float, R) -> np.ndarray:
     return B + R + C.TRAFFIC_GAIN * T * ctx.rush * ctx.amp * shield(G)
 
 
+def ctx_month(time: str) -> int | None:
+    try:
+        return int(time[5:7])
+    except (ValueError, TypeError):
+        return None
+
+
 class CaiModel:
     """Everything needed to score any edge for any forecast hour, from one sensor snapshot."""
 
@@ -120,6 +129,8 @@ class CaiModel:
         self.hours = hours
         self.ml: PmModel | None = (PmModel.load() if C.USE_ML else None) if ml is True else (ml or None)
         self.static = static_matrix(feats) if self.ml else None
+        self.spatial = self._spatial_params() if self.ml and C.SPATIAL_METHOD == "krige" else None
+        self.kappa = self.kvar = None  # kriged log1p residual and its field variance per directed edge (krige path)
         self.ctxs = hour_contexts(hours)
         self.now_idx = now_idx
         self.sensors = sensors
@@ -141,12 +152,38 @@ class CaiModel:
                 base = np.full(len(sensors), self.B_now, dtype="float32")
                 if C.RESIDUAL_AGAINST == "model":
                     base = predict_pm(sf["T"], sf["G"], now, self.B_now, 0.0)
-            self.resid = (pm - base).astype("float32")
-            self.R_now = idw_residual(net.mid_xy, self.sens_xy, self.resid)
+            if self.spatial:
+                self._krige(sensors, pm, base)
+                self.R_now = np.zeros(net.n_edges, dtype="float32")
+            else:
+                self.resid = (pm - base).astype("float32")
+                self.R_now = idw_residual(net.mid_xy, self.sens_xy, self.resid)
         else:
             self.R_now = np.zeros(net.n_edges, dtype="float32")
+            if self.spatial:
+                self.kappa, self.kvar = np.zeros(net.n_edges, "float32"), np.full(net.n_edges, self.spatial.psill, "float32")
         if self.ml:
             self.B_now = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], now_idx)))
+
+    @staticmethod
+    def _spatial_params() -> "krige.SpatialParams | None":
+        """The fitted spatial file, if it was made against the calibration now in use (offsets are calibration-dependent)."""
+        p = krige.get_params()
+        cal = calibration_mod.get("pm25")
+        if p is None or (cal is not None and p.meta.get("calibration_coef") not in (None, cal.coef)):
+            return None
+        return p
+
+    def _krige(self, sensors: list[dict], pm: np.ndarray, base: np.ndarray) -> None:
+        """Kriging weights for every undirected street segment (once per sensor snapshot), then the residual field at the snapshot hour.
+        Sensors' persistent offsets are removed; those without history count as offset 0 with the full offset variance as noise."""
+        p, net = self.spatial, self.net
+        ids = [s.get("id") for s in sensors]
+        e = np.log1p(pm) - np.log1p(base.astype(float)) - krige.sensor_offsets(ids, p)
+        rep = net.und_rep
+        W, kv = krige.kriging_weights(net.mid_xy[rep], self.sens_xy, krige.sensor_noise(ids, p), p)
+        self.kappa = (W @ e)[net.e_und].astype("float32")
+        self.kvar = kv[net.e_und].astype("float32")
 
     def _ml_pm(self, static: np.ndarray, i: int) -> np.ndarray:
         """ML prediction for the given static-feature rows at forecast hour i; lead = hours ahead of the live snapshot."""
@@ -163,7 +200,11 @@ class CaiModel:
         return self.sensor_median if self.sensor_median is not None else 10.0
 
     def R(self, i: int) -> np.ndarray:
-        """Sensor residual persists, scaled with the background level (sensor error scales with level)."""
+        """Local correction in ug/m3 (street value minus the trend). IDW path: the sensor residual persists, scaled with the background
+        level. Kriging path: derived from the hour's field (kriged log residual x its persistence at this lead)."""
+        if self.spatial:
+            h = self.hour(i)
+            return (h["pm"] - h["base"]).astype("float32")
         if self.ml:
             bg = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
         else:
@@ -176,7 +217,15 @@ class CaiModel:
         if i in self._cache:
             return self._cache[i]
         ctx, f = self.ctxs[i], self.feats
-        if self.ml:
+        extra = {}
+        if self.spatial:
+            B = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
+            base = self._ml_pm(self.static, i)
+            rho = self.spatial.rho_at(max(0, i - self.now_idx))
+            pm = np.maximum(np.expm1(np.log1p(base) + rho * self.kappa), 0.0).astype("float32")
+            # spatial part of the uncertainty (log1p units); the city-level part is added where the level is known (alert, API)
+            extra = {"base": base, "rho": rho, "sd_u": krige.prediction_sd(self.kvar, self.spatial, rho, ctx_month(ctx.time)).astype("float32")}
+        elif self.ml:
             B = float(np.median(self._ml_pm(self.static[:: max(1, len(self.static) // 5000)], i)))
             pm = np.maximum(self._ml_pm(self.static, i) + self.R(i), 0.0).astype("float32")
         else:
@@ -188,7 +237,7 @@ class CaiModel:
         # Routing burden is relative to the spatial spread of PM (see route_burden), so a clean, flat day still has a
         # cleanest route and a heavy episode does not flatten every street to the same cost.
         cr = ((1 - ctx.g) * route_burden(pm) + ctx.g * f.H).astype("float32")
-        out = {"pm": pm, "cai": cai, "cb": cb, "cr": cr, "B": B, "ctx": ctx}
+        out = {"pm": pm, "cai": cai, "cb": cb, "cr": cr, "B": B, "ctx": ctx, **extra}
         if len(self._cache) > 12:
             self._cache.pop(next(iter(self._cache)))
         self._cache[i] = out
@@ -245,5 +294,6 @@ class CaiModel:
             "heat_points": int(h["cai"][e]) - cai_air,
             "cai_air_only": cai_air,
             "model": "ml" if self.ml else "physics",
+            "spatial": "krige" if self.spatial else "idw",
             "note": "Learned from citizen-sensor history; indicative." if self.ml else "Indicative screening model with assumed weights.",
         }

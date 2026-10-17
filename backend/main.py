@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import statistics
 from collections import Counter, defaultdict
@@ -22,6 +23,7 @@ from . import alert as alert_mod
 from . import geo, sensors as sensors_mod, waqi
 from .cache import Cache
 from .cai import config as C
+from .cai import krige as krige_mod
 from .ml import calibration as calibration_mod
 from .scenario import HOURLY as SCENARIO_HOURLY, scenario_pm25
 from .score import clamp, label_for, stagnation_score
@@ -390,6 +392,17 @@ def calibrate_records(recs: list[dict], cond: dict) -> tuple[list[dict], dict]:
     return [{**r, "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10"), "pm25": round(float(a), 1), "pm10": b} for r, a, b in zip(recs, pm25, p10)], info
 
 
+def sensor_offset(r: dict) -> dict:
+    """At a sensor's own location both numbers are shown: its reading (`pm25`) and the reading with its persistent offset removed
+    (`pm25_adjusted`, what the street map extrapolates to other places). The offset mixes calibration error and real local pollution."""
+    p = krige_mod.get_params()
+    off = p.offsets.get(r["id"]) if p else None
+    if off is None:
+        return {"offset_known": False, "pm25_adjusted": r["pm25"]}
+    return {"offset_known": True, "offset_pct": round(100 * math.expm1(off)),
+            "pm25_adjusted": round(math.expm1(max(math.log1p(r["pm25"]) - off, 0.0)), 1)}
+
+
 async def build_sensors(scenario: str | None) -> dict:
     try:
         recs, src = await cache.get("sensor_community", fetch_sensors)
@@ -399,7 +412,7 @@ async def build_sensors(scenario: str | None) -> dict:
         recs = sensors_mod.fresh_only(recs)
     raw = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]} for r in recs]
     recs, cal = calibrate_records(raw, await current_conditions(scenario))
-    out = [{**r, "district": district_at(r["lon"], r["lat"])} for r in recs]
+    out = [{**r, "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in recs]
     vals = [r["pm25"] for r in out]
     return {
         "scenario": scenario,

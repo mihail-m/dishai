@@ -1,4 +1,4 @@
-.PHONY: reference calibrate dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -56,6 +56,8 @@ reference:
 	$(PY) -m backend.data_prep.reference_eea     # EEA hourly PM2.5/PM10 for Sofia -> data/history/reference.csv
 calibrate:
 	$(PY) -m backend.ml.calibrate                    # fit + evaluate the sensor calibration -> data/calibration.joblib
+spatial:
+	$(PY) -m backend.ml.spatial_fit                  # per-sensor offsets, variogram, kriging evaluation -> data/spatial.joblib
 train:
 	$(PY) -m backend.ml.train                       # fit + evaluate the PM2.5 model -> data/pm_model.joblib
 data: graph bikegraph roads ndvi lst canopy trees bake

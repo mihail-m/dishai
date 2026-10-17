@@ -278,7 +278,7 @@ def fit_all(df: pd.DataFrame, alpha: float) -> PmModel:
 def predict_pm_ml(model: PmModel, df: pd.DataFrame) -> np.ndarray:
     lvl = level_predict(model.level, df)
     dev = spatial_predict(df, np.asarray(model.spatial["coef"]), np.asarray(model.spatial["mean"]), np.asarray(model.spatial["std"]))
-    return lvl * np.exp(dev)
+    return np.expm1(np.log1p(lvl) + dev).clip(0)
 
 
 def main() -> int:

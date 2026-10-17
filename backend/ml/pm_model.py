@@ -97,9 +97,10 @@ class PmModel:
         return np.clip(d @ np.asarray(self.spatial["coef"]), -DEV_CLIP, DEV_CLIP)
 
     def predict(self, static: np.ndarray, hour_vec: list[float], now_vec: list[float]) -> np.ndarray:
-        """PM2.5 (ug/m3) for every row of `static` at one hour."""
+        """PM2.5 (ug/m3) for every row of `static` at one hour. The street deviation is a log1p difference (that is how it is fitted),
+        so it is applied in log1p space: the kriged sensor residuals (backend/cai/krige.py) live in the same space."""
         lvl = self.level_pm(hour_vec, now_vec)
-        return (lvl * np.exp(self.spatial_dev(static, hour_vec[S_IDX]))).astype("float32")
+        return np.expm1(np.log1p(lvl) + self.spatial_dev(static, hour_vec[S_IDX])).clip(0).astype("float32")
 
     @classmethod
     def load(cls, path: Path = MODEL_PATH) -> "PmModel | None":

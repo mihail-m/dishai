@@ -1,4 +1,5 @@
-"""Leave-one-out validation of the CAI's PM2.5 against outdoor citizen sensors.
+"""Leave-one-out validation of the CAI's PM2.5 against outdoor citizen sensors (a single snapshot: the historical, time-blocked
+evaluation of the spatial stage is in backend/ml/spatial_fit.py).
 
 For each sensor: rebuild the model without it (bias, IDW residual) and predict PM2.5 at its location, then
 compare with what it measured. Reports Spearman rank correlation and median absolute error for the full
@@ -86,13 +87,24 @@ def leave_one_out_ml(model) -> dict | None:
     xy = np.column_stack([x, y])
     from ..ml.pm_model import static_matrix
     base = model._ml_pm(static_matrix(model.feats, model.feats.at(lon, lat)), model.now_idx).astype(float)
-    full = np.zeros(n)
+    idw = np.zeros(n)
     for i in range(n):
         m = np.arange(n) != i
-        full[i] = base[i] + idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base[m])[0]
+        idw[i] = base[i] + idw_residual(xy[i : i + 1], xy[m], obs_c[m] - base[m])[0]
 
     def mae(p):
         return round(float(np.median(np.abs(p - obs))), 2)
 
-    return {"n": n, "spearman": _rho(full, obs), "median_abs_error": mae(full),
-            "ml_only": {"spearman": _rho(base, obs), "median_abs_error": mae(base)}, **meta}
+    out = {"n": n, "ml_only": {"spearman": _rho(base, obs), "median_abs_error": mae(base)},
+           "idw": {"spearman": _rho(idw, obs), "median_abs_error": mae(idw)}, "spatial": "idw", **meta}
+    out.update(spearman=out["idw"]["spearman"], median_abs_error=out["idw"]["median_abs_error"])
+    if getattr(model, "spatial", None):
+        from . import krige
+        p = model.spatial
+        ids = [s.get("id") for s in sensors]
+        e = np.log1p(obs_c) - np.log1p(base) - krige.sensor_offsets(ids, p)
+        W, _ = krige.kriging_weights(xy, xy, krige.sensor_noise(ids, p), p, exclude=np.arange(n))
+        kr = np.expm1(np.log1p(base) + p.rho_at(0) * (W @ e))
+        out["krige"] = {"spearman": _rho(kr, obs), "median_abs_error": mae(kr)}
+        out.update(spearman=out["krige"]["spearman"], median_abs_error=out["krige"]["median_abs_error"], spatial="krige")
+    return out

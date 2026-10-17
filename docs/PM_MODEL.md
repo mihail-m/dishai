@@ -200,3 +200,62 @@ The learned model keeps its advantage on episode hours and still sits within ±5
 
 ### Visible effect
 **The map and the sensor dots are about 2× more polluted than before on the same day** (median sensor ×1.87 across the history). This is a correction, not a regression: the sensors read about half of the reference station.
+
+## Phase 2: per-sensor offsets and kriging instead of IDW
+
+`make spatial` (`backend/ml/spatial_fit.py`) fits it; `backend/cai/krige.py` serves it; `C.SPATIAL_METHOD = "idw"` brings the old method back (it is also the fallback if `data/spatial.joblib` is missing or was made against another calibration).
+
+### The model
+In log1p space, with the city level and the traffic/terrain trend taken out:
+
+```
+residual e0[s,t] = log1p(sensor) - log1p(city median) - trend(s,t)
+offset_s         = mean over the sensor's hours of e0, shrunk toward 0 (empirical Bayes)
+kriged residual  = simple kriging of (e0 - offset) from the 24 nearest sensors, exponential covariance, per-sensor noise
+PM(street, t)    = expm1( log1p(trend) + rho(lead) * kriged residual )
+```
+The kriging weights (streets × sensors, sparse) and variances are computed once per sensor snapshot; each forecast hour is a sparse matrix-vector product.
+
+**What an offset means.** A sensor's persistent deviation is a mix of calibration error and real local pollution (a stove next door, a courtyard), and without co-location the two cannot be separated. The rule: **remove it when the sensor is used to estimate other places** (otherwise one over-reading unit paints its neighbours), and **at the sensor's own location report both values** (`/api/sensors`: `pm25` and `pm25_adjusted`, `offset_pct`). A sensor with no history gets offset 0 and the full offset variance as extra noise, so it counts for less.
+
+### What the data say
+| | |
+|---|---|
+| Offsets | SD **0.48** in log1p units (×1.6), lag-1 autocorrelation of the hourly residual 0.86. Stable: first vs second half of the weeks, **r = 0.85** on 247 sensors. Hundreds of effectively independent hours per sensor, so the shrinkage factor is ≈1 for nearly all (253/257 of today's live sensors have an offset). |
+| Variogram (exponential, all hours) | nugget 0.072, partial sill 0.150, **range a = 12.6 km** (practical range about 38 km) |
+| by season | heating: 0.082 / 0.174 / 8.8 km · summer: 0.066 / 0.122 / 17.4 km · polluted heating hours (city > 15): 0.106 / 0.182 / 6.7 km |
+| Empirical semivariance | below 300 m about 0.06 · 0.6–1.3 km about 0.09 · 4 km 0.11 · 7 km 0.14 · 14 km 0.17 |
+| Persistence of the kriged residual | slope on the residual h hours later: 0.89 (0 h) · 0.76 (1) · 0.63 (2) · 0.54 (3) · 0.33 (6) · 0.18 (12) · 0.29 (24) · 0.12 (36) · 0.19 (47). Fitted `rho(h) = 0.19 + 0.71·exp(-h/4 h)`. |
+
+**Reading this: the field carries almost no street-scale information.** The semivariance climbs from 0.06 below 300 m to 0.09 at about 1 km, then keeps climbing slowly to 0.17 at 14 km: only about a sixth of the spatial variance is at scales under a kilometre, the rest is neighbourhood-to-district scale (valley floor and edge, east-west contrasts the traffic and terrain trend does not capture). The unstructured part (nugget, 32 % of the fitted sill) cannot be told apart from measurement noise. So sensors can say how a *neighbourhood* differs from the city, not how one street differs from the next. This is what Phase 5 turns into the decision.
+
+The old IDW kept a snapshot residual at full strength for the whole 48 h window. The data say it is mostly gone after 6 h (slope 0.33) and about a fifth remains afterwards.
+
+### Evaluation: leave-one-sensor-out over historical hours
+Whole weeks held out (5 folds); offsets, variogram and the interval scale are refitted on the other weeks; at each held-out hour every sensor is hidden in turn and predicted from the others at that hour. The city level is taken as known, which isolates the spatial stage. 2,680 hours, 602k predictions; half the hours are polluted heating-season hours so that this regime is well covered. Median absolute error in µg/m³ / mean within-hour Spearman:
+
+| Held-out hours | level only | level + trend | IDW (old) | kriging, offsets kept | **kriging, offsets removed** |
+|---|---|---|---|---|---|
+| all (2,680 h) | 3.02 / – | 2.93 / 0.176 | 3.07 / 0.225 | 2.85 / 0.200 | **2.77 / 0.251** |
+| heating season (1,645 h) | 5.24 / – | 5.09 / 0.191 | 5.05 / 0.266 | 4.71 / 0.259 | **4.54 / 0.315** |
+| summer (1,035 h) | 1.52 / – | 1.44 / 0.153 | 1.59 / 0.159 | 1.48 / 0.105 | 1.50 / 0.149 |
+| polluted heating, city > 15 (930 h) | 9.06 / – | 8.81 / 0.218 | 8.57 / 0.290 | 8.05 / 0.299 | **7.78 / 0.341** |
+| city > 25 (436 h) | 12.94 / – | 12.68 / 0.221 | 12.20 / 0.300 | 11.41 / 0.334 | **11.04 / 0.360** |
+
+- Removing the neighbours' offsets is what makes kriging work: kept, it is only marginally better than the trend.
+- **In summer kriging adds nothing over the trend alone** (1.50 vs 1.44 µg/m³; ranking 0.149 vs IDW's 0.159). The field is weak at clean levels, where sensor noise (±2 µg/m³) is as large as the signal.
+- Caveats: the four trend coefficients were fitted on all sensors (in-sample for them, identical for every method); the neighbour count was set to 24 after looking at the cross-validated numbers for 6/12/24/48 (gain from 12 to 24 is 0.07 µg/m³ and 0.01 in ranking; 48 is the same as 24), so that comparison is slightly optimistic. The hidden sensor's own offset (×1.6 SD) is part of what it is scored against and is unpredictable; this puts a ceiling on every correlation here.
+
+**Uncertainty.** Per-street SD (log1p units) = scale × √(nugget + offset variance + kriging variance), shrinking the explained part with the lead through ρ². The raw SD gave 80 % intervals that held 0.83 (heating) and 0.88 (summer) of the hidden readings; a per-season factor fitted on the training weeks (heating 0.88, summer 0.63; the summer noise is smaller at clean levels) brings them to **0.796 (heating), 0.798 (summer)**, 0.777 in polluted heating hours and 0.772 above 25 µg/m³. The level part of the uncertainty is added in Phase 3.
+
+### Acceptance
+| Bar | Result |
+|---|---|
+| Leave-one-sensor-out median error below IDW over historical hours | **Met** in every cut (all 2.77 vs 3.07; heating 4.54 vs 5.05; summer 1.50 vs 1.59; polluted heating 7.78 vs 8.57) |
+| Within-hour Spearman not lower than IDW | **Met** overall (0.251 vs 0.225), heating (0.315 vs 0.266), polluted heating (0.341 vs 0.290). **Not met in summer: 0.149 vs 0.159** |
+| 80 % intervals cover 75–85 %, heating and summer separately | **Met** (0.796 and 0.798) after the per-season scale; before it, summer was 0.88 |
+
+Live snapshot (`/api/validation`, one clean autumn evening, 259 sensors): kriging ρ 0.146 / median error 2.39, IDW 0.083 / 2.39, trend only 0.138 / 2.20. Nothing beats the trend on a clean day, in line with the summer rows.
+
+### Cost
+Once per sensor snapshot (every few minutes at most): kriging weights for 119k street segments take about 1.4 s (model init was 0.08 s). The 48 forecast hours take 1.0 s (was 1.3 s). End to end, a window build goes from about 1.4 s to 2.4 s.
