@@ -3,7 +3,7 @@ import type { PickingInfo } from "@deck.gl/core";
 import type { Mode, RouteResp, RouteStats, Scenario } from "../types";
 import type { Stage } from "../stage";
 import { api2 } from "../api";
-import { PRESET_PAIRS, MAP_PROVIDER } from "../map/config";
+import { PRESET_PAIRS, GOOGLE_KEY } from "../map/config";
 import { markerLayer, routeLayers, ROUTE_COLORS } from "../map/layers";
 import PlaceSearch from "../components/PlaceSearch";
 
@@ -93,7 +93,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
             <button aria-pressed={mode === "bike"} onClick={() => setMode("bike")}>🚴 Cycle</button>
           </div>
         </div>
-        {MAP_PROVIDER === "google" && <PlaceSearch onPick={(ll) => (picking === "to" ? setTo(ll) : setFrom(ll))} />}
+        {GOOGLE_KEY && <PlaceSearch onPick={(ll) => (picking === "to" ? setTo(ll) : setFrom(ll))} />}
         <div className="flex flex-wrap gap-2">
           <button className={`btn ${picking === "from" ? "btn-primary" : ""}`} onClick={() => setPicking(picking === "from" ? null : "from")}>
             {picking === "from" ? "Click the map…" : `A: ${from ? labels.from || from.map((x) => x.toFixed(4)).join(", ") : "set origin"}`}

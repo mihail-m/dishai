@@ -48,8 +48,21 @@ make start          # single process: build the UI and let FastAPI serve it on :
 Without keys the app runs on **MapLibre + OSM tiles** and **our own router**. Optional Google keys: copy
 `.env.example` to `.env` (git-ignored) and set `GOOGLE_MAPS_BROWSER_KEY` (Maps JS + Places, referrer-restricted) and
 `GOOGLE_ROUTES_SERVER_KEY` (Routes API only, read by the backend, never exposed or logged). Set a daily quota cap on both.
-`MAP_PROVIDER=google|maplibre` picks the basemap (default `google` only if a browser key exists). **The Google paths were not
+`MAP_PROVIDER=google|maplibre|leaflet` picks the initial basemap (default `google` only if a browser key exists). **The Google paths were not
 exercised against the real API** (no keys were available); the Routes client is covered by tests with a mocked transport.
+
+Use **Map style → Leaflet · OSM** above the map for the full-colour OpenStreetMap presentation with Leaflet **1.9.4**.
+The choice is remembered in that browser. Switch back to MapLibre at any time, or Google Maps when a browser key is configured.
+Switching preserves the map position, selected route, hour and overlay controls. All providers share the same deck.gl overlays:
+street CAI and selection, citizen/reference sensors, walking/cycling routes, area/heat grids, clean channels, chokepoints and animated flows.
+Leaflet is connected through the [deck.gl Leaflet adapter](https://visgl.github.io/deck.gl-community/docs/modules/leaflet/api-reference/deck-overlay).
+Optional Google Places search remains available with a browser key regardless of the selected map.
+
+Map interaction regression tests live in `frontend/tests`: from `frontend/`, run `npm ci`,
+`npx playwright install chromium`, then `npm run test:maps`. They cover both Leaflet and MapLibre
+with deterministic API responses and tiles, including street picking, route endpoints, heat/area tooltips,
+animated flows, camera alignment and renderer switching. To use an installed Chrome instead,
+set `PLAYWRIGHT_CHANNEL=chrome` before running the tests.
 
 ## Screens
 

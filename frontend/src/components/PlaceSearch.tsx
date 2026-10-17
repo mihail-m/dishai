@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
+import { googleLoader } from "../map/google";
 
-/** Google Places search (new PlaceAutocompleteElement). Only rendered when MAP_PROVIDER=google. */
+/** Optional Google Places search, independent of the selected basemap. */
 export default function PlaceSearch({ onPick }: { onPick: (latlng: [number, number]) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const cb = useRef(onPick);
@@ -10,7 +11,8 @@ export default function PlaceSearch({ onPick }: { onPick: (latlng: [number, numb
     let dead = false;
     (async () => {
       try {
-        const places = (await google.maps.importLibrary("places")) as google.maps.PlacesLibrary;
+        const { importLibrary } = await googleLoader();
+        const places = (await importLibrary("places")) as google.maps.PlacesLibrary;
         if (dead || !host.current) return;
         const ac = new places.PlaceAutocompleteElement({ includedRegionCodes: ["bg"] });
         el = ac as unknown as HTMLElement;
