@@ -9,6 +9,14 @@ corridors and dirty chokepoints are, and ties each action to a measure in the So
 
 ## Run it
 
+### Mobile demo
+
+The separate **AirPath mobile app** lives in [`mobile/`](mobile/README.md). Double-click
+**`Start Mobile.cmd`** on Windows or **`Start Mobile.command`** on macOS for the phone preview at
+`http://127.0.0.1:5180`. Its sample forecast, route comparisons, and daily planning demo run without
+the backend. A Capacitor Android project is included for running the app in Android Studio's emulator;
+see the [mobile setup and recording guide](mobile/README.md). The existing web app still uses the launchers below.
+
 ### Double-click (Windows or macOS)
 
 1. Keep the whole project folder together. If you downloaded a ZIP, extract it first.

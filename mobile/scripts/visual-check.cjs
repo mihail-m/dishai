@@ -1,0 +1,25 @@
+const {chromium} = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
+const out = path.resolve(__dirname,'../../.local/mobile-preview');
+fs.mkdirSync(out,{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome',headless:true});
+ const page=await browser.newPage({viewport:{width:1440,height:1050},deviceScaleFactor:1});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(process.env.MOBILE_PREVIEW_URL||'http://127.0.0.1:5180');
+ await page.locator('.air-reading').waitFor();await page.evaluate(()=>document.fonts.ready);await page.waitForTimeout(400);
+ await page.screenshot({path:path.join(out,'desktop.png'),fullPage:true});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(out,'today.png')});
+ await page.getByRole('button',{name:'Routes',exact:true}).click();
+ await page.getByRole('button',{name:'Preview this route'}).waitFor();await page.waitForTimeout(500);
+ await page.screenshot({path:path.join(out,'routes.png')});
+ await page.getByRole('button',{name:'Preview this route'}).click();await page.waitForTimeout(300);
+ await page.screenshot({path:path.join(out,'map.png')});
+ await page.getByRole('button',{name:'My day',exact:true}).click();await page.waitForTimeout(450);await page.screenshot({path:path.join(out,'insights.png')});
+ await page.getByRole('button',{name:'Explore this window'}).click();await page.screenshot({path:path.join(out,'window.png')});
+ await page.keyboard.press('Escape');
+ await page.setViewportSize({width:320,height:740});await page.getByRole('button',{name:'Today',exact:true}).click();await page.screenshot({path:path.join(out,'small.png')});
+ console.log(JSON.stringify({errors,out,overflow:await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth)},null,2));
+ await browser.close();
+})().catch(error=>{console.error(error);process.exit(1)});

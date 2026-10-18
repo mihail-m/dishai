@@ -1,0 +1,151 @@
+.route-map {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  isolation: isolate;
+  overflow: hidden;
+  background: #e8f1f1;
+}
+
+.route-map-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  background: #e8f1f1;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.route-map .leaflet-container { font-family: inherit; }
+.route-map .leaflet-control-attribution {
+  padding: 3px 7px;
+  max-width: 150px;
+  margin-top: 8px;
+  margin-right: 8px;
+  background: rgb(255 255 255 / 72%);
+  border-radius: 8px;
+  font-size: 8px;
+  line-height: 1.35;
+  text-align: right;
+  backdrop-filter: blur(12px);
+}
+.route-map .leaflet-control-attribution a { color: #58727a; }
+.route-map .leaflet-marker-icon { border: 0; }
+.route-map .leaflet-tooltip {
+  border: 1px solid #fff;
+  border-radius: 12px;
+  padding: 7px 10px;
+  color: #354b5a;
+  background: rgb(255 255 255 / 93%);
+  box-shadow: 0 4px 20px #53677418;
+}
+
+.route-map-label {
+  display: block;
+  width: max-content;
+  transform: translate(-50%, -50%) rotate(var(--label-angle, 0deg));
+  color: #7c9299;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #fff, 1px 0 2px #fff;
+  pointer-events: none;
+}
+.route-map-label--park {
+  color: #73998b;
+  font-size: 8px;
+  letter-spacing: 0.09em;
+  font-weight: 700;
+  text-shadow: 0 1px 3px #e5f7ed;
+}
+.route-map-label--district {
+  color: #7d909b;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  font-weight: 700;
+}
+.route-map-label--landmark {
+  color: #8c8b9b;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.route-map-air {
+  display: block;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+}
+.route-map-air--warm { background: radial-gradient(ellipse, #f9b58395 0%, #fbc89855 36%, #fbc89800 72%); }
+.route-map-air--fresh { background: radial-gradient(ellipse, #93e6cc80 0%, #b0e8d744 36%, #b0e8d700 72%); }
+.route-map-route--selected { filter: drop-shadow(0 2px 3px #6865d735); }
+.route-map-route { cursor: pointer; transition: stroke-width 180ms ease, stroke-opacity 180ms ease; }
+.route-map-endpoint {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #6564ed;
+  box-shadow: 0 3px 12px #5457b834, 0 0 0 5px #ffffff50;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+}
+.route-map-endpoint--start { background: #fff; color: #6564ed; box-shadow: 0 3px 12px #5457b834, 0 0 0 5px #ffffff50, inset 0 0 0 2px #6564ed; }
+
+.route-map-controls {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  transform: translateY(-50%);
+  z-index: 800;
+  border: 1px solid #ffffff;
+  border-radius: 18px;
+  background: rgb(255 255 255 / 68%);
+  box-shadow: 0 8px 24px #5976811b, inset 0 1px 0 #ffffff;
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+}
+.route-map-controls button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #4e6574;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.route-map-controls button:hover { background: #ffffffb0; }
+.route-map-controls button:active { background: #e6e6ff; }
+.route-map-controls button:focus-visible { outline: 2px solid #6564ed; outline-offset: 1px; }
+.route-map-controls button + button { border-top: 1px solid #66859812; }
+.route-map--compact .route-map-controls {
+  top: 174px;
+  transform: none;
+  flex-direction: row;
+  border-radius: 16px;
+}
+.route-map--compact .route-map-controls button + button {
+  border-top: 0;
+  border-left: 1px solid #66859812;
+}
+.route-map--preview .route-map-controls {
+  top: clamp(190px, 40%, 350px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-map-route, .route-map-air, .route-map-controls button { transition: none; }
+}
