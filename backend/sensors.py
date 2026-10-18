@@ -1,4 +1,6 @@
 """Sensor.Community normalisation and cleaning."""
+import math
+import statistics
 from datetime import datetime, timezone
 
 MAX_PM25 = 500.0
@@ -52,3 +54,27 @@ def fresh_only(records: list[dict], now: datetime | None = None, max_age_min: in
         if (now - ts).total_seconds() <= max_age_min * 60:
             out.append(r)
     return out
+
+
+# A single citizen sensor can read many times its neighbours (a fault, a spider web in the inlet, a fire next to it). One such reading would be
+# spread over a whole district by the spatial model, so it is dropped when it stands far above sensors nearby that agree with each other.
+OUTLIER_RADIUS_KM = 5.0
+OUTLIER_MIN_NEIGHBOURS = 2
+OUTLIER_RATIO = 4.0  # at least this many times the neighbours' median ...
+OUTLIER_MARGIN = 15.0  # ... and at least this many ug/m3 above it (raw sensor scale), so quiet air never trips the ratio alone
+
+
+def drop_isolated_outliers(records: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split raw (uncalibrated) records into (kept, dropped). Only high readings are tested, and only where at least
+    OUTLIER_MIN_NEIGHBOURS other sensors are within OUTLIER_RADIUS_KM: with fewer there is nothing to compare against, so the reading stays."""
+    kept, dropped = [], []
+    for r in records:
+        kx = 111.32 * math.cos(math.radians(r["lat"]))
+        near = [o["pm25"] for o in records if o is not r and math.hypot((o["lat"] - r["lat"]) * 110.57, (o["lon"] - r["lon"]) * kx) <= OUTLIER_RADIUS_KM]
+        if len(near) >= OUTLIER_MIN_NEIGHBOURS:
+            med = statistics.median(near)
+            if r["pm25"] >= max(OUTLIER_RATIO * med, med + OUTLIER_MARGIN):
+                dropped.append(r)
+                continue
+        kept.append(r)
+    return kept, dropped

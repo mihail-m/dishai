@@ -434,8 +434,10 @@ async def build_sensors(scenario: str | None) -> dict:
         recs, src = await cache.get("sensor_community", fetch_sensors)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, "Sensors unavailable and no fixture saved yet") from exc
+    dropped: list[dict] = []
     if src in ("live", "cache"):
         recs = sensors_mod.fresh_only(recs)
+        recs, dropped = sensors_mod.drop_isolated_outliers(recs)
     raw = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]} for r in recs]
     recs, cal = calibrate_records(raw, await current_conditions(scenario))
     out = [{**r, "source": "sensor_community", "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in recs]
@@ -448,6 +450,7 @@ async def build_sensors(scenario: str | None) -> dict:
         "source": src,
         "count": len(out),
         "median_pm25": round(statistics.median(vals), 1) if vals else None,
+        "outliers_dropped": [{"id": r["id"], "pm25_raw": r["pm25"], "lat": r["lat"], "lon": r["lon"]} for r in dropped],
         **cal,
         "airthings": at_info,
         "label": ("Citizen sensors (Sensor.Community), calibrated to the EEA reference-station scale (they read about half of it raw)."

@@ -48,3 +48,29 @@ def test_point_in_geometry_with_hole():
     assert geo.point_in_geometry(1, 1, poly)
     assert not geo.point_in_geometry(5, 5, poly)  # in the hole
     assert not geo.point_in_geometry(11, 5, poly)
+
+
+def _rec(i, dlat, pm, dlon=0.0):
+    return {"id": i, "lat": 42.70 + dlat, "lon": 23.30 + dlon, "pm25": pm}
+
+
+def test_one_sensor_far_above_agreeing_neighbours_is_dropped():
+    from backend.sensors import drop_isolated_outliers
+    recs = [_rec(1, 0.00, 4), _rec(2, 0.01, 5), _rec(3, 0.02, 4), _rec(4, -0.01, 5), _rec(9, 0.005, 120)]
+    kept, dropped = drop_isolated_outliers(recs)
+    assert [r["id"] for r in dropped] == [9]
+    assert {r["id"] for r in kept} == {1, 2, 3, 4}
+
+
+def test_a_local_plume_seen_by_several_sensors_is_kept():
+    from backend.sensors import drop_isolated_outliers
+    recs = [_rec(1, 0.00, 40), _rec(2, 0.01, 45), _rec(3, 0.02, 38), _rec(4, -0.01, 42), _rec(9, 0.005, 60)]
+    assert drop_isolated_outliers(recs)[1] == []
+
+
+def test_quiet_air_and_sparse_areas_never_trip_the_rule():
+    from backend.sensors import drop_isolated_outliers
+    quiet = [_rec(1, 0.00, 1), _rec(2, 0.01, 1), _rec(3, 0.02, 1), _rec(9, 0.005, 6)]  # 6x the median but only 5 ug/m3 above it
+    assert drop_isolated_outliers(quiet)[1] == []
+    sparse = [_rec(1, 0.00, 4), _rec(9, 0.30, 200)]  # nothing within 5 km to compare against
+    assert drop_isolated_outliers(sparse)[1] == []
