@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 test("the default map shows neighbourhood cells, streets are an indicative option", async ({ page }) => {
   await page.getByRole("button", { name: "Neighbourhoods" }).click();
   await expect(page.getByRole("button", { name: "Neighbourhoods" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText(/Each square is about 250 m/)).toBeVisible();
+  await expect(page.getByText(/Hover or tap the map to see the air quality score/)).toBeVisible();
   await page.getByRole("button", { name: "Streets", exact: true }).click();
   await expect(page.getByText(/Street colours are indicative/)).toBeVisible();
 });
@@ -64,7 +64,7 @@ test("a failed refresh keeps the previous forecast and can be retried", async ({
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-for (const tab of ["Route", "Clean paths"] as const) {
+for (const tab of ["Route"] as const) {
   test(`${tab} preloads 24 hours and scrubs without network requests`, async ({ page }) => {
     await page.getByRole("button", { name: tab, exact: true }).click();
     await expect(page.locator("#hour")).toBeEnabled();
@@ -175,5 +175,6 @@ test("suggestions follow the current location and the forecast bar follows the l
   await expect(page.getByRole("button", { name: "Air trapping" })).toHaveCount(0);
   await page.getByRole("button", { name: "Clean paths", exact: true }).click();
   await expect(page.getByRole("button", { name: "Feels like" })).toHaveCount(0);
-  await expect(page.locator("#hour")).toBeVisible();
+  await expect(page.locator("#hour")).toHaveCount(0); // clean paths describe the city now: no time control, no options
+  await expect(page.getByRole("button", { name: /^(Areas|Busy streets|Other streets|Animate|Relative|Absolute)/ })).toHaveCount(0);
 });

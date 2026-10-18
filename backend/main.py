@@ -20,12 +20,12 @@ from pydantic import BaseModel, ConfigDict
 
 from . import advice as advice_mod
 from . import alert as alert_mod
-from . import airthings, geo, google_air, no2_model, sensors as sensors_mod, waqi
+from . import airthings, geo, google_air, no2_model, pollen as pollen_mod, sensors as sensors_mod, symptoms as symptoms_mod, waqi
 from .cache import Cache
 from .cai import config as C
 from .cai import krige as krige_mod
 from .ml import calibration as calibration_mod
-from .scenario import HOURLY as SCENARIO_HOURLY, scenario_pm25
+from .scenario import HOURLY as SCENARIO_HOURLY, SCENARIO_DAY, scenario_pm25
 from .score import clamp, label_for, stagnation_score
 
 log = logging.getLogger("inversion_watch")
@@ -60,7 +60,8 @@ WEATHER_URL = (
 AQ_URL = (
     "https://air-quality-api.open-meteo.com/v1/air-quality"
     f"?latitude={LAT}&longitude={LON}"
-    "&hourly=pm10,pm2_5,european_aqi,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen"
+    "&hourly=pm10,pm2_5,european_aqi,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen,"
+    "uv_index,dust,ozone,aerosol_optical_depth"
     "&forecast_days=4&timezone=Europe%2FSofia"
 )
 SENSORS_URL = "https://data.sensor.community/airrohr/v1/filter/box=42.80,23.15,42.60,23.55"
@@ -200,6 +201,9 @@ def _pollen_at(hourly: dict, i: int) -> dict | None:
     return got or None
 
 
+ENV_FIELDS = {"uv": "uv_index", "dust": "dust", "ozone": "ozone", "aod": "aerosol_optical_depth"}  # hour key -> Open-Meteo variable
+
+
 def _hhmm(t: str) -> str:
     return t[11:16]
 
@@ -214,6 +218,7 @@ async def build_forecast(scenario: str | None) -> dict:
         sources = {"weather": "scenario", "air_quality": "scenario"}
         pm25, pm10, aqi = h["pm2_5"], h["pm10"], h["european_aqi"]
         pollen = [_pollen_at(h, i) for i in range(len(h["time"]))]
+        env = {k: h.get(f) or [None] * len(h["time"]) for k, f in ENV_FIELDS.items()}
     else:
         try:
             weather, src_w = await cache.get("open_meteo_forecast", fetch_weather)
@@ -229,6 +234,7 @@ async def build_forecast(scenario: str | None) -> dict:
         n = len(h["time"])
         pm25, pm10, aqi = [None] * n, [None] * n, [None] * n
         pollen = [None] * n
+        env = {k: [None] * n for k in ENV_FIELDS}
         if aq:
             ah = aq["hourly"]
             if src_a == "fixture":
@@ -239,6 +245,8 @@ async def build_forecast(scenario: str | None) -> dict:
                 if j is not None:
                     pm25[i], pm10[i], aqi[i] = ah["pm2_5"][j], ah["pm10"][j], ah["european_aqi"][j]
                     pollen[i] = _pollen_at(ah, j)
+                    for k, f in ENV_FIELDS.items():
+                        env[k][i] = (ah.get(f) or [None] * len(ah["time"]))[j]
         sources = {"weather": src_w, "air_quality": src_a}
 
     times = h["time"]
@@ -277,6 +285,7 @@ async def build_forecast(scenario: str | None) -> dict:
                 "pm10": pm10[i],
                 "aqi": aqi[i],
                 "pollen": pollen[i],  # grains/m3 per type; None where there is no data (absent in old fixtures)
+                **{k: env[k][i] for k in ENV_FIELDS},  # uv index, mineral dust and ozone (ug/m3), aerosol optical depth; None when absent
                 "is_night": hr >= 18 or hr < 7,
             }
         )
@@ -524,6 +533,82 @@ async def api_google_air():
 
 
 # ---------------------------------------------------------------------------------------------
+# Pollen and allergy
+# ---------------------------------------------------------------------------------------------
+
+Species = Literal["alder", "birch", "grass", "mugwort", "olive", "ragweed"]
+CALENDAR = pollen_mod.load_calendar()  # typical season from model history (python -m backend.data_prep.pollen_calendar); optional
+POLLEN_SOURCE = "CAMS European air quality forecast via Open-Meteo (modelled, ~11 km grid, not trap counts)"
+
+
+def season_day(scenario: str | None):
+    """The date the season outlook is measured from: today, or the month a demo scenario pretends to be in."""
+    today = sofia_now().date()
+    md = SCENARIO_DAY.get(scenario) if scenario else None
+    return today.replace(month=md[0], day=md[1]) if md else today
+
+
+@app.get("/api/pollen")
+async def api_pollen(scenario: str | None = ScenarioQ):
+    """Pollen per species (4 days, daily peaks and hourly series), UV / ozone / mineral dust and where each species is in its typical season."""
+    sc = Scenario(scenario)
+    fc = await build_forecast(sc)
+    hrs = fc["hours"]
+    return {
+        "scenario": sc, "generated_at": fc["generated_at"], "source": fc["sources"].get("air_quality"), "attribution": POLLEN_SOURCE,
+        "pollen": pollen_mod.forecast(hrs, fc["now_index"]),
+        "environment": pollen_mod.environment(hrs),
+        "season": pollen_mod.seasons(CALENDAR, season_day(sc)),
+        "today": season_day(sc).isoformat(),
+        "note": "Modelled concentrations for all of Sofia at about 11 km, not counts from a sampler. Bands are approximate; the feed only covers the pollen season.",
+    }
+
+
+@app.get("/api/pollen/calendar")
+async def api_pollen_calendar():
+    """Typical season per species: 36 ten-day bins of the highest daily model value (median over years) and the typical start and end."""
+    if not CALENDAR:
+        return {"available": False}
+    species = {}
+    for k, v in CALENDAR["species"].items():
+        lv = [advice_mod._pollen_level(k, g) for g in v["bins"]]
+        species[k] = {"label": advice_mod.POLLEN_LABEL[k], "bins": v["bins"], "levels": lv, "years": v["years"], "season": v.get("season"),
+                      "threshold": v["threshold"], "bands": {"moderate": advice_mod.POLLEN_BANDS[k][0], "high": advice_mod.POLLEN_BANDS[k][1]}}
+    return {"available": True, "years": CALENDAR["years"], "source": CALENDAR["source"], "note": CALENDAR["note"], "species": species,
+            "today_bin": (lambda d: (d.month - 1) * 3 + (0 if d.day <= 10 else 1 if d.day <= 20 else 2))(season_day(None)),
+            "season": pollen_mod.seasons(CALENDAR, season_day(None))}
+
+
+class SymptomIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    district: str
+    severity: Literal["none", "mild", "bad"]
+    species: list[Species] = []
+    scenario: str | None = None
+
+
+@app.post("/api/symptoms")
+async def api_symptoms(rep: SymptomIn):
+    """One anonymous check-in. Stores date, district, severity and the model's pollen level for the user's species. Nothing personal."""
+    d = get_district(rep.district)
+    if rep.scenario not in (None, "", "live"):
+        return {"ok": True, "stored": False, "reason": "Demo data: nothing is stored."}
+    fc = await build_forecast(None)
+    day = sofia_now().date().isoformat()
+    todays = [h for h in fc["hours"] if h["time"][:10] == day]
+    pol = advice_mod.pollen_summary(todays, frozenset(rep.species) or None)
+    ok = symptoms_mod.record(sofia_now().date(), d["name"], rep.severity, pol["level"], pol["types"][0]["type"] if pol["types"] else None)
+    if not ok:
+        raise HTTPException(429, "Too many check-ins today. Try again tomorrow.")
+    return {"ok": True, "stored": True, "level": pol["level"], "message": "Thanks. Stored as an anonymous count with the date, district and pollen level only."}
+
+
+@app.get("/api/symptoms/summary")
+async def api_symptoms_summary(days: int = Query(30, ge=1, le=365)):
+    return symptoms_mod.summary(sofia_now().date(), days)
+
+
+# ---------------------------------------------------------------------------------------------
 # Districts
 # ---------------------------------------------------------------------------------------------
 
@@ -608,6 +693,7 @@ async def api_advice(
     toggles: list[Literal["pollen_allergy", "asthma", "heat_sensitive", "outdoor_exercise", "kids_or_elderly"]] = Query(
         [], description="personalisation toggles; repeat the parameter. Not stored."
     ),
+    species: list[Species] = Query([], description="pollen species the user reacts to (with the pollen_allergy toggle); repeat the parameter. Not stored."),
 ):
     sc = Scenario(scenario)
     d = get_district(district)
@@ -621,10 +707,13 @@ async def api_advice(
     zone = zone_for(d)
     # the exercise-slot picker mixes PM2.5 with heat and pollen penalties on the score scale (see C.PM_TO_SCORE)
     penalty = [h["pm25_model"] * C.PM_TO_SCORE if h.get("pm25_model") is not None else x for h, x in zip(fc["hours"], series)]
-    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], penalty[ni : ni + 24], "pollen_allergy" in toggles)
+    cond = advice_mod.conditions(fc["hours"][ni : ni + 24], penalty[ni : ni + 24], "pollen_allergy" in toggles, species)
+    season = pollen_mod.seasons(CALENDAR, season_day(sc))
     return {
         "profile": profile,
         "toggles": sorted(set(toggles)),
+        "species": sorted(set(species)),
+        "season": season,
         "district": d["name"],
         "scenario": sc,
         "status": {
@@ -638,7 +727,7 @@ async def api_advice(
         "zone": zone,
         "conditions": cond,
         "cards": advice_mod.build_cards(profile, level, alert if alert["active"] else None, best, zone,
-                                           {**cond, "construction": advice_mod.construction_context(CONSTRUCTION, d["name"])}, toggles),
+                                           {**cond, "construction": advice_mod.construction_context(CONSTRUCTION, d["name"]), "season": season}, toggles),
         "grant_note": advice_mod.GRANT_NOTE,
     }
 

@@ -3,6 +3,8 @@ export type Scenario = "live" | "winter_inversion" | "summer_heatwave" | "birch_
 export type Profile = "driver" | "wood_heater" | "vulnerable";
 export type Toggle = "pollen_allergy" | "asthma" | "heat_sensitive" | "outdoor_exercise" | "kids_or_elderly";
 export type Mode = "walk" | "bike";
+export type Species = "alder" | "birch" | "grass" | "mugwort" | "olive" | "ragweed";
+export type PollenLevel = "none" | "low" | "moderate" | "high";
 
 export interface Hour {
   time: string; score: number; label: Level; blh: number; wind10m: number; t2m: number; t925: number;
@@ -13,6 +15,8 @@ export interface Hour {
   /** 10th and 90th percentile of the learned city-level estimate (null when the model has no interval) */
   pm25_p10?: number | null; pm25_p90?: number | null;
   pollen?: Record<string, number | null> | null;
+  /** UV index, mineral dust and ozone (µg/m³), aerosol optical depth (CAMS); null when the feed lacks them */
+  uv?: number | null; dust?: number | null; ozone?: number | null; aod?: number | null;
 }
 export interface Alert {
   active: boolean; in_progress?: boolean; start?: string; end?: string; start_hhmm?: string; end_hhmm?: string;
@@ -61,12 +65,38 @@ export interface PollenSummary {
   available: boolean; level: "none" | "low" | "moderate" | "high"; peak_hhmm: string | null;
   types: { type: string; label: string; grains: number; level: string; peak_hhmm: string }[];
 }
-export interface Conditions { heat: HeatSummary; pollen: PollenSummary; activity: { start_hhmm: string; end_hhmm: string } | null }
+export interface Conditions { heat: HeatSummary; pollen: PollenSummary & { triggers?: Species[] }; activity: { start_hhmm: string; end_hhmm: string } | null }
 export interface Advice {
-  profile: Profile; toggles: Toggle[]; district: string; conditions: Conditions;
+  profile: Profile; toggles: Toggle[]; species: Species[]; district: string; conditions: Conditions; season: SeasonStatus[];
   status: { level: Level; current_score: number; peak_score: number; peak_pm25: number | null; alert: Alert; best_window: Window | null };
   zone: { zone: "inner" | "outer" | null; illustrative: boolean; label: string; basis: string };
   cards: Card[]; grant_note: string;
+}
+export interface SeasonStatus {
+  type: Species; status: "in_season" | "upcoming" | "over" | "none"; start?: string; end?: string; start_doy?: number; end_doy?: number; days_left?: number; in_days?: number;
+}
+export interface PollenDay { date: string; peak: number | null; peak_hhmm: string | null; mean: number | null; level: PollenLevel }
+export interface PollenSpecies {
+  type: Species; label: string; kind: "tree" | "grass" | "weed"; foods: string[]; bands: { moderate: number; high: number };
+  now: { grains: number; level: PollenLevel } | null; days: PollenDay[]; hourly: { time: string; grains: number | null }[];
+}
+export interface EnvDay { date: string; peak: number | null; peak_hhmm: string | null; level: string | null }
+export interface EnvSeries { available: boolean; unit: string; levels: string[]; bands: number[]; days: EnvDay[] }
+export interface PollenResp {
+  scenario: string | null; generated_at: string; source: string | null; attribution: string; today: string; note: string;
+  pollen: { available: boolean; species: PollenSpecies[] };
+  environment: { uv: EnvSeries; ozone: EnvSeries; dust: EnvSeries };
+  season: SeasonStatus[];
+}
+export interface CalendarResp {
+  available: boolean; years?: number[]; source?: string; note?: string; today_bin?: number; season?: SeasonStatus[];
+  species?: Record<Species, { label: string; bins: number[]; levels: number[]; years: number[]; season: { start_doy: number; end_doy: number } | null; threshold: number; bands: { moderate: number; high: number } }>;
+}
+export type Severity = "none" | "mild" | "bad";
+export interface SymptomSummary {
+  reports: number; days: number; min_n: number; note: string;
+  levels: { level: PollenLevel; n: number; bad: number; mild: number; none: number; bad_share: number | null; enough: boolean }[];
+  daily: { date: string; none: number; mild: number; bad: number }[];
 }
 export interface DistrictRow {
   district: string; peak_24h: number; level: Level; p_episode?: number | null; leads: number; sample_leads: number; submitted_leads: number;
@@ -94,11 +124,15 @@ export interface EdgeExplain {
   heat_points: number; cai_air_only: number; note: string;
 }
 export interface RouteStats {
+  /** length-weighted greenery along the route (0-100); the proxy the pollen-aware option trades against */
+  mean_green_pct?: number;
   time_min: number; distance_m: number; mean_pm25: number; dose: number; mean_cai: number | null; lambda_used?: number;
   dose_change_pct: number; time_change_pct?: number; polyline: [number, number][]; steps_m?: number; eta_min?: number; snapped_share?: number;
 }
 export interface RouteResp {
   google_available?: boolean;
+  /** set when the route was weighted for pollen: the user's pollen level that hour (0-3) and the assumption behind it */
+  allergy?: { level: number; weight: number; species: Species[]; note: string } | null;
   from: [number, number]; to: [number, number]; from_label: string; to_label: string; hour: number; time: string; scenario: string | null;
   routes: { fastest: RouteStats; balanced: RouteStats; cleanest: RouteStats; chosen?: RouteStats };
   google_status: "ok" | "no_key" | "error" | "n/a"; mode?: Mode; google_baseline: RouteStats | null;
@@ -169,33 +203,14 @@ export interface AreasResp {
 export type HeatScale = "absolute" | "relative";
 export type HeatLevel = "none" | "caution" | "high" | "extreme";
 
-// ---- real traffic (Google Routes + TomTom) ----------------------------------------------------------------
-export interface TrafficCorridor {
-  id: string; name: string; polyline: [number, number][]; length_km: number;
-  live_index: number | null; typical_index: number | null; vs_typical: number | null;
-  google: { duration_s?: number; slow_share?: number; jam_share?: number; tti?: number };
-  tomtom: { tti?: number; points?: number };
-}
-export interface TrafficResp {
-  enabled: boolean; google: boolean; tomtom: boolean; ready: boolean; measured_profile: boolean; updated: string | null;
-  corridors: TrafficCorridor[]; profile: { wk: number[]; we: number[] } | null; volume_profile?: VolumeProfile | null;
-  usage: { day: string; google_requests: number; tomtom_requests: number }; note: string; sources: string[];
-}
-export interface Incident {
-  type: "Feature"; geometry: { type: "Point"; coordinates: [number, number] } | { type: "LineString"; coordinates: [number, number][] };
-  properties: { id: string; category: string; category_code: number; magnitude: string; magnitude_code: number; description: string;
-    from: string | null; to: string | null; length_m: number; delay_s: number | null; road: string; start: string | null; end: string | null; reports: number | null };
-}
-export interface IncidentsResp { type: "FeatureCollection"; features: Incident[]; enabled: boolean; count?: number; source?: string; updated?: string; error?: boolean }
-
 // ---- Google Air Quality + Pollen -----------------------------------------------------------------------------
 export interface GoogleAir {
   enabled: boolean; updated?: string; note?: string; source?: string;
   current?: { time: string; indexes: { code: string; name: string; aqi: number; category: string; dominant: string }[];
     pollutants: Record<string, { name: string; value: number | null; unit: string }>; health: Record<string, string> } | null;
   forecast?: { time: string; pm25: number | null; pm10: number | null; no2: number | null; uaqi: number | null }[] | null;
-  pollen?: { date: string; types: Record<string, { name: string; in_season: boolean; value: number | null; category: string | null; advice: string | null }>;
-    plants: { name: string; type: string; value: number; category: string }[] }[] | null;
+  pollen?: { date: string; types: Record<string, { name: string; in_season: boolean; value: number | null; category: string | null; advice: string | null; advice_all?: string[] }>;
+    plants: { code?: string; name: string; type: string; value: number; category: string; family?: string | null; season?: string | null; cross_reaction?: string | null; advice?: string | null }[] }[] | null;
 }
 
 export interface ObservedTraffic {

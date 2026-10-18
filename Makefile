@@ -1,4 +1,4 @@
-.PHONY: cams-climate heat-field backtest heating reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: pollen-calendar cams-climate heat-field backtest heating reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -54,6 +54,8 @@ dem:
 	$(PY) -m backend.data_prep.dem                  # Copernicus 30 m terrain -> data/dem.tif
 history:
 	$(PY) -m backend.data_prep.history              # Sensor.Community + Open-Meteo history -> data/history/ (~1 h, resumable)
+pollen-calendar:
+	$(PY) -m backend.data_prep.pollen_calendar        # typical pollen season from CAMS model history -> data/pollen_calendar.json
 reference:
 	$(PY) -m backend.data_prep.reference_eea     # EEA hourly PM2.5/PM10 for Sofia -> data/history/reference.csv
 cams-climate:

@@ -1,4 +1,4 @@
-import type { Advice, Dashboard, DistrictsFC, Forecast, ForecastWindow, Profile, Scenario, SensorsResp, Toggle } from "./types";
+import type { Advice, CalendarResp, Dashboard, DistrictsFC, Forecast, ForecastWindow, PollenResp, Profile, Scenario, SensorsResp, Severity, Species, SymptomSummary, Toggle } from "./types";
 
 const q = (s: Scenario) => (s === "live" ? "" : `scenario=${s}`);
 
@@ -19,8 +19,16 @@ export const api = {
   forecast: (s: Scenario) => j<Forecast>(`/api/forecast?${q(s)}`),
   sensors: (s: Scenario) => j<SensorsResp>(`/api/sensors?${q(s)}`),
   districts: (s: Scenario) => j<DistrictsFC>(`/api/districts?${q(s)}`),
-  advice: (p: Profile, d: string, s: Scenario, toggles: Toggle[] = []) =>
-    j<Advice>(`/api/advice?profile=${p}&district=${encodeURIComponent(d)}&${[q(s), ...toggles.map((t) => `toggles=${t}`)].filter(Boolean).join("&")}`),
+  advice: (p: Profile, d: string, s: Scenario, toggles: Toggle[] = [], species: Species[] = []) =>
+    j<Advice>(`/api/advice?profile=${p}&district=${encodeURIComponent(d)}&${[q(s), ...toggles.map((t) => `toggles=${t}`), ...species.map((x) => `species=${x}`)].filter(Boolean).join("&")}`),
+  pollen: (s: Scenario) => j<PollenResp>(`/api/pollen?${q(s)}`),
+  pollenCalendar: () => j<CalendarResp>("/api/pollen/calendar"),
+  symptom: (district: string, severity: Severity, species: Species[], scenario: Scenario) =>
+    j<{ ok: boolean; stored: boolean; message?: string; reason?: string }>("/api/symptoms", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ district, severity, species, scenario: scenario === "live" ? null : scenario }),
+    }),
+  symptomSummary: () => j<SymptomSummary>("/api/symptoms/summary"),
   dashboard: (s: Scenario) => j<Dashboard>(`/api/dashboard?${q(s)}`),
   lead: (district: string, heating_type: string, likely_eligible: boolean) =>
     j<{ ok: boolean; district_total: number; message: string }>("/api/leads", {
@@ -40,15 +48,15 @@ export const PM_LEVEL_TEXT = { good: "Fine", watch: "Sensitive groups", warning:
 export const PM_WATCH = 15;  // WHO 24 h guideline
 export const PM_WARNING = 25;  // EU 24 h limit
 
-import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, IncidentsResp, Mode, No2Resp, NetworkResp, ReferenceResp, RouteResp, TrafficResp, Validation } from "./types";
-export interface ForecastRequest { forecastId?: string; signal?: AbortSignal; includeGoogle?: boolean; heatScale?: "absolute" | "relative" }
+import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, Mode, No2Resp, NetworkResp, ReferenceResp, RouteResp, Validation } from "./types";
+export interface ForecastRequest { forecastId?: string; signal?: AbortSignal; includeGoogle?: boolean; heatScale?: "absolute" | "relative"; allergy?: Species[] | null }
 const snapshotQuery = (opts?: ForecastRequest) => opts?.forecastId ? `&forecast_id=${encodeURIComponent(opts.forecastId)}` : "";
 export const api2 = {
   values: (s: Scenario, hour?: number) => j<CaiValues>(`/api/cai/values?${[q(s), hour != null ? `hour=${hour}` : ""].filter(Boolean).join("&")}`),
   edge: (id: number, s: Scenario, hour?: number, opts?: ForecastRequest) =>
     j<EdgeExplain>(`/api/cai/edge?id=${id}&${[q(s), hour != null ? `hour=${hour}` : ""].filter(Boolean).join("&")}${snapshotQuery(opts)}`, { signal: opts?.signal }),
   route: async (from: [number, number], to: [number, number], lam: number, s: Scenario, hour?: number, mode: Mode = "walk", opts?: ForecastRequest): Promise<RouteResp> => {
-    const url = `/api/route?from=${from.join(",")}&to=${to.join(",")}&lambda=${lam}&mode=${mode}${hour != null ? `&hour=${hour}` : ""}${s === "live" ? "" : `&scenario=${s}`}${snapshotQuery(opts)}${opts?.includeGoogle === false ? "&include_google=false" : ""}`;
+    const url = `/api/route?from=${from.join(",")}&to=${to.join(",")}&lambda=${lam}&mode=${mode}${hour != null ? `&hour=${hour}` : ""}${s === "live" ? "" : `&scenario=${s}`}${snapshotQuery(opts)}${opts?.includeGoogle === false ? "&include_google=false" : ""}${opts?.allergy ? `&allergy=true${opts.allergy.map((x) => `&species=${x}`).join("")}` : ""}`;
     const r = await fetch(url, { signal: opts?.signal });
     if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { detail?: string }).detail ?? `${r.status}`);
     return r.json();
@@ -58,8 +66,6 @@ export const api2 = {
     j<AreasResp>(`/api/cai/areas?${[q(s), hour != null ? `hour=${hour}` : "", `mode=${mode}`, `metric=${metric}`, ...(metric === "heat" && opts?.heatScale ? [`scale=${opts.heatScale}`] : [])].filter(Boolean).join("&")}${snapshotQuery(opts)}`, { signal: opts?.signal }),
   reference: (s: Scenario) => j<ReferenceResp>(`/api/reference?${q(s)}`),
   validation: (s: Scenario) => j<Validation>(`/api/validation?${q(s)}`),
-  traffic: () => j<TrafficResp>("/api/traffic", { cache: "no-store" }),
-  incidents: () => j<IncidentsResp>("/api/traffic/incidents", { cache: "no-store" }),
   googleAir: () => j<GoogleAir>("/api/google-air"),
   no2: () => j<No2Resp>("/api/no2"),
 };

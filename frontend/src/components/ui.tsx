@@ -15,6 +15,7 @@ export const Icon = {
   clock: <svg {...svg}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>,
   thermo: <svg {...svg}><path d="M14 14.8V5a2 2 0 0 0-4 0v9.800a4 4 0 1 0 4 0Z" /></svg>,
   leaf: <svg {...svg}><path d="M5 19c0-8 5-13 14-14 0 9-5 14-12 14-1 0-2 0-2 0Z" /><path d="M5 19c2-5 5-8 9-10" /></svg>,
+  flower: <svg {...svg}><circle cx="12" cy="12" r="2.2" /><path d="M12 9.8C10.6 8 10.6 4.6 12 3c1.4 1.600 1.400 5-0 6.800ZM12 14.200c1.400 1.800 1.400 5.200 0 6.800-1.400-1.600-1.400-5 0-6.800ZM9.800 12C8 13.400 4.600 13.400 3 12c1.600-1.400 5-1.400 6.800 0ZM14.200 12c1.800-1.400 5.200-1.400 6.800 0-1.600 1.400-5 1.400-6.800 0Z" /></svg>,
   locate: <svg {...svg}><path d="M12 3l7 18-7-4-7 4z" /></svg>,
   expand: <svg {...svg}><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>,
   play: <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" /></svg>,

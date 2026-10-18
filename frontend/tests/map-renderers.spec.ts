@@ -60,14 +60,12 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
       await expect(page.getByRole("button", { name: "Click the map…" })).toHaveCount(0);
       await page.waitForTimeout(1100);
     }
+    await expect(page.getByText("Plan a cleaner walk")).toBeVisible();
     const cycle = page.waitForRequest((r) => r.url().includes("/api/route") && r.url().includes("mode=bike"));
-    await page.getByRole("button", { name: "Cycle", exact: false }).click();
+    await page.getByRole("button", { name: "Cycle", exact: true }).click();
     await cycle;
     await expect(page.getByText("Plan a cleaner ride")).toBeVisible();
-    await page.getByRole("slider", { name: "Faster to cleaner" }).fill("1.3");
-    await expect(page.getByText("setting 1.3")).toBeVisible();
     await selectRenderer(page, renderer === "Leaflet" ? "MapLibre" : "Leaflet");
-    await expect(page.getByText("setting 1.3")).toBeVisible();
     await expect(page.getByText("Plan a cleaner ride")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open cleanest in Google Maps" })).toBeVisible();
     expect(errors).toEqual([]);
@@ -84,7 +82,7 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
     await expect(async () => {
       await page.mouse.move(0, 0);
       await page.mouse.move(box.x + box.width / 2 + 25, box.y + box.height / 2 - 25);
-      await expect(page.getByText("Area of ~3000 m", { exact: false })).toBeVisible({ timeout: 1500 });
+      await expect(page.getByText("Air quality score", { exact: false })).toBeVisible({ timeout: 1500 });
     }).toPass({ timeout: 15_000 });
     await page.getByRole("button", { name: "Heat", exact: true }).click();
     await expect(async () => {
@@ -93,15 +91,14 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
       await expect(page.getByText("Feels like 35 °C", { exact: false })).toBeVisible({ timeout: 1500 });
     }).toPass({ timeout: 15_000 });
     await page.getByRole("button", { name: "Clean paths" }).click();
-      await page.getByRole("button", { name: "Animate route flow" }).click();
     await page.mouse.move(0, 0);
     const before = await page.getByRole("application", { name: "Map of Sofia air quality" }).screenshot();
-    await expect.poll(async () => (await page.getByRole("application", { name: "Map of Sofia air quality" }).screenshot()).equals(before)).toBe(false);
+    await expect.poll(async () => (await page.getByRole("application", { name: "Map of Sofia air quality" }).screenshot()).equals(before), { timeout: 15_000 }).toBe(false);
     await page.getByRole("button", { name: /Demo Junction/ }).click();
     await expect(page.getByText("Demo measure")).toBeVisible();
     await selectRenderer(page, renderer === "Leaflet" ? "MapLibre" : "Leaflet");
     await expect(page.getByText("Demo measure")).toBeVisible();
-    await page.getByRole("button", { name: "For me", exact: true }).click();
+    await page.getByRole("button", { name: "My health", exact: true }).click();
     await page.getByRole("button", { name: "Explore", exact: true }).click();
     await expect(page.locator(".map-shell")).toHaveAttribute("data-map-ready", "true");
     expect(errors).toEqual([]);

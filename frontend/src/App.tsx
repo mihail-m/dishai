@@ -10,7 +10,7 @@ import { loadGeometry, type Geometry } from "./map/cai";
 import { caiLayer, locationLayers, referenceLayers, sensorLayer } from "./map/layers";
 import { districtAt, useLocation } from "./location";
 import Dashboard from "./components/Dashboard";
-import ForMeView from "./views/ForMeView";
+import HealthView from "./views/HealthView";
 import MapLegend from "./components/MapLegend";
 import TimeBar, { type TimeBarMode } from "./components/TimeBar";
 import { Icon, Logo, McBtn, McGroup } from "./components/ui";
@@ -19,7 +19,7 @@ import ExploreView, { LAYERS, type Layer } from "./views/ExploreView";
 import RouteView from "./views/RouteView";
 
 type Tab = "explore" | "route" | "me" | "city";
-const TABS: [Tab, string, keyof typeof Icon][] = [["explore", "Explore", "map"], ["route", "Route", "route"], ["me", "For me", "me"], ["city", "City insights", "city"]];
+const TABS: [Tab, string, keyof typeof Icon][] = [["explore", "Explore", "map"], ["route", "Route", "route"], ["me", "My health", "me"], ["city", "City insights", "city"]];
 const SCENARIOS: [Scenario, string, string][] = [
   ["live", "Live data", ""],
   ["winter_inversion", "Winter inversion", "Simulated January"],
@@ -202,11 +202,11 @@ export default function App() {
           )}
           {mapTab && <button className="map-locate" onClick={locate} aria-label={geo.place ? "Centre on my location" : "Show my location"} title={geo.place ? "Centre on my location" : "Show my location"} disabled={geo.status === "asking"}>{Icon.locate}</button>}
           {mapTab && extra.legend && <MapLegend kind={extra.legend.kind} title={extra.legend.title}>{extra.legend.bar}</MapLegend>}
-          <TimeBar mode={barMode} fc={fc} hourIndex={hourIndex} setHourIndex={chooseHour} ready={hourlyReady} progress={status} error={err} />
+          {!(tab === "explore" && layer === "clean") && <TimeBar mode={barMode} fc={fc} hourIndex={hourIndex} setHourIndex={chooseHour} ready={hourlyReady} progress={status} error={err} />}
         </div>
       </div>
 
-      {tab === "me" && <main className="pageview"><ForMeView scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} /></main>}
+      {tab === "me" && <main className="pageview"><HealthView scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} /></main>}
       {tab === "city" && <main className="pageview"><Dashboard scenario={scenario} active /></main>}
 
       <nav className="tabbar" aria-label="Views">

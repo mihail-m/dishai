@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Advice, AreasResp, Card, DistrictsFC, Forecast, Hour, Profile, Scenario, Toggle } from "../types";
+import type { Advice, AreasResp, Card, DistrictsFC, Forecast, Hour, Profile, Scenario, Species, Toggle } from "../types";
 import { PM_WARNING, PM_WATCH, api, api2, hhmm } from "../api";
 import { rank, useAlerts, type Alert } from "../alerts";
 import { distanceKm, districtAt, useLocation } from "../location";
@@ -122,10 +122,10 @@ function PlanItem({ title, body, tone, icon }: { title: string; body: string; to
 const CARD_ICON: Record<string, keyof typeof Icon> = { heat: "thermo", heat_shelter: "thermo", pollen: "leaf", hold_fire: "fan", stay_in: "window", ventilate: "window", shift_trips: "clock", activity: "walk" };
 const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock", transport: "route" };
 
-interface Props { scenario: Scenario; districts: DistrictsFC | null; district: string | null; setDistrict: (d: string) => void }
+interface Props { scenario: Scenario; districts: DistrictsFC | null; district: string | null; setDistrict: (d: string) => void; onPrefs?: (toggles: Toggle[], species: string[]) => void }
 
 /** "For me": one verdict for where you are, a plan for the next 24 hours, then the setup and the city programmes. */
-export default function ForMeView({ scenario, districts, district, setDistrict }: Props) {
+export default function ForMeView({ scenario, districts, district, setDistrict, onPrefs }: Props) {
   const [prefs, setPrefs] = useState(loadPrefs);
   const [fc, setFc] = useState<Forecast | null>(null);
   const [adv, setAdv] = useState<Advice | null>(null);
@@ -136,7 +136,7 @@ export default function ForMeView({ scenario, districts, district, setDistrict }
   const geo = useLocation();
   const names = useMemo(() => districts?.features.map((f) => f.properties.name).sort() ?? [], [districts]);
 
-  useEffect(() => { savePrefs(prefs); }, [prefs]);
+  useEffect(() => { savePrefs(prefs); onPrefs?.(prefs.toggles, prefs.species); }, [prefs]); // eslint-disable-line react-hooks/exhaustive-deps
   // a position fix picks the district; the choice then sticks across tabs
   useEffect(() => {
     if (geo.place && districts) { const d = districtAt(districts, geo.place.lat, geo.place.lon); if (d && d !== district) setDistrict(d); }
@@ -151,9 +151,9 @@ export default function ForMeView({ scenario, districts, district, setDistrict }
   useEffect(() => {
     if (!district) return;
     let off = false;
-    api.advice(prefs.profile, district, scenario, prefs.toggles).then((a) => !off && setAdv(a)).catch((e) => !off && setErr(String(e)));
+    api.advice(prefs.profile, district, scenario, prefs.toggles, prefs.toggles.includes("pollen_allergy") ? (prefs.species as Species[]) : []).then((a) => !off && setAdv(a)).catch((e) => !off && setErr(String(e)));
     return () => { off = true; };
-  }, [prefs.profile, prefs.toggles, district, scenario]);
+  }, [prefs.profile, prefs.toggles, prefs.species, district, scenario]);
 
   const hour = fc?.hours[fc.now_index];
   const v = verdict(alerts, hour);

@@ -5,9 +5,7 @@ import { caiColor, relColor, relRange } from "./cai";
 import { areaRows, heatColor, type AreaRow } from "./layers";
 
 type RGB = [number, number, number];
-/** A tiny version of the field (about 100 px wide) used for the ambient overlay: opacity mask, sweep position, wave phase, how polluted or hot. */
-export interface Coarse { w: number; h: number; mask: Uint8Array; u: Float32Array; sinPh: Float32Array; cosPh: Float32Array; dirt: Uint8Array }
-export interface Field { W: number; H: number; data: Uint8ClampedArray; bounds: [number, number, number, number]; coarse?: Coarse }
+export interface Field { W: number; H: number; data: Uint8ClampedArray; bounds: [number, number, number, number] }
 /** What a view hands to the map to be drawn every animation frame: layers under and over the static ones, and whether anything is still moving. */
 export interface Frame { under: Layer[]; over: Layer[]; settled: boolean }
 export type Animated = (now: number) => Frame;
@@ -16,21 +14,10 @@ const reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-r
 
 // The squares are blended into one soft surface: each pixel takes a distance-weighted average of nearby cells, so neighbouring values
 // fade into each other and the basemap stays readable underneath.
-const BLEND_RADIUS = 2.4; // in cells
+const BLEND_RADIUS = 3.4; // in cells: wide and flat-topped, so a cell does not show as its own little bump
 const PX_PER_CELL = 3; // the GPU's linear filtering smooths the rest; fewer pixels keep hour changes instant
 const ALPHA = 120, ALPHA_EXTREME = 175; // see-through enough for the streets underneath, solid enough to read the value
 const cache = new WeakMap<AreasResp, Map<string, Field | null>>();
-
-function makeCoarse(W: number, H: number, data: Uint8ClampedArray, dirt: Uint8Array): Coarse {
-  const k = Math.max(1, Math.round(W / 96)), w = Math.ceil(W / k), h = Math.ceil(H / k), n = w * h;
-  const c: Coarse = { w, h, mask: new Uint8Array(n), u: new Float32Array(n), sinPh: new Float32Array(n), cosPh: new Float32Array(n), dirt: new Uint8Array(n) };
-  for (let cy = 0; cy < h; cy++) for (let cx = 0; cx < w; cx++) {
-    const i = cy * w + cx, src = Math.min(H - 1, cy * k + (k >> 1)) * W + Math.min(W - 1, cx * k + (k >> 1));
-    const fx = cx / w, fy = cy / h, ph = fx * 5.2 + fy * 3.4 + Math.sin(cx * 0.35) * 1.1; // long, slow waves rather than sparkle
-    c.mask[i] = data[src * 4 + 3]; c.dirt[i] = dirt[src]; c.u[i] = fx * 0.75 + fy * 0.45; c.sinPh[i] = Math.sin(ph); c.cosPh[i] = Math.cos(ph);
-  }
-  return c;
-}
 
 /** Rasterise the area cells into a smooth RGBA field with thin contour lines where the value crosses a band edge. */
 export function areaField(a: AreasResp, scale: "relative" | "absolute", rows: AreaRow[] = areaRows(a)): Field | null {
@@ -42,9 +29,14 @@ export function areaField(a: AreasResp, scale: "relative" | "absolute", rows: Ar
   const range = Math.max(Math.abs(a.thresholds.cool ?? 0), Math.abs(a.thresholds.hot ?? 0), 1);
   const isExtreme = (r: AreaRow) => (heat ? (r.anomaly ?? 0) >= (a.thresholds.hot ?? 99) || (r.anomaly ?? 0) <= (a.thresholds.cool ?? -99)
     : r.mean >= (a.thresholds.clean ?? 101) || r.mean <= (a.thresholds.dirty ?? -1));
-  const colorOf = (v: number): RGB => (heat ? heatColor(v, range) : scale === "relative" ? relColor(v, lo, hi) : caiColor(v));
-  const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
-  const dirtOf = (v: number) => (heat ? clamp01(v / range) : scale === "relative" ? clamp01(1 - (v - lo) / Math.max(1, hi - lo)) ** 1.4 : clamp01((88 - v) / 50));
+  // the colour ramps are lookup tables with one entry per score point; blend between entries so neighbouring pixels do not flip between two steps (that read as a pixelated patchwork)
+  const between = (at: (i: number) => RGB, u: number): RGB => {
+    const x = Math.max(0, Math.min(100, u)), i = Math.min(99, Math.floor(x)), t = x - i, a = at(i), b = at(i + 1);
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  };
+  const colorOf = (v: number): RGB => (heat ? heatColor(v, range)
+    : scale === "relative" ? between((i) => relColor(lo + ((hi - lo) * i) / 100, lo, hi), ((v - lo) / Math.max(1e-6, hi - lo)) * 100)
+    : between((i) => caiColor(i), v));
   const valueOf = (r: AreaRow) => (heat ? r.anomaly ?? 0 : r.mean);
   let out: Field | null = null;
   if (rows.length) {
@@ -62,7 +54,6 @@ export function areaField(a: AreasResp, scale: "relative" | "absolute", rows: Ar
     const vals = rows.map(valueOf), ext = rows.map((r) => (isExtreme(r) ? 1 : 0));
     const data = new Uint8ClampedArray(W * H * 4);
     const covered = new Uint8Array(W * H);
-    const dirt = new Uint8Array(W * H);
     for (let py = 0; py < H; py++) {
       const y = maxY - (py + 0.5) * sy, by = Math.floor((y - minY) / R);
       for (let px = 0; px < W; px++) {
@@ -74,7 +65,7 @@ export function areaField(a: AreasResp, scale: "relative" | "absolute", rows: Ar
           for (let q = 0; q < list.length; q++) {
             const i = list[q], dx = xs[i] - x, dy = ys[i] - y, d2 = (dx * dx + dy * dy) * invR2;
             if (d2 >= 1) continue;
-            const d = Math.sqrt(d2), w = (1 - d) * (1 - d);
+            const kq = 1 - d2, w = kq * kq; // smooth biweight kernel
             sw += w; sv += w * vals[i]; se += w * ext[i];
           }
         }
@@ -82,8 +73,7 @@ export function areaField(a: AreasResp, scale: "relative" | "absolute", rows: Ar
         if (sw < 1e-6) continue;
         covered[idx] = 1;
         const v = sv / sw, c = colorOf(v), o = idx * 4;
-        dirt[idx] = Math.round(dirtOf(v) * 255);
-        const fade = Math.min(1, Math.max(0, (sw - 0.02) / 0.2));
+        const fade = Math.min(1, Math.max(0, (sw - 0.04) / 0.45));
         data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2];
         data[o + 3] = Math.round(fade * fade * (3 - 2 * fade) * (ALPHA + (ALPHA_EXTREME - ALPHA) * (se / sw)));
       }
@@ -95,7 +85,7 @@ export function areaField(a: AreasResp, scale: "relative" | "absolute", rows: Ar
       const src = px > 0 && (covered[i - 1] || data[(i - 1) * 4 + 3] === 0 && (data[(i - 1) * 4] | data[(i - 1) * 4 + 1] | data[(i - 1) * 4 + 2])) ? i - 1 : py > 0 ? i - W : -1;
       if (src >= 0) { data[i * 4] = data[src * 4]; data[i * 4 + 1] = data[src * 4 + 1]; data[i * 4 + 2] = data[src * 4 + 2]; }
     }
-    out = { W, H, data, coarse: makeCoarse(W, H, data, dirt), bounds: [lon0 + minX / kx, lat0 + minY / ky, lon0 + maxX / kx, lat0 + maxY / ky] };
+    out = { W, H, data, bounds: [lon0 + minX / kx, lat0 + minY / ky, lon0 + maxX / kx, lat0 + maxY / ky] };
   }
   (cache.get(a) ?? cache.set(a, new Map()).get(a)!).set(key, out);
   return out;
@@ -106,11 +96,6 @@ const toCanvas = (f: { W: number; H: number; data: Uint8ClampedArray }) => {
   c.width = f.W; c.height = f.H;
   c.getContext("2d")!.putImageData(new ImageData(f.data as Uint8ClampedArray<ArrayBuffer>, f.W, f.H), 0, 0);
   return c;
-};
-
-const isDark = () => {
-  const t = document.documentElement.dataset.theme;
-  return t ? t === "dark" : typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
 };
 
 /**
@@ -164,11 +149,8 @@ export class AreaSurface {
       if (t >= 1) { this.settledCanvas ??= toCanvas(base); return { layers: [this.surfaceLayer(this.settledCanvas, base.bounds)], settled: true }; }
       return { layers: [this.surfaceLayer(toCanvas(base), base.bounds)], settled: false };
     }
-    let surface: HTMLCanvasElement;
-    if (t >= 1) { this.settledCanvas ??= toCanvas(base); surface = this.settledCanvas; } else surface = toCanvas(base);
-    const amb = this.ambient(base, now);
-    const swell = 1 - 0.14 * this.calm(now) * (0.5 + 0.5 * Math.sin(now / 1000 * 1.3 - 1.2));
-    return { layers: [this.surfaceLayer(surface, base.bounds, "areas-surface", swell), ...(amb ? [this.surfaceLayer(amb.image, amb.bounds, "areas-ambient")] : [])], settled: false };
+    const k = this.calm(now);
+    return { layers: [this.surfaceLayer(this.flow(base, now, k), base.bounds)], settled: false };
   }
 
   private surfaceLayer(image: HTMLCanvasElement, bounds: Field["bounds"], id = "areas-surface", opacity = 1) {
@@ -182,41 +164,63 @@ export class AreaSurface {
   }
 
   /**
-   * The breathing: the whole surface slowly swells and relaxes (its opacity), and a soft tint rolls across it in a wave, a little stronger over the
-   * dirtier or hotter places. The tint is a tiny canvas stretched by the GPU, so each frame costs a few thousand pixels, not the whole raster.
-   * The tint is deep green in the light theme and pale in the dark one (the opposite would vanish). The colours that carry the values never change.
+   * The flowing colour field: every frame the field is read through a slow, smooth swirl (a warped sampling position), so the colours drift like
+   * currents, and a soft travelling light-and-dark variation rides along so the flow also shows over evenly coloured areas. The result is drawn at half
+   * resolution and smoothed by the GPU. The swirl is the only thing that moves: values are never changed, and it stands still (k = 0) while the
+   * forecast is playing or being scrubbed.
    */
-  private ambient(f: Field, now: number): { image: HTMLCanvasElement; bounds: Field["bounds"] } | null {
-    const co = (this.to ?? f).coarse;
-    if (!co) return null;
-    if (!this.sheen || this.sheen.image.width !== co.w || this.sheen.image.height !== co.h) {
-      const mk = () => { const c = document.createElement("canvas"); c.width = co.w; c.height = co.h; return c; };
-      this.sheen = { key: f, canvases: [mk(), mk()], image: new ImageData(co.w, co.h), flip: 0 };
+  private flow(f: Field, now: number, k: number): HTMLCanvasElement {
+    const w = Math.max(2, f.W >> 1), h = Math.max(2, f.H >> 1);
+    if (!this.sheen || this.sheen.image.width !== w || this.sheen.image.height !== h) {
+      const mk = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; };
+      this.sheen = { key: f, canvases: [mk(), mk()], image: new ImageData(w, h), flip: 0 };
     }
-    const sh = this.sheen, d = sh.image.data, k = this.calm(now);
-    const dark = isDark(), tt = now / 1000, cw = Math.cos(tt * 1.3), sw = Math.sin(tt * 1.3);
-    // inhale and exhale: where the wave is high the surface is tinted deeper, where it is low it is washed lighter (and the reverse in the dark theme)
-    const hiC = dark ? [226, 255, 234] : [8, 52, 30], loC = dark ? [0, 6, 3] : [255, 255, 255];
-    for (let i = 0, n = co.w * co.h; i < n; i++) {
-      const m = co.mask[i] / 255, o = i * 4;
-      if (m < 0.04) { d[o + 3] = 0; continue; }
-      const w = co.sinPh[i] * cw + co.cosPh[i] * sw, c = w >= 0 ? hiC : loC, amp = k * m * (0.72 + 0.28 * (co.dirt[i] / 255)) * Math.abs(w);
-      d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2];
-      d[o + 3] = amp * (w >= 0 ? (dark ? 105 : 125) : (dark ? 115 : 135));
+    const sh = this.sheen, d = sh.image.data, src = f.data, W = f.W, H = f.H, t = now / 1000;
+    const A = 0.035 * k, N = 0.16 * k;
+    // separable pieces of the swirl and the light variation: trig is evaluated per column and per row, not per pixel
+    const cx = (fn: (u: number) => number) => { const o = new Float32Array(w); for (let x = 0; x < w; x++) o[x] = fn(x / w); return o; };
+    const cy = (fn: (v: number) => number) => { const o = new Float32Array(h); for (let y = 0; y < h; y++) o[y] = fn(y / h); return o; };
+    const rowDx1 = cy((v) => Math.sin(v * 3.1 + t * 0.35)), colDy1 = cx((u) => Math.sin(u * 2.7 - t * 0.31));
+    const uS = cx((u) => Math.sin(2.3 * u - t * 0.27)), uC = cx((u) => Math.cos(2.3 * u - t * 0.27)), vS = cy((v) => Math.sin(2.3 * v)), vC = cy((v) => Math.cos(2.3 * v));
+    const u2S = cx((u) => Math.sin(2.1 * u + t * 0.23)), u2C = cx((u) => Math.cos(2.1 * u + t * 0.23)), v2S = cy((v) => Math.sin(2.1 * v)), v2C = cy((v) => Math.cos(2.1 * v));
+    const nxS = cx((u) => Math.sin(9 * u - t * 0.9)), nxC = cx((u) => Math.cos(9 * u - t * 0.9)), nyS = cy((v) => Math.sin(5 * v)), nyC = cy((v) => Math.cos(5 * v));
+    const mxS = cx((u) => Math.sin(-3 * u)), mxC = cx((u) => Math.cos(-3 * u)), myS = cy((v) => Math.sin(7 * v + t * 0.6)), myC = cy((v) => Math.cos(7 * v + t * 0.6));
+    for (let y = 0; y < h; y++) {
+      const fy = y / h;
+      for (let x = 0; x < w; x++) {
+        const fx = x / w;
+        const dx = A * (0.6 * rowDx1[y] + 0.4 * (uS[x] * vC[y] + uC[x] * vS[y]));
+        const dy = A * (0.6 * colDy1[x] + 0.4 * (u2C[x] * v2C[y] + u2S[x] * v2S[y]));
+        // bilinear read at the swirled position, so the half-resolution result stays smooth
+        let sx = (fx + dx) * (W - 1), sy = (fy + dy) * (H - 1);
+        sx = sx < 0 ? 0 : sx > W - 1 ? W - 1 : sx; sy = sy < 0 ? 0 : sy > H - 1 ? H - 1 : sy;
+        const x0 = sx | 0, y0 = sy | 0, x1 = x0 + 1 < W ? x0 + 1 : x0, y1 = y0 + 1 < H ? y0 + 1 : y0, tx = sx - x0, ty = sy - y0;
+        const i00 = (y0 * W + x0) * 4, i10 = (y0 * W + x1) * 4, i01 = (y1 * W + x0) * 4, i11 = (y1 * W + x1) * 4;
+        const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty, o = (y * w + x) * 4;
+        const n = N * 0.5 * (nxS[x] * nyC[y] + nxC[x] * nyS[y] + myS[y] * mxC[x] + myC[y] * mxS[x]), m = 1 + n;
+        const r = (src[i00] * w00 + src[i10] * w10 + src[i01] * w01 + src[i11] * w11) * m;
+        const g = (src[i00 + 1] * w00 + src[i10 + 1] * w10 + src[i01 + 1] * w01 + src[i11 + 1] * w11) * m;
+        const b = (src[i00 + 2] * w00 + src[i10 + 2] * w10 + src[i01 + 2] * w01 + src[i11 + 2] * w11) * m;
+        const a = (src[i00 + 3] * w00 + src[i10 + 3] * w10 + src[i01 + 3] * w01 + src[i11 + 3] * w11) * (1 + 0.8 * n);
+        d[o] = r > 255 ? 255 : r; d[o + 1] = g > 255 ? 255 : g; d[o + 2] = b > 255 ? 255 : b; d[o + 3] = a > 255 ? 255 : a < 0 ? 0 : a;
+      }
     }
     sh.flip ^= 1;
     const cv = sh.canvases[sh.flip];
     cv.getContext("2d")!.putImageData(sh.image, 0, 0);
-    return { image: cv, bounds: f.bounds };
+    return cv;
   }
 }
 
-/** Near-invisible grid so hover and tooltips still work per cell. */
-export function areaPickLayer(a: AreasResp, rows: AreaRow[]): Layer {
-  return new GridCellLayer<AreaRow>({
-    id: "areas", data: rows, getPosition: (r: AreaRow) => [r.lon, r.lat], cellSize: a.cell_m, coverage: 1, extruded: false, material: false,
-    getFillColor: [0, 0, 0, 4], pickable: true, updateTriggers: { getFillColor: [a.metric, a.time] },
-  } as never);
+/** The area cell under the pointer (within three quarters of a cell), found by distance: no layer is drawn for hover, so nothing can show through the surface. */
+export function nearestRow(rows: AreaRow[], lon: number, lat: number, cellM: number): AreaRow | null {
+  const kx = 111320 * Math.cos((lat * Math.PI) / 180), ky = 110574, limit = (cellM * 0.75) ** 2;
+  let best: AreaRow | null = null, bd = limit;
+  for (const r of rows) {
+    const dx = (r.lon - lon) * kx, dy = (r.lat - lat) * ky, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = r; }
+  }
+  return best;
 }
 
 /** A small, slow ping on the worst places (from the real "worst areas" list). */
@@ -237,3 +241,11 @@ export function pulseLayers(places: AreaPlace[], now: number, rgb: RGB = [196, 7
 }
 
 export const prefersReducedMotion = reduced;
+
+/** Near-invisible grid so hover and tooltips still work per cell. */
+export function areaPickLayer(a: AreasResp, rows: AreaRow[]): Layer {
+  return new GridCellLayer<AreaRow>({
+    id: "areas", data: rows, getPosition: (r: AreaRow) => [r.lon, r.lat], cellSize: a.cell_m, coverage: 1, extruded: false, material: false,
+    getFillColor: [0, 0, 0, 4], pickable: true, updateTriggers: { getFillColor: [a.metric, a.time] },
+  } as never);
+}

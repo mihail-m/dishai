@@ -11,6 +11,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from . import google_routes, traffic
+from .advice import _pollen_level
 from .cai import config as C
 from .cai.features import Features, compute_features
 from .cai import heat
@@ -28,6 +29,7 @@ MODEL_TTL = 300
 
 CLASS_CODE = {"major": 0, "collector": 1, "local": 2, "path": 3}
 Mode = Literal["walk", "bike"]
+Species = Literal["alder", "birch", "grass", "mugwort", "olive", "ragweed"]
 
 
 def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, build_sensors_24h=None, district_at=None,
@@ -283,18 +285,30 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         from_: str = Query(alias="from"), to: str = Query(...), lam: float | None = Query(None, alias="lambda", ge=0, le=3),
         hour: int | None = None, mode: Mode = "walk", scenario: str | None = scenario_query,
         forecast_id: str | None = None, include_google: bool = True,
+        allergy: bool = False, species: list[Species] = Query([]),
     ):
         o, d = _pt(from_, "from"), _pt(to, "to")
         model, fc, router, net = await get_model(parse_scenario(scenario), mode, forecast_id)
         i = hour_of(hour, fc)
         h = model.hour(i)
+        G = static[("v", mode)][1].G
+        cb, allergy_info = h["cr"], None
+        if allergy:  # experimental: add the user's pollen level times the street's greenery to the burden (see C.POLLEN_GREEN_WEIGHT)
+            pol = (fc["hours"][i].get("pollen") or {})
+            level = max((_pollen_level(k, v) for k, v in pol.items() if v is not None and (not species or k in species)), default=0)
+            cb = h["cr"] + C.POLLEN_GREEN_WEIGHT * level * G
+            allergy_info = {"level": level, "weight": C.POLLEN_GREEN_WEIGHT, "species": sorted(set(species)),
+                            "note": "Experimental: streets with more greenery count as worse in proportion to the pollen level. Greenery is only a proxy for pollen sources."}
         try:
-            res = await asyncio.to_thread(router.routes, o, d, h["cr"], h["pm"], h["cai"], lam)
+            res = await asyncio.to_thread(router.routes, o, d, cb, h["pm"], h["cai"], lam)
         except RouteError as exc:
             raise HTTPException(422, str(exc)) from exc
         routes = {k: {kk: vv for kk, vv in v.items() if kk != "edges"} for k, v in res.items()}
+        for k, v in res.items():  # length-weighted greenery along the route, so the allergy trade-off is visible
+            ln = net.e_len[v["edges"]].astype(float)
+            routes[k]["mean_green_pct"] = round(100 * float((G[v["edges"]] * ln).sum() / ln.sum()), 1) if ln.sum() else 0.0
         confidence = None  # is any alternative really cleaner than the fastest route, given the street-level uncertainty?
-        if getattr(model, "spatial", None) and "fastest" in res:
+        if getattr(model, "spatial", None) and "fastest" in res and not allergy:
             month = int(h["ctx"].time[5:7]) if h["ctx"].time[5:7].isdigit() else None
             confidence = route_confidence.summarise({
                 k: route_confidence.compare(net, res["fastest"]["edges"], v["edges"], routes["fastest"]["mean_pm25"], v["mean_pm25"], model.spatial, month)
@@ -304,7 +318,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
         out = {
             "from": o, "to": d, "hour": i, "time": h["ctx"].time, "scenario": parse_scenario(scenario), "mode": mode,
             "from_label": static[("namer", mode)].point(*o), "to_label": static[("namer", mode)].point(*d),
-            "routes": routes, "confidence": confidence, "google_status": "no_key", "google_baseline": None,
+            "routes": routes, "confidence": confidence, "allergy": allergy_info, "google_status": "no_key", "google_baseline": None,
             "google_available": mode == "walk" and google_routes.enabled(),
             "snapped": {"used": False, "polyline": clean, "eta_min": None, "waypoints": []},
             "open_in_google_maps": google_routes.maps_url(o, d),

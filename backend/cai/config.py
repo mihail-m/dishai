@@ -98,6 +98,10 @@ ROUTE_REL_MAX = 2.0  # cap on the relative burden so a single hot spot cannot do
 ROUTE_K = 2.0  # cost = time * (1 + lambda * cost_burden * ROUTE_K)
 ROUTE_MAX_EXTRA = 0.30  # cleanest/balanced routes are capped at +30 % time over fastest
 LAMBDAS = {"fastest": 0.0, "balanced": 1.0, "cleanest": 3.0}
+# Pollen-aware routing (EXPERIMENTAL, an ASSUMPTION): for an allergic user the street's burden grows by POLLEN_GREEN_WEIGHT * level * G, where
+# level is the user's pollen level that hour (0 none .. 3 high) and G the greenery 0..1 (tree canopy + NDVI). Greenery is only a proxy for
+# the plants that shed pollen; nothing here is validated against exposure or symptoms.
+POLLEN_GREEN_WEIGHT = 0.3
 SNAP_MAX_M = 500.0  # origin/destination must be within this of the walking network
 GOOGLE_SNAP_M = 25.0
 

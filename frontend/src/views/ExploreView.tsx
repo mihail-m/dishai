@@ -27,7 +27,7 @@ export default function ExploreView({ stage, fc, scenario, hourIndex, setHourInd
       <div className="peek-hide grid gap-4">
         {layer === "air" ? <CaiView stage={stage} fc={fc} scenario={scenario} hourIndex={hourIndex} geo={geo} district={district} />
           : layer === "heat" ? <HeatView stage={stage} scenario={scenario} hourIndex={window?.hours[hourIndex] ?? 0} />
-          : <NetworkView stage={stage} scenario={scenario} hourIndex={window?.hours[hourIndex] ?? 0} layer={layer} />}
+          : <NetworkView stage={stage} scenario={scenario} />}
         <div>
           {stage.reference?.enabled && <Acc title="Official air stations"><ReferenceCard ref_={stage.reference} /></Acc>}
           <Acc title="How reliable is this?"><ValidationCard key={window?.id} scenario={scenario} /></Acc>

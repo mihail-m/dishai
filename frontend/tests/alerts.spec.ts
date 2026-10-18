@@ -84,7 +84,7 @@ test("a green ticket is a watch alert with a link, and the regional card shows C
   await expect(strip.getByRole("heading", { name: "Green ticket tomorrow: ride public transport" })).toBeVisible();
   await strip.getByText("What to do").first().click();
   await expect(strip.getByRole("link", { name: "Announcement" })).toHaveAttribute("href", "https://example.org/a");
-  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByRole("button", { name: "My health", exact: true }).first().click();
   await page.getByText("Dust, smoke and regional air").click();
   await expect(page.getByText("Desert dust: coarse particles.")).toBeVisible();
   await expect(page.getByText("worse than usual")).toBeVisible();
@@ -94,7 +94,7 @@ test("a green ticket is a watch alert with a link, and the regional card shows C
 test("without an announcement the card says so and does not invent one", async ({ page }) => {
   await page.route("**/api/plumes*", (route) => route.fulfill({ json: { ...plumes, green_ticket: [] } }));
   await page.goto("/");
-  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByRole("button", { name: "My health", exact: true }).first().click();
   await page.getByText("Dust, smoke and regional air").click();
   await expect(page.getByText("Green ticket: none announced.")).toBeVisible();
 });
