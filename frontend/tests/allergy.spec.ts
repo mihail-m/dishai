@@ -40,9 +40,15 @@ test("calendar squares explain themselves and the symptom check-in asks once a d
   await expect(page.getByRole("button", { name: "Mild" })).toHaveCount(0);
 });
 
-test("the route tab has no options: just from, to and the cleanest route", async ({ page }) => {
+test("the route tab has no settings: from, to, and the alternatives with time and pollution saved", async ({ page }) => {
   await page.getByRole("navigation", { name: "Views" }).first().getByRole("button", { name: "Route" }).click();
-  await expect(page.getByText("Cleanest route", { exact: true })).toBeVisible();
+  const options = page.getByRole("region", { name: "Route options" });
+  await expect(options.getByText("17% less polluted air")).toBeVisible();
+  await expect(options.getByText("+3 min")).toBeVisible();
+  await expect(options.getByRole("row", { name: /Fastest/ })).toBeVisible();
+  await expect(options.getByRole("row", { name: /Cleanest/ })).toContainText("-17%");
+  await expect(options.getByRole("link", { name: /Open cleanest in Google Maps/ })).toBeVisible();
+  await expect(options.getByRole("link", { name: /Open fastest/ })).toBeVisible();
   await expect(page.getByRole("complementary", { name: "Route planner" }).getByRole("slider")).toHaveCount(0);
   await expect(page.getByRole("complementary", { name: "Route planner" }).getByRole("checkbox")).toHaveCount(0);
 });

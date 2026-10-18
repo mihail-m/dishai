@@ -88,8 +88,9 @@ export async function mockMapApi(page: Page) {
         const to = (url.searchParams.get("to") ?? "42.69,23.35").split(",").map(Number);
         const path = [[from[1], from[0]], [to[1], to[0]]];
         const stats = { time_min: mode === "bike" ? 5 : 15, distance_m: 1000, mean_pm25: 12, dose: 180, mean_cai: 70, dose_change_pct: 0, time_change_pct: 0, lambda_used: 3, polyline: path };
+        const clean = { ...stats, time_min: stats.time_min + 3, distance_m: 1150, mean_pm25: 10, dose: 150, dose_change_pct: -17, time_change_pct: 20 };
         data = { from, to, from_label: "Start point", to_label: "End point", hour, time, scenario, mode,
-          routes: { fastest: stats, balanced: stats, cleanest: stats, chosen: stats }, google_status: mode === "bike" ? "n/a" : "no_key", google_baseline: null,
+          routes: { fastest: stats, balanced: stats, cleanest: clean, chosen: clean }, google_status: mode === "bike" ? "n/a" : "no_key", google_baseline: null,
           snapped: { used: false, polyline: path, eta_min: null, waypoints: [] }, open_in_google_maps: "https://www.google.com/maps", open_in_google_maps_clean: "https://www.google.com/maps", note: "" };
         break;
       }

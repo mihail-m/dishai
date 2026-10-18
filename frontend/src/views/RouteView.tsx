@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PickingInfo } from "@deck.gl/core";
-import type { Mode, RouteResp, Scenario } from "../types";
+import type { Mode, RouteResp, RouteStats, Scenario } from "../types";
 import type { Stage } from "../stage";
 import { useHourlyPreload } from "../forecast";
 import { api2 } from "../api";
 import { PRESET_PAIRS, GOOGLE_KEY } from "../map/config";
-import { markerLayer, routeLayers } from "../map/layers";
+import { markerLayer, routeLayers, ROUTE_COLORS } from "../map/layers";
 import PlaceSearch from "../components/PlaceSearch";
 
 type LL = [number, number]; // lat, lng
@@ -13,6 +13,17 @@ interface Props { stage: Stage; scenario: Scenario; hourIndex: number }
 
 // One route, tuned for the cleanest air within the time cap the router allows: the only choice is how you travel.
 const LAMBDA = 3;
+
+type Name = "fastest" | "balanced" | "cleanest";
+const NAMES: Record<Name, string> = { fastest: "Fastest", balanced: "Balanced", cleanest: "Cleanest" };
+const css = (n: Name) => `rgb(${ROUTE_COLORS[n].join(",")})`;
+const ll = (p: [number, number]) => `${p[1].toFixed(6)},${p[0].toFixed(6)}`; // polylines are [lon, lat], Google wants lat,lng
+
+/** A Google Maps walking link through a handful of points along our own route, so Google follows the same streets. */
+function mapsVia(res: RouteResp, line: [number, number][], mode: Mode) {
+  const picks = Array.from({ length: 8 }, (_, i) => line[Math.round(((i + 1) * (line.length - 1)) / 9)]).filter(Boolean);
+  return `https://www.google.com/maps/dir/?api=1&travelmode=${mode === "bike" ? "bicycling" : "walking"}&origin=${res.from.join(",")}&destination=${res.to.join(",")}&waypoints=${picks.map(ll).join("%7C")}`;
+}
 
 export default function RouteView({ stage, scenario, hourIndex }: Props) {
   const [from, setFrom] = useState<LL | null>(PRESET_PAIRS[1].from as unknown as LL);
@@ -50,22 +61,37 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
     return () => controller.abort();
   }, [googleKey, history.value?.google_available]);
 
-  const layers = useMemo(() => {
-    const lines: { name: string; line: [number, number][]; width?: number }[] = [];
-    if (res) {
-      lines.push({ name: "fastest", line: res.routes.fastest.polyline, width: 4 });
-      lines.push({ name: "cleanest", line: res.snapped.used ? res.snapped.polyline : res.routes.cleanest.polyline, width: 8 });
+  // fastest first, then the alternatives that are really different routes (the router often returns the same street sequence for all three)
+  const options = useMemo(() => {
+    if (!res) return [] as { name: Name; r: RouteStats; line: [number, number][]; link: string }[];
+    const out: { name: Name; r: RouteStats; line: [number, number][]; link: string }[] = [];
+    for (const name of ["fastest", "balanced", "cleanest"] as Name[]) {
+      const r = res.routes[name];
+      // "the same route" means the same to the precision shown: under half a minute, half a percent of exposure and one percent of length apart
+      if (!r || out.some((o) => Math.abs(o.r.time_min - r.time_min) < 0.5 && Math.abs(o.r.dose_change_pct - r.dose_change_pct) < 0.5 && Math.abs(o.r.distance_m - r.distance_m) < 0.01 * o.r.distance_m)) continue;
+      const line = name === "cleanest" && res.snapped.used ? res.snapped.polyline : r.polyline;
+      const link = name === "fastest" ? res.open_in_google_maps : name === "cleanest" ? res.open_in_google_maps_clean : mapsVia(res, line, mode);
+      out.push({ name, r, line, link });
     }
+    return out;
+  }, [res, mode]);
+  const [choice, setChoice] = useState<Name | null>(null);
+  useEffect(() => setChoice(null), [routeKey]);
+  const recommended = options.find((o) => o.name === "cleanest") ?? options[0];
+  const selected = options.find((o) => o.name === choice) ?? recommended;
+
+  const layers = useMemo(() => {
+    const lines = options.map((o) => ({ name: o.name, line: o.line, width: o === selected ? 8 : 4 }));
     const pts = [];
     if (from) pts.push({ id: "a", lonlat: [from[1], from[0]] as [number, number], label: "A", color: [31, 111, 92] as [number, number, number] });
     if (to) pts.push({ id: "b", lonlat: [to[1], to[0]] as [number, number], label: "B", color: [192, 57, 43] as [number, number, number] });
     return [...routeLayers(lines), ...markerLayer(pts)];
-  }, [res, from, to]);
+  }, [options, selected, from, to]);
 
   useEffect(() => {
     set({
       layers, base: "dim", cursor: picking ? "crosshair" : undefined,
-      legend: { kind: "route", title: "Routes", bar: <div className="mt-1.5 grid gap-1"><span className="flex items-center gap-2"><i className="inline-block h-1 w-5 rounded" style={{ background: "#1f8a70" }} />Cleanest</span><span className="flex items-center gap-2"><i className="inline-block w-5" style={{ borderTop: "3px solid #4a5563" }} />Fastest</span></div> },
+      legend: { kind: "route", title: "Routes", bar: <div className="mt-1.5 grid gap-1">{(["cleanest", "balanced", "fastest"] as Name[]).map((n) => <span key={n} className="flex items-center gap-2"><i className="inline-block h-1 w-5 rounded" style={{ background: css(n) }} />{NAMES[n]}</span>)}</div> },
       onPick: (info: PickingInfo) => {
         const p = pickRef.current;
         if (!p || !info.coordinate) return;
@@ -84,9 +110,8 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [res?.from.join(), res?.to.join()]);
 
-  const main = res?.routes.cleanest ?? null;
-  const noBetter = !!res?.confidence && !res.confidence.cleaner_exists;
-  const gain = main ? Math.abs(Math.round(main.dose_change_pct)) : 0;
+  const fastest = res?.routes.fastest ?? null;
+  const same = !!res && options.length === 1; // every alternative is the same street sequence as the fastest
   const place = (v: LL | null, label: string, fallback: string) => (v ? label || v.map((x) => x.toFixed(4)).join(", ") : fallback);
 
   return (
@@ -112,20 +137,40 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
 
       {err && <div className="card p-3 text-sm" style={{ color: "var(--warn)" }}>{err}</div>}
       {busy && !res && <div className="card h-40 animate-pulse" />}
-      {res && main && (
-        <section className="reco" aria-label="Recommended route">
-          <div className="eyebrow" style={{ color: "var(--accent)" }}>{noBetter ? "No clearly cleaner route here" : "Cleanest route"}</div>
-          <div className="big">{noBetter ? "Take the fastest, or the one you prefer" : gain > 0 ? `${gain}% less polluted air` : "Same air as the fastest route"}</div>
-          {noBetter && <p className="muted m-0 text-[13px]">{res.confidence?.message}</p>}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="stat"><b className="tabular-nums">{Math.round(main.time_min)} min</b><span>{main.time_change_pct ? `+${main.time_change_pct}% vs fastest` : "same as fastest"}</span></div>
-            <div className="stat"><b className="tabular-nums">{main.mean_pm25} µg/m³</b><span>average PM2.5 on the route</span></div>
+      {res && selected && fastest && (
+        <section className="reco" aria-label="Route options">
+          <div className="eyebrow" style={{ color: "var(--accent)" }}>{same ? "All routes are the same" : "Your options"}</div>
+          <div className="big">
+            {same ? "No cleaner way here"
+              : selected.name === "fastest" ? "The fastest route"
+              : selected.r.dose_change_pct < 0 ? `${Math.abs(Math.round(selected.r.dose_change_pct))}% less polluted air` : "About the same air"}
+            {!same && selected.name !== "fastest" && <span className="muted text-base font-semibold">{` · ${Math.round(selected.r.time_min - fastest.time_min) > 0 ? `+${Math.round(selected.r.time_min - fastest.time_min)} min` : "same time"}`}</span>}
           </div>
+          {same && <p className="muted m-0 text-[13px]">{res.confidence?.message ?? "The cleaner alternatives follow the same streets as the fastest route."} The air is similar along every street between these two places, so a detour would only add time.</p>}
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="faint text-left"><th className="py-1 font-normal">Route</th><th className="font-normal">Time</th><th className="font-normal">Pollution exposure</th><th className="font-normal">PM2.5</th></tr>
+            </thead>
+            <tbody>
+              {options.map((o) => {
+                const extra = Math.round(o.r.time_min - fastest.time_min), dose = Math.round(o.r.dose_change_pct);
+                return (
+                  <tr key={o.name} onClick={() => setChoice(o.name)} className="cursor-pointer border-t" style={{ borderColor: "var(--line)", background: o === selected ? "var(--surface-2)" : undefined }} aria-selected={o === selected}>
+                    <td className="py-2"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm" style={{ background: css(o.name) }} /><b>{NAMES[o.name]}</b></td>
+                    <td className="tabular-nums">{Math.round(o.r.time_min)} min<span className="faint"> {extra > 0 ? `(+${extra})` : ""}</span></td>
+                    <td className="tabular-nums"><b style={{ color: dose < 0 ? "var(--good)" : undefined }}>{dose === 0 ? "baseline" : `${dose > 0 ? "+" : ""}${dose}%`}</b></td>
+                    <td className="tabular-nums">{o.r.mean_pm25} µg/m³</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!same && res.confidence && !res.confidence.cleaner_exists && <p className="muted m-0 text-xs">{res.confidence.message}</p>}
           <div className="flex flex-wrap gap-2">
-            {(!res.confidence || res.confidence.cleaner_exists) && <a className="btn btn-primary" href={res.open_in_google_maps_clean} target="_blank" rel="noreferrer">Open cleanest in Google Maps ↗</a>}
-            <a className="btn" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
+            <a className="btn btn-primary" href={selected.link} target="_blank" rel="noreferrer">{same ? "Open in Google Maps ↗" : `Open ${NAMES[selected.name].toLowerCase()} in Google Maps ↗`}</a>
+            {selected.name !== "fastest" && <a className="btn" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open fastest ↗</a>}
           </div>
-          <p className="faint m-0 text-[11px]">Exposure is modelled PM2.5 × minutes. The cleanest route adds at most 30 % to the travel time. Cycling assumes 2× the walking breathing rate. Routes follow OpenStreetMap pedestrian and cycling data; times assume 4.8 km/h walking and 15 km/h cycling. No location is stored. Indicative.</p>
+          <p className="faint m-0 text-[11px]">Exposure is modelled PM2.5 × minutes compared with the fastest route; cycling assumes 2× the walking breathing rate. Balanced and cleanest add at most 30 % to the travel time. Routes follow OpenStreetMap data; times assume 4.8 km/h walking and 15 km/h cycling. No location is stored. Indicative.</p>
         </section>
       )}
     </div>
