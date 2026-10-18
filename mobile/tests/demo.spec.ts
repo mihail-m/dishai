@@ -203,7 +203,7 @@ test('small screens and reduced motion retain reachable navigation and dialogs',
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  for (const name of ['Routes', 'My day', 'Today']) {
+  for (const name of ['Routes', 'My day', 'Progress', 'Today']) {
     await page.getByRole('button', { name, exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const nav = await page.locator('.glass-tabbar').boundingBox();
@@ -219,11 +219,11 @@ test('small screens and reduced motion retain reachable navigation and dialogs',
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('guided presentation takes the user through all five demo moments', async ({ page }) => {
+test('guided presentation takes the user through all six demo moments', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'App settings' }).click();
   await page.getByRole('button', { name: 'Take the demo tour' }).click();
-  await expect(page.locator('.demo-director')).toContainText('1/5');
+  await expect(page.locator('.demo-director')).toContainText('1/6');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('slider', { name: 'Forecast hour', exact: true })).toHaveValue('5');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
@@ -232,6 +232,9 @@ test('guided presentation takes the user through all five demo moments', async (
   await expect(page.locator('.route-option.is-selected')).toContainText('Cleanest');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.locator('.window-feature')).toBeVisible();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Progress', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.demo-director')).toContainText('6/6');
   await page.getByRole('button', { name: 'Finish', exact: true }).click();
   await expect(page.locator('.demo-director')).toHaveCount(0);
 });

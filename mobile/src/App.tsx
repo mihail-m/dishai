@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, CloudSun, Compass, Expand, Footprints, House, Info, Layers2,
   LoaderCircle, MapPin, Maximize2, Minimize2, Navigation, PanelTop,
   Play, Radio, RefreshCw, Route, ShieldCheck, SlidersHorizontal, Sparkles, Sun, Sunrise,
-  Timer, Waves, Wind, X,
+  Timer, Trophy, Waves, Wind, X,
 } from 'lucide-react';
 import { loadForecast, preloadRoutes, formatTime, windowEndTime, DEMO_TRIP, resolveDemoPlace } from './data';
 import type { Coordinate, DataMode, ForecastData, ForecastHour, Place, RouteData, RouteId, RoutePlan } from './types';
@@ -13,9 +13,10 @@ import ForecastChart from './components/ForecastChart';
 import RouteMap from './components/RouteMap';
 import PlacePicker from './components/PlacePicker';
 import DepartureWheel from './components/DepartureWheel';
+import ProgressPage from './components/ProgressPage';
 import { DEMO_SENSORS, loadStreetAir, type StreetAirData } from './map-air';
 
-type Tab = 'today' | 'routes' | 'insights';
+type Tab = 'today' | 'routes' | 'insights' | 'progress';
 type Sheet = 'settings' | 'air' | 'window' | 'break' | 'layers' | null;
 type SavedPlan = { kind: 'window' | 'break'; time: string; end: string; duration?: number; mode: DataMode };
 const native = Capacitor.isNativePlatform();
@@ -178,10 +179,11 @@ export default function App() {
     else if (next === 2) { go('routes'); setSelectedRoute('fast'); }
     else if (next === 3) { setSelectedRoute('clean'); }
     else if (next === 4) { go('insights'); }
+    else if (next === 5) { go('progress'); }
     else { setTour(false); notify('Demo complete. Explore at your own pace.'); return; }
     setTourStep(next);
   }
-  const tourTitles = ['Your day, at a glance', 'Find a clearer part of the day', 'Compare the fastest route', 'See the lower-exposure option', 'Turn the forecast into a plan'];
+  const tourTitles = ['Your day, at a glance', 'Find a clearer part of the day', 'Compare the fastest route', 'See the lower-exposure option', 'Turn the forecast into a plan', 'See your choices add up'];
 
   return <div className={`presentation ${native ? 'is-native' : ''} ${focus ? 'is-focused' : ''}`}>
     {!native && <>
@@ -197,8 +199,9 @@ export default function App() {
         <div className="header-actions"><button className={`data-chip ${mode}`} onClick={() => setSheet('settings')}><span/>{mode === 'demo' ? 'Demo' : 'Connected'}</button><button className="profile-button" aria-label="App settings" onClick={() => setSheet('settings')}><SlidersHorizontal size={17}/></button></div>
       </header>
       <div className={`app-scroll ${tab === 'routes' ? 'map-scroll' : ''}`} ref={scroller}>
-        {error && <div className="error-banner" role="alert"><Info size={18}/><div><strong>{forecast ? 'Couldn’t refresh the forecast' : 'Let’s reconnect'}</strong><p>{error}</p><button onClick={() => setRefresh(n => n + 1)}>Try again</button>{mode === 'live' && <button onClick={() => changeMode('demo')}>Open demo</button>}</div></div>}
-        {!forecast && !error && <div className="loading-state"><Orb hour={0}/><h2>A fresh perspective.</h2><p><LoaderCircle size={16} className="spin"/> Preparing your 24-hour outlook</p></div>}
+        {tab !== 'progress' && error && <div className="error-banner" role="alert"><Info size={18}/><div><strong>{forecast ? 'Couldn’t refresh the forecast' : 'Let’s reconnect'}</strong><p>{error}</p><button onClick={() => setRefresh(n => n + 1)}>Try again</button>{mode === 'live' && <button onClick={() => changeMode('demo')}>Open demo</button>}</div></div>}
+        {tab !== 'progress' && !forecast && !error && <div className="loading-state"><Orb hour={0}/><h2>A fresh perspective.</h2><p><LoaderCircle size={16} className="spin"/> Preparing your 24-hour outlook</p></div>}
+        {tab === 'progress' && <ProgressPage onPlanRoute={() => { setSelectedRoute('clean'); go('routes'); }}/>}
         {forecast && tab === 'today' && <main className="today-page page-enter">
           <div className="welcome"><div><p className="overline">{calendarLabel(hour?.time).toUpperCase()} · YOUR OUTLOOK</p><h1>Your day,<br/><span>a little clearer.</span></h1></div><div className="weather-pill"><CloudSun size={25}/><span>{hour?.temperature === null ? '—' : Math.round(hour?.temperature ?? 0)}°<small>Sofia</small></span></div></div>
           <section className={`air-card glass quality-${hour?.quality}`} aria-label="Air quality summary">
@@ -259,12 +262,12 @@ export default function App() {
           <div className="insight-transparency"><ShieldCheck size={18}/><p>A forecast helps you plan.<br/><span>Local and indoor conditions still matter.</span></p></div>
         </main>}
       </div>
-      <nav className="glass-tabbar" aria-label="Mobile navigation">{([{ id: 'today', title: 'Today', icon: Sun }, { id: 'routes', title: 'Routes', icon: Compass }, { id: 'insights', title: 'My day', icon: Sparkles }] as const).map(({ id, title, icon: Icon }) => <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => go(id)}><span><Icon size={21}/>{tab === id && <i/>}</span><span>{title}</span></button>)}</nav>
+      <nav className="glass-tabbar" aria-label="Mobile navigation">{([{ id: 'today', title: 'Today', icon: Sun }, { id: 'routes', title: 'Routes', icon: Compass }, { id: 'insights', title: 'My day', icon: Sparkles }, { id: 'progress', title: 'Progress', icon: Trophy }] as const).map(({ id, title, icon: Icon }) => <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => go(id)}><span><Icon size={21}/>{tab === id && <i/>}</span><span>{title}</span></button>)}</nav>
       {!native && <div className="home-indicator" aria-hidden="true"/>}
       {toast && <div className="toast" role="status"><Check size={16}/>{toast}</div>}
     </div>
     {!native && <aside className="presentation-side"><span className="side-line"/><span>DESIGNED AROUND<br/>YOUR EVERYDAY.</span><div className="palette-dots"><i/><i/><i/><i/></div></aside>}
-    {tour && <div className="demo-director"><div><small>DEMO WALKTHROUGH · {tourStep + 1}/5</small><strong>{tourTitles[tourStep]}</strong></div><button className="tour-next" onClick={advanceTour}>{tourStep === 4 ? 'Finish' : 'Next'}<ArrowRight size={16}/></button><button className="tour-close" onClick={() => setTour(false)} aria-label="Close walkthrough"><X size={16}/></button></div>}
+    {tour && <div className="demo-director"><div><small>DEMO WALKTHROUGH · {tourStep + 1}/{tourTitles.length}</small><strong>{tourTitles[tourStep]}</strong></div><button className="tour-next" onClick={advanceTour}>{tourStep === tourTitles.length - 1 ? 'Finish' : 'Next'}<ArrowRight size={16}/></button><button className="tour-close" onClick={() => setTour(false)} aria-label="Close walkthrough"><X size={16}/></button></div>}
     {editingPlace && <PlacePicker endpoint={editingPlace} current={plan[editingPlace]} mode={mode} onSelect={place => choosePlace(editingPlace, place)} onClose={() => setEditingPlace(null)} onPickMap={() => { setPickingPlace(editingPlace); setEditingPlace(null); }}/>}
     {sheet === 'settings' && <Modal title="Your AirPath" onClose={() => setSheet(null)}><p className="sheet-intro">A clearer outlook, wherever your day takes you.</p><p className="field-label">DATA SOURCE</p><div className="mode-options"><button aria-pressed={mode === 'demo'} onClick={() => changeMode('demo')}><Sparkles size={23}/><span><strong>Explore the demo</strong><small>A complete day in Sofia. Ready offline.</small></span>{mode === 'demo' && <Check size={18}/>}</button><button aria-pressed={mode === 'live'} onClick={() => changeMode('live')}><AudioLines size={23}/><span><strong>Connect to AirPath</strong><small>Use forecasts from your running service.</small></span>{mode === 'live' && <Check size={18}/>}</button></div><div className="settings-note"><Info size={17}/><p>Demo readings and exposure comparisons are illustrative. Connected mode uses the project’s existing forecasting and routing services.</p></div><button className="primary-button" onClick={() => { setSheet(null); startTour(); }}><Play size={16}/> Take the demo tour</button></Modal>}
     {sheet === 'layers' && <Modal title="Your map, in more detail" onClose={() => setSheet(null)}><h3>Street colors</h3><p className="sheet-copy">Colors follow the departure hour selected above the map. A higher AirPath street score appears greener; lower scores appear warmer. In Connected mode, this is the same model used by the web map, combining air quality and heat. It is not an official air-quality index.</p><div className="layer-scale"><span>0 · Lower</span><i className="street-score-ramp"/><span>100 · Higher</span></div><h3>Sensor readings</h3><p className="sheet-copy">Tap a sensor for its PM2.5 reading and observation time. These readings stay fixed when you move into the future; they are observations, not predictions.</p><p className="small-note">{mode === 'demo' ? 'Demo street colors and sensor readings are illustrative. Both map layers start off.' : forecast?.source === 'fixture' ? 'This forecast uses saved data. Sensor readings are saved observations.' : 'Street estimates and community sensor readings can differ because their location and timing differ.'}</p><button className="primary-button" onClick={() => setSheet(null)}>Back to the map</button></Modal>}

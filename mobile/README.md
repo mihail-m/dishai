@@ -18,6 +18,12 @@ If a double-click does not open the browser, use `http://127.0.0.1:5180` directl
 
 Start with **Today**, move the 24-hour slider, and open the air-quality explanation. Compare **Fastest**, **Balanced**, and **Cleanest**, then open a suggested ventilation window or outdoor break and choose **Save to my day**. Saved plans persist locally in this browser or emulator. The app settings also contain **Take the demo tour**, which walks through a repeatable presentation sequence. The forecast refresh button fetches a complete new 24-hour outlook; the slider uses the data already loaded.
 
+### Weekly progress
+
+The fourth tab, **Progress**, presents a sample week of travel choices: estimated route exposure, transport carbon savings, a streak, points, and a six-walk challenge. Tap a day to explore its activity. **Add demo walk** completes Sunday's sample walk, updates the totals, and unlocks the weekly milestone. Completion is saved on this device and cannot be counted twice. The calculation details include a reset for repeat recordings; **Plan a cleaner route** opens Routes. The guided tour ends on this tab.
+
+Progress is explicitly a demo in both Demo and Connected modes, and remains available if the forecast service is offline. It does not record real journeys. Air comparisons use duration-weighted route PM2.5 estimates for the sample walks, not measured inhaled pollution. Carbon comparisons use the sample journey distances and stated illustrative transport factors against a usual-car baseline, not a person's measured emissions or full carbon footprint. The methodology is available from the tab.
+
 ### Change the route
 
 Tap either address in **Routes** to search local streets and landmarks in English or Bulgarian, or choose **Choose on map** and tap a street. Reverse swaps both endpoints; **Reset trip** restores the longer Prince’s Garden → Pirotska Street demo (about 2.1–2.4 km). The three alternatives follow actual bundled OpenStreetMap streets. Tap a route card or path to select it, and **Expand map** to see more of the journey.
