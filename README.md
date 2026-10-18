@@ -62,7 +62,7 @@ The forecast slider covers **48 hourly slots starting with the current Sofia hou
 including tomorrow when needed. Street colours are loaded together in one compact forecast snapshot. Opening the route planner or network view
 preloads every hour of the window for its current settings; progress appears below the slider. Once it says **all hours ready**,
 scrubbing uses memory without fetching each hour. Changing endpoints, travel mode or route preference prepares
-a new set; recent sets are reused when switching tabs. Heat is a static summer layer and is loaded once per mode.
+a new set; recent sets are reused when switching tabs. The heat layer is hourly like the air layer: one request per forecast hour, preloaded the same way.
 
 **Refresh forecast** fetches weather, air quality and sensors again, bypasses the upstream cache, and rebuilds
 the full window. The selected time is kept if it remains in the new window. A failed refresh keeps the previous
@@ -79,9 +79,9 @@ set `PLAYWRIGHT_CHANNEL=chrome` before running the tests.
 
 | Screen | What it shows | Plan measure it supports |
 |---|---|---|
-| **Explore** | One panel with a plain-language status card (verdict, PM2.5, next-24-hour outlook) and three layers. **Air quality**: neighbourhood squares (or indicative streets, "Why this colour?" breakdown), suggestions for where you are (open the windows, take a walk, run the air purifier), based on the air around your location when you share it (kept in the tab, never stored or sent). **Heat**: Landsat surface temperature, coolest and hottest spots. **Clean paths**: clean channels and busy streets with poor air with suggested measures, pedestrians or cyclists. The time bar at the bottom is the forecast chart: PM2.5 or air trapping on Air quality, feels-like temperature on Heat, and a slim control on Clean paths and Route. Official stations, validation and forecast charts behind accordions | A.3.4 early warning, A.3.3 self-cleaning potential of the air, A.4.3, A.4.4, A.4.7, C.1.1 |
+| **Explore** | One panel with a plain-language status card (verdict, PM2.5, next-24-hour outlook) and three layers. **Air quality**: neighbourhood squares (or indicative streets, "Why this colour?" breakdown), suggestions for where you are (open the windows, take a walk, run the air purifier), based on the air around your location when you share it (kept in the tab, never stored or sent). **Heat**: feels-like temperature of every area for the selected hour, 48 hours ahead (city forecast plus a learned local offset, [docs/HEAT.md](docs/HEAT.md)), coolest and warmest areas. **Alerts** at the top of the panel (PM2.5 episode, heat, dust, smoke) with causes and what to do, and notification settings ([docs/ALERTS.md](docs/ALERTS.md)). **Clean paths**: clean channels and busy streets with poor air with suggested measures, pedestrians or cyclists. The time bar at the bottom is the forecast chart: PM2.5 or air trapping on Air quality, feels-like temperature on Heat, and a slim control on Clean paths and Route. Official stations, validation and forecast charts behind accordions | A.3.4 early warning, A.3.3 self-cleaning potential of the air, A.4.3, A.4.4, A.4.7, C.1.1 |
 | **Route** | Fastest / balanced / cleanest walk or ride, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
-| **For me** | Profile cards (driver / wood or coal heater / vulnerable), zone lookup, C.3.2 eligibility wizard (anonymous lead) | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
+| **For me** | One verdict for where you are (your location or district) with air score and local feels-like, a "what to do today" plan led by the active alerts, a 24-hour strip with the best window, optional profile and health choices (saved in the browser), alert notification settings, and the city programmes (zone lookup, C.3.2 eligibility wizard, anonymous lead) behind one line | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
 | **City insights** (for the municipality and planners) | Hotspot districts, C.3.2 leads, street chokepoints (street level), street-washing list (**sample street names**) | C.3.2, A.4.7, A.3.4, A.4.3, A.4.4, C.1.1 |
 
 The **Live menu** (top right) holds the **Live / Winter inversion / Summer heatwave / Birch season** switch, Refresh forecast and the map style. The demo scenarios (the last two drive the heat and pollen cards on *For me*) replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
@@ -95,7 +95,7 @@ CAMS + Open-Meteo weather + live city median ──► city-level PM2.5, p10/p50
 sensor residuals, per-sensor offsets removed ──► regression kriging + uncertainty per street  [stage 2]
       terrain height (street trend) ─┘
                                      └──► banner (chance of an episode), chart, map, router, advice  [stage 3]
-Sentinel-2 NDVI + tree inventory ──► greenery G(e);  Landsat LST ──► heat H(e)     (CAI only)
+Sentinel-2 NDVI + tree inventory ──► greenery G(e);  Landsat LST ──► heat H(e)     (CAI only, summer, gated; NOT the heat map, see docs/HEAT.md)
 Google Routes + TomTom ──► observed traffic (map and street popover only, NOT an input to PM)
 ```
 
@@ -188,7 +188,7 @@ GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when ch
 ## API
 
 `/api/forecast` `/api/sensors` `/api/districts` `/api/advice` `/api/leads` `/api/dashboard` (v1) ·
-`/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/areas?metric=air|heat&mode=walk|bike` (area cells) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
+`/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/areas?metric=air|heat&mode=walk|bike&hour=&scale=absolute|relative` (area cells; heat is feels-like °C per hour) `/api/alerts` (what needs attention in the next 48 h) `/api/push/key` `/api/push/subscribe` `/api/push/unsubscribe` `/api/push/test` (web push) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
 `/api/route?from=lat,lng&to=lat,lng&lambda=&hour=&mode=walk|bike` (with a `confidence` block: is any alternative distinguishable from the fastest route?) `/api/network?hour=&mode=` `/api/validation` (calibration, spatial and back-test summaries under `trust`) `/api/reference`. All accept `scenario=winter_inversion|summer_heatwave|birch_season`.
 
 `GET /api/forecast/window` returns the current display forecast (48 hours live, 24 in a demo scenario), original hour indices, sensor snapshot,
@@ -201,7 +201,8 @@ returns the full upstream series, used internally for daily validation and exist
 ## Honest caveats
 
 * **Better greenery did not improve the validation.** After switching to the tree inventory the leave-one-out result is unchanged (ρ ≈ 0): the limit is sensor noise at ~5 µg/m³, not the greenery input.
-* **Heat map = surface temperature**, a summer satellite snapshot, not live and not air temperature. Cyclist exposure assumes a 2× breathing rate.
+* **Heat map = city forecast + a learned local offset** (about 220 temperature sensors, tested on sensors it never saw: rank correlation 0.3 overall, 0.4 on summer nights, 0.15 on sunny afternoons). Differences between places are a few degrees at most. The street score's own summer heat term still uses the Landsat surface temperature, which did not match measured air temperature (docs/HEAT.md). Cyclist exposure assumes a 2× breathing rate.
+* **Alerts are indicative.** Dust uses CAMS with thresholds taken from the history of the field, not validated against Sofia station PM10 (too few dust days). Smoke alerts need a free FIRMS key and only say that fires lie upwind. Push notifications need VAPID keys (`python -m backend.push --gen-keys`); without them alerts appear while the page is open. Not exercised against a real push service or the FIRMS API (no keys were available): covered by recorded-data and fake-sender tests.
 
 * **Street-level colours are indicative.** The sensors support how a neighbourhood differs from the city (a 250 m cell map is as good as the street map at ranking hidden sensors); they do not support one street versus the next. The map defaults to cells for that reason.
 * **The warning is a probability, not a certainty.** The red banner misses a third of the episode windows in the test winter (6 of 32 distinct episodes; the amber tier catches all but one), and the model under-predicts the very heaviest hours. Level intervals drift too narrow on the most recent months.
