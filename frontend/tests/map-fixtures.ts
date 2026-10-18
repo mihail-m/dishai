@@ -12,6 +12,26 @@ const choke = { rank: 1, street: "Demo Junction", street_bg: "Демо", distric
   max_fast_usage: 20, mean_cai: 40, length_m: 100, lon: 23.34, lat: 42.705,
   segments: [[[23.335, 42.705], [23.345, 42.705]]], measures: [{ id: "A.4.7", label: "Street washing", why: "Demo measure" }] };
 
+const day = (date: string, peak: number | null, level: string) => ({ date, peak, peak_hhmm: peak ? "13:00" : null, mean: peak, level });
+const hourlyOf = (peak: number) => Array.from({ length: 96 }, (_, i) => ({ time: `2026-04-${15 + Math.floor(i / 24)}T${String(i % 24).padStart(2, "0")}:00`, grains: Math.round(peak * Math.max(0, Math.sin(Math.PI * ((i % 24) - 6) / 14))) }));
+const specie = (type: string, label: string, kind: string, peak: number, level: string, high: number) => ({
+  type, label, kind, foods: ["apple"], bands: { moderate: 15, high }, now: { grains: peak, level },
+  days: [day("2026-04-15", peak, level), day("2026-04-16", peak / 2, "moderate"), day("2026-04-17", 0, "none"), day("2026-04-18", null, "none")], hourly: hourlyOf(peak),
+});
+const env = (peak: number, level: string, levels: string[], unit = "") => ({ available: true, unit, levels, bands: [], days: [day("2026-04-15", peak, level), day("2026-04-16", peak, level)].map((d) => ({ ...d, level })) });
+const pollenResp = {
+  scenario: null, generated_at: "2026-04-15T12:00", source: "live", attribution: "Test pollen model", today: "2026-04-15", note: "",
+  pollen: { available: true, species: [specie("birch", "Birch", "tree", 190, "high", 90), specie("grass", "Grass", "grass", 2, "low", 20), specie("ragweed", "Ragweed", "weed", 0, "none", 50)] },
+  environment: { uv: env(7, "high", ["low", "moderate", "high", "very high", "extreme"]), ozone: env(110, "elevated", ["low", "elevated", "high"], "µg/m³"), dust: env(10, "low", ["low", "notable", "heavy"], "µg/m³") },
+  season: [{ type: "birch", status: "in_season", start: "29 Mar", end: "12 May", days_left: 27 }, { type: "grass", status: "upcoming", start: "1 May", end: "30 Aug", in_days: 16 }, { type: "ragweed", status: "upcoming", start: "29 Jul", end: "21 Sep", in_days: 105 }],
+};
+const calSpecies = (label: string, hot: number[]) => ({ label, bins: Array.from({ length: 36 }, (_, b) => (hot.includes(b) ? 120 : 0)), levels: Array.from({ length: 36 }, (_, b) => (hot.includes(b) ? 3 : 0)), years: [2024, 2025], season: null, threshold: 10, bands: { moderate: 15, high: 90 } });
+const calendarResp = {
+  available: true, years: [2024, 2025], source: "test", note: "", today_bin: 10,
+  species: { alder: calSpecies("Alder", [4]), birch: calSpecies("Birch", [9, 10, 11]), grass: calSpecies("Grass", [14]), mugwort: calSpecies("Mugwort", [20]), olive: calSpecies("Olive", []), ragweed: calSpecies("Ragweed", [23, 24]) },
+  season: ["alder", "birch", "grass", "mugwort", "olive", "ragweed"].map((type) => ({ type, status: "none" })),
+};
+
 export function forecastWindow(scenario: string | null = null, revision = 0, start = 12) {
   const indices = Array.from({ length: 24 }, (_, i) => start + i);
   return {
@@ -86,6 +106,10 @@ export async function mockMapApi(page: Page) {
       case "/api/alerts": data = { generated_at: time, scenario, alerts: [], sources: {}, push: { enabled: false } }; break;
       case "/api/push/key": data = { enabled: false, public_key: null, kinds: [], levels: [] }; break;
       case "/api/advice": data = { cards: [] }; break;
+      case "/api/pollen": data = pollenResp; break;
+      case "/api/pollen/calendar": data = calendarResp; break;
+      case "/api/symptoms": data = { ok: true, stored: true, message: "Thanks" }; break;
+      case "/api/symptoms/summary": data = { reports: 0, days: 30, min_n: 20, note: "", levels: [], daily: [] }; break;
       default: await route.fulfill({ status: 404, json: { detail: `Unmocked endpoint ${url.pathname}` } }); return;
     }
     await route.fulfill({ json: data });

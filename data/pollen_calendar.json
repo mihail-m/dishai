@@ -1,0 +1,438 @@
+{
+ "source": "CAMS European air quality forecast / analysis via Open-Meteo (modelled pollen at 42.6977 N, 23.3219 E, ~11 km grid)",
+ "licence": "CAMS data (Copernicus); Open-Meteo API, attribution required",
+ "note": "Modelled, not trap counts. Season = days at the CAMS threshold (5th to 95th percentile of those days), median over years.",
+ "years": [
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "bin_days": "10-day bins, three per month",
+ "species": {
+  "alder": {
+   "bins": [
+    0.3,
+    1.4,
+    1.0,
+    1.6,
+    4.9,
+    9.8,
+    2.4,
+    3.4,
+    2.9,
+    0.9,
+    0.6,
+    0.3,
+    0.3,
+    0.1,
+    0.1,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 10,
+   "years": [
+    2022,
+    2023,
+    2024,
+    2025
+   ],
+   "per_year": {
+    "2022": {
+     "days_at_threshold": 0
+    },
+    "2023": {
+     "days_at_threshold": 10,
+     "start_doy": 17,
+     "end_doy": 57
+    },
+    "2024": {
+     "days_at_threshold": 5,
+     "start_doy": 36,
+     "end_doy": 40
+    },
+    "2025": {
+     "days_at_threshold": 8,
+     "start_doy": 58,
+     "end_doy": 70
+    }
+   },
+   "season": {
+    "start_doy": 36,
+    "end_doy": 57
+   }
+  },
+  "birch": {
+   "bins": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    3.4,
+    113.1,
+    98.5,
+    210.8,
+    139.7,
+    102.7,
+    49.6,
+    4.5,
+    2.6,
+    0.3,
+    1.1,
+    0.1,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 10,
+   "years": [
+    2022,
+    2023,
+    2024,
+    2025
+   ],
+   "per_year": {
+    "2022": {
+     "days_at_threshold": 38,
+     "start_doy": 100,
+     "end_doy": 139
+    },
+    "2023": {
+     "days_at_threshold": 44,
+     "start_doy": 91,
+     "end_doy": 143
+    },
+    "2024": {
+     "days_at_threshold": 26,
+     "start_doy": 85,
+     "end_doy": 121
+    },
+    "2025": {
+     "days_at_threshold": 39,
+     "start_doy": 83,
+     "end_doy": 125
+    }
+   },
+   "season": {
+    "start_doy": 88,
+    "end_doy": 132
+   }
+  },
+  "grass": {
+   "bins": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.2,
+    0.6,
+    1.1,
+    1.7,
+    2.4,
+    4.3,
+    9.3,
+    18.9,
+    29.9,
+    50.1,
+    52.8,
+    49.0,
+    33.0,
+    28.9,
+    18.9,
+    13.6,
+    9.7,
+    7.3,
+    4.2,
+    0.9,
+    0.8,
+    0.5,
+    0.2,
+    0.2,
+    0.1,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 3,
+   "years": [
+    2022,
+    2023,
+    2024,
+    2025
+   ],
+   "per_year": {
+    "2022": {
+     "days_at_threshold": 124,
+     "start_doy": 122,
+     "end_doy": 236
+    },
+    "2023": {
+     "days_at_threshold": 122,
+     "start_doy": 128,
+     "end_doy": 240
+    },
+    "2024": {
+     "days_at_threshold": 141,
+     "start_doy": 118,
+     "end_doy": 246
+    },
+    "2025": {
+     "days_at_threshold": 138,
+     "start_doy": 120,
+     "end_doy": 245
+    }
+   },
+   "season": {
+    "start_doy": 121,
+    "end_doy": 242
+   }
+  },
+  "mugwort": {
+   "bins": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.2,
+    2.6,
+    18.6,
+    83.8,
+    84.8,
+    32.6,
+    12.3,
+    46.7,
+    35.3,
+    14.9,
+    3.6,
+    0.8,
+    0.2,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 10,
+   "years": [
+    2022,
+    2023,
+    2024,
+    2025
+   ],
+   "per_year": {
+    "2022": {
+     "days_at_threshold": 53,
+     "start_doy": 201,
+     "end_doy": 262
+    },
+    "2023": {
+     "days_at_threshold": 54,
+     "start_doy": 201,
+     "end_doy": 263
+    },
+    "2024": {
+     "days_at_threshold": 54,
+     "start_doy": 201,
+     "end_doy": 265
+    },
+    "2025": {
+     "days_at_threshold": 61,
+     "start_doy": 203,
+     "end_doy": 264
+    }
+   },
+   "season": {
+    "start_doy": 201,
+    "end_doy": 263
+   }
+  },
+  "olive": {
+   "bins": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.7,
+    0.6,
+    1.4,
+    4.0,
+    7.8,
+    8.1,
+    3.6,
+    4.7,
+    1.6,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 10,
+   "years": [
+    2022,
+    2023,
+    2024,
+    2025
+   ],
+   "per_year": {
+    "2022": {
+     "days_at_threshold": 3
+    },
+    "2023": {
+     "days_at_threshold": 0
+    },
+    "2024": {
+     "days_at_threshold": 0
+    },
+    "2025": {
+     "days_at_threshold": 0
+    }
+   }
+  },
+  "ragweed": {
+   "bins": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.1,
+    0.9,
+    6.9,
+    31.8,
+    84.7,
+    122.3,
+    96.3,
+    32.5,
+    11.6,
+    1.4,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 3,
+   "years": [
+    2022,
+    2023,
+    2024,
+    2025
+   ],
+   "per_year": {
+    "2022": {
+     "days_at_threshold": 59,
+     "start_doy": 210,
+     "end_doy": 264
+    },
+    "2023": {
+     "days_at_threshold": 58,
+     "start_doy": 211,
+     "end_doy": 264
+    },
+    "2024": {
+     "days_at_threshold": 59,
+     "start_doy": 211,
+     "end_doy": 265
+    },
+    "2025": {
+     "days_at_threshold": 59,
+     "start_doy": 210,
+     "end_doy": 264
+    }
+   },
+   "season": {
+    "start_doy": 210,
+    "end_doy": 264
+   }
+  }
+ }
+}

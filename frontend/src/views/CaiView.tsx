@@ -108,7 +108,7 @@ export default function CaiView({ stage, fc, scenario, hourIndex, geo, district 
       tooltip: (info) => {
         const o = info.object as { mean?: number; min?: number; max?: number; pm25?: number; street_m?: number } | undefined;
         if (detail === "area" && info.layer?.id === "areas" && o && areas) {
-          return { html: `<b>Area of ~${areas.cell_m} m</b><br/>Air quality score <b>${Math.round(o.mean ?? 0)}</b><br/>PM2.5 ≈ ${o.pm25} µg/m³ (typical for the area)<br/>${((o.street_m ?? 0) / 1000).toFixed(1)} km of streets` };
+          return { html: `Air quality score <b>${Math.round(o.mean ?? 0)}</b><br/>PM2.5 ≈ ${o.pm25} µg/m³ (typical for the area)<br/>${((o.street_m ?? 0) / 1000).toFixed(1)} km of streets nearby` };
         }
         return info.object ? trafficTooltip(info as never) : null;
       },
@@ -123,7 +123,7 @@ export default function CaiView({ stage, fc, scenario, hourIndex, geo, district 
     <div className="grid gap-4">
       <p className="muted m-0 text-[13px]">
         {detail === "area"
-          ? "Each square is about 250 m. Greener is cleaner. Hover or tap a square for details."
+          ? "Greener is cleaner. Hover or tap the map to see the air quality score at that spot."
           : "One colour per street. Street detail is indicative: the sensors cannot tell neighbouring streets apart. Tap a street to see why."}
       </p>
       {detail === "street" && (

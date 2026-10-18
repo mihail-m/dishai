@@ -17,6 +17,9 @@ data/.trees_progress.npz
 data/graph_bike.graphml
 data/history/
 
+# anonymous symptom check-ins (backend/symptoms.py)
+data/symptoms.jsonl
+
 # derived from Google Routes responses (typical travel times): not redistributed
 data/traffic_profile.json
 

@@ -123,7 +123,7 @@ def test_api_toggles_roundtrip_and_validation(client):
     assert r["toggles"] == ["asthma", "outdoor_exercise"]
     assert {"asthma_air", "exercise_window"} <= {c["id"] for c in r["cards"]}
     assert len(r["cards"]) == len(plain["cards"]) + 2
-    assert set(r["conditions"]) == {"heat", "pollen", "activity"}
+    assert set(r["conditions"]) == {"heat", "pollen", "activity", "environment"}
     assert client.get(url + "&toggles=jetpack").status_code == 422
 
 

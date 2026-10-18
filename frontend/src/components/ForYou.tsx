@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import type { Advice, DistrictsFC, Profile, Scenario, Toggle } from "../types";
+import type { Advice, DistrictsFC, Profile, Scenario, Species, Toggle } from "../types";
 import { PM_LEVEL_TEXT, api } from "../api";
+import type { Prefs } from "../prefs";
+import SpeciesPicker from "./SpeciesPicker";
 import Wizard from "./Wizard";
 
 const PROFILES: { id: Profile; label: string; hint: string }[] = [
@@ -16,14 +18,6 @@ const TOGGLES: { id: Toggle; label: string; hint: string }[] = [
   { id: "outdoor_exercise", label: "Exercise outdoors", hint: "Finds the best slot for running or cycling" },
   { id: "kids_or_elderly", label: "Kids or older relatives", hint: "A plan for the people you look after" },
 ];
-const STORE_KEY = "dishai.foryou";
-
-function loadPrefs(): { profile?: Profile; toggles?: Toggle[] } {
-  try {
-    const p = JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}");
-    return { profile: p.profile, toggles: Array.isArray(p.toggles) ? p.toggles.filter((t: string) => TOGGLES.some((x) => x.id === t)) : [] };
-  } catch { return {}; }
-}
 
 const HEAT_TEXT = { none: "No heat stress", caution: "Warm", high: "Hot", extreme: "Extreme heat" } as const;
 const POLLEN_TEXT = { none: "No pollen", low: "Low pollen", moderate: "Moderate pollen", high: "High pollen" } as const;
@@ -33,12 +27,13 @@ const measureColor: Record<string, string> = {
   PUGM: "#2a7ab5", "C.1.1": "#6a3fb5", "C.3.2": "#b5651d", "A.5.4": "#1f7a5c", "A.3.4": "#c0392f", "A.3.3": "#4a6a8a", "A.4.7": "#4a6a8a",
 };
 
-interface Props { scenario: Scenario; districts: DistrictsFC | null; district: string | null; setDistrict: (d: string) => void }
+interface Props { scenario: Scenario; districts: DistrictsFC | null; district: string | null; setDistrict: (d: string) => void; prefs: Prefs; setPrefs: (p: Prefs) => void }
 
-export default function ForYou({ scenario, districts, district, setDistrict }: Props) {
-  const [prefs] = useState(loadPrefs);
-  const [profile, setProfile] = useState<Profile>(prefs.profile ?? "wood_heater");
-  const [toggles, setToggles] = useState<Toggle[]>(prefs.toggles ?? []);
+export default function ForYou({ scenario, districts, district, setDistrict, prefs, setPrefs }: Props) {
+  const profile: Profile = prefs.profile ?? "wood_heater";
+  const { toggles, species } = prefs;
+  const setProfile = (p: Profile) => setPrefs({ ...prefs, profile: p });
+  const setSpecies = (sp: Species[]) => setPrefs({ ...prefs, species: sp });
   const [adv, setAdv] = useState<Advice | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const names = districts?.features.map((f) => f.properties.name).sort() ?? [];
@@ -47,22 +42,18 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
     if (!district) return;
     let off = false;
     setErr(null);
-    api.advice(profile, district, scenario, toggles).then((a) => !off && setAdv(a)).catch((e) => !off && setErr(String(e)));
+    api.advice(profile, district, scenario, toggles, toggles.includes("pollen_allergy") ? species : []).then((a) => !off && setAdv(a)).catch((e) => !off && setErr(String(e)));
     return () => { off = true; };
-  }, [profile, district, scenario, toggles]);
+  }, [profile, district, scenario, toggles, species]);
 
-  useEffect(() => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ profile, toggles })); } catch { /* private mode: preferences just aren't remembered */ }
-  }, [profile, toggles]);
-
-  const flip = (t: Toggle) => setToggles((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
+  const flip = (t: Toggle) => setPrefs({ ...prefs, toggles: toggles.includes(t) ? toggles.filter((x) => x !== t) : [...toggles, t] });
 
   return (
     <div className="mx-auto grid max-w-[1040px] gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="m-0 text-[1.75rem] font-bold">Advice for {district ?? "your district"}</h2>
-          <p className="muted m-0 mt-1">Based on today&apos;s forecast. Choose what applies to you.</p>
+          <h2 className="m-0 text-[1.75rem] font-bold">My health</h2>
+          <p className="muted m-0 mt-1">Advice for {district ?? "your district"} from today&apos;s air, heat and pollen forecast. Choose what applies to you.</p>
         </div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           My district
@@ -88,6 +79,12 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
             ))}
           </div>
         </div>
+        {toggles.includes("pollen_allergy") && (
+          <div>
+            <div className="eyebrow mb-1.5">Pollen I react to <span className="font-medium normal-case tracking-normal">(none selected = all)</span></div>
+            <SpeciesPicker value={species} onChange={setSpecies} />
+          </div>
+        )}
       </div>
 
       {err && <div className="card p-4 text-sm" style={{ color: "var(--warn)" }}>Could not load advice: {err}</div>}
