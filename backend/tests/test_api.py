@@ -1,4 +1,5 @@
 """API tests. Upstream calls are forced to fail so the fixture fallback is what is tested."""
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -221,8 +222,8 @@ def test_areas_endpoint_air_and_heat(client):
     assert a["metric"] == "air" and len(c["lon"]) > 1000 and a["thresholds"]["clean"] > a["thresholds"]["dirty"]
     assert len(c["lon"]) == len(c["mean"]) == len(c["pm25"]) == len(c["street_m"])
     h = client.get("/api/cai/areas?metric=heat").json()
-    assert h["metric"] == "heat" and h["thresholds"]["hot"] > 0 > h["thresholds"]["cool"] and "snapshot" in h["note"]
-    assert len(h["cells"]["anomaly"]) == len(h["cells"]["mean"])
+    assert h["metric"] == "heat" and h["thresholds"]["hot"] > 0 > h["thresholds"]["cool"] and "snapshot" not in h["note"]
+    assert len(h["cells"]["anomaly"]) == len(h["cells"]["mean"]) == len(h["cells"]["air"]) == len(h["cells"]["offset"])
     assert client.get("/api/cai/areas?metric=noise").status_code == 422
     assert client.get("/api/cai/areas?mode=car").status_code == 422
 
@@ -322,3 +323,22 @@ def test_expiring_upstream_cache_keeps_stale_fallback(tmp_path):
         value, source = await cache.get("weather", _boom)
         assert value == {"saved": True} and source == "stale"
     asyncio.run(check())
+
+
+def test_endpoint_follows_the_hour_and_the_scale(client):
+    day = client.get("/api/cai/areas?metric=heat&scenario=summer_heatwave&hour=15").json()
+    night = client.get("/api/cai/areas?metric=heat&scenario=summer_heatwave&hour=3").json()
+    assert day["hour"] == 15 and night["hour"] == 3
+    assert day["city"]["feels"] > night["city"]["feels"] + 4          # the hour matters now (the old layer was one fixed snapshot)
+    assert day["stats"]["median"] > night["stats"]["median"] + 4
+    assert day["city"]["level"] in ("high", "extreme")                 # a simulated July afternoon is hot
+    assert day["scale"] == "absolute" and day["centre"] == 18.0
+    rel = client.get("/api/cai/areas?metric=heat&scenario=summer_heatwave&hour=15&scale=relative").json()
+    assert rel["centre"] == rel["reference"] and abs(np.median(rel["cells"]["anomaly"])) < 2
+    assert client.get("/api/cai/areas?metric=heat&scale=bogus").status_code == 422
+
+
+def test_live_values_are_air_temperatures_not_a_summer_snapshot(client):
+    """Regression for the root cause: in cool weather the map must not show 30-48 C 'surface' values."""
+    h = client.get("/api/cai/areas?metric=heat&scenario=winter_inversion&hour=18").json()
+    assert h["stats"]["max"] < 20, h["stats"]
