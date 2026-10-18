@@ -19,3 +19,4 @@ pyarrow
 scikit-learn
 joblib
 pandas
+pywebpush

@@ -10,7 +10,7 @@ import { loadGeometry, type Geometry } from "./map/cai";
 import { caiLayer, locationLayers, referenceLayers, sensorLayer } from "./map/layers";
 import { districtAt, useLocation } from "./location";
 import Dashboard from "./components/Dashboard";
-import ForYou from "./components/ForYou";
+import ForMeView from "./views/ForMeView";
 import MapLegend from "./components/MapLegend";
 import TimeBar, { type TimeBarMode } from "./components/TimeBar";
 import { Icon, Logo, McBtn, McGroup } from "./components/ui";
@@ -206,7 +206,7 @@ export default function App() {
         </div>
       </div>
 
-      {tab === "me" && <main className="pageview"><ForYou scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} /></main>}
+      {tab === "me" && <main className="pageview"><ForMeView scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} /></main>}
       {tab === "city" && <main className="pageview"><Dashboard scenario={scenario} active /></main>}
 
       <nav className="tabbar" aria-label="Views">

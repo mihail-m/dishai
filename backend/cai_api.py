@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from . import google_routes, traffic
 from .cai import config as C
 from .cai.features import Features, compute_features
+from .cai import heat
 from .cai.areas import area_cells, summarize
 from .cai.graph import Net, get_net, has_mode
 from .cai.names import Namer, translit
@@ -212,28 +213,51 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
                          "place": namer.point(cells["lat"][i], cells["lon"][i])}
         return {"best": [row(i) for i in best], "worst": [row(i) for i in worst]}
 
+    def _heat_areas(net: Net, fc: dict, i: int, mode: str, cell: float, scale: str, sc: str | None) -> dict:
+        """Feels-like temperature per area cell for forecast hour `i`: the city's feels-like plus the learned local offset of each street."""
+        hf = heat.get(net)
+        hr = fc["hours"][i]
+        city_feels = float(hr["apparent"] if hr.get("apparent") is not None else hr["t2m"])
+        city_air = float(hr["t2m"])
+        off = hf.offsets(hr)
+        off = np.zeros(len(net.e_len), dtype="float32") if off is None else off
+        cells = area_cells(net, city_feels + off.astype(float), {"air": city_air + off, "offset": off}, cell)
+        if scale == "relative":
+            centre, span = city_feels, max(1.5, float(np.percentile(np.abs(cells["offset"]), 95)))
+            anomaly = [round(v - centre, 1) for v in cells["mean"]]
+            thr = {"hot": round(float(np.percentile(anomaly, 90)), 1), "cool": round(float(np.percentile(anomaly, 10)), 1)}
+        else:  # the diverging palette is centred on a mild 18 C and reaches full colour 20 degrees either side
+            centre, span = heat.ABS_CENTRE, heat.ABS_SPAN
+            anomaly = [round(v - centre, 1) for v in cells["mean"]]
+            thr = {"hot": span, "cool": -span}
+        cells["anomaly"] = anomaly
+        stats = summarize(cells["mean"])
+        return {
+            "metric": "heat", "mode": mode, "cell_m": cell, "unit": "°C", "hour": i, "time": hr["time"], "scenario": sc, "scale": scale,
+            "reference": round(city_feels, 1), "centre": centre, "span": span, "thresholds": thr, "stats": stats, "cells": cells,
+            "extremes": _extremes(cells, mode, higher_is_better=False),
+            "city": {"feels": round(city_feels, 1), "air": round(city_air, 1), "level": heat.level_for(stats["max"]), "city_level": heat.level_for(city_feels)},
+            "model": hf.available, "validation": hf.meta() if hf.available else None,
+            "note": ("Feels-like temperature: the city forecast for this hour plus how much warmer or cooler each place usually is in this weather "
+                     "(built-up areas stay warm at night, higher ground is cooler), learned from about 220 citizen temperature sensors and tested on sensors it never saw. "
+                     "Differences between places are small compared with the weather itself."
+                     if hf.available else "Local temperature model not available: every place shows the city forecast."),
+        }
+
     # ---------------------------------------------------------------------------------------
     @r.get("/api/cai/areas")
     async def areas(hour: int | None = None, mode: Mode = "walk", metric: Literal["air", "heat"] = "air",
+                    heat_scale: Literal["absolute", "relative"] = Query("absolute", alias="scale"),
                     cell: int = Query(int(C.AREA_CELL_M), ge=100, le=1000), scenario: str | None = scenario_query, forecast_id: str | None = None):
         """Area cells (square, `cell` m) with the length-weighted mean of the streets inside.
-        metric=air: Clean Air Index (and modelled PM2.5) for the hour. metric=heat: Landsat surface temperature (summer snapshot)."""
+        metric=air: Clean Air Index (and modelled PM2.5) for the hour. metric=heat: feels-like temperature for the hour (city forecast + learned local offset, backend/ml/heat_field.py);
+        scale=absolute centres the colour on 18 C, scale=relative on the city value of the hour."""
         sc = parse_scenario(scenario)
         model, fc, _, net = await get_model(sc, mode, forecast_id)
         i = hour_of(hour, fc)
-        h = model.hour(i)
-        feats = model.feats
         if metric == "heat":
-            if feats.median_lst is None:
-                raise HTTPException(503, "No surface-temperature raster (run make lst)")
-            cells = await asyncio.to_thread(area_cells, net, feats.lst, None, float(cell))
-            med = feats.median_lst
-            anomaly = [round(v - med, 1) for v in cells["mean"]]
-            cells["anomaly"] = anomaly
-            thr = {"hot": round(float(np.percentile(anomaly, 90)), 1), "cool": round(float(np.percentile(anomaly, 10)), 1)}
-            return {"metric": "heat", "mode": mode, "cell_m": cell, "unit": "°C", "reference": round(med, 1), "thresholds": thr,
-                    "stats": summarize(cells["mean"]), "cells": cells, "extremes": _extremes(cells, mode, higher_is_better=False),
-                    "note": "Summer snapshot (Landsat 8/9 surface temperature, Jun-Sep 2026), not live. Surface, not air, temperature."}
+            return await asyncio.to_thread(_heat_areas, net, fc, i, mode, float(cell), heat_scale, sc)
+        h = model.hour(i)
         cells = await asyncio.to_thread(area_cells, net, h["cai"].astype(float), {"pm25": h["pm"]}, float(cell))
         cut = {"clean": round(float(np.percentile(cells["mean"], 90)), 1), "dirty": round(float(np.percentile(cells["mean"], 10)), 1)}
         return {"metric": "air", "mode": mode, "cell_m": cell, "unit": "CAI", "hour": i, "time": h["ctx"].time, "scenario": sc,

@@ -1,0 +1,115 @@
+{
+ "source": "Copernicus CAMS Europe via Open-Meteo, hourly best-estimate",
+ "from": "2017-07-01",
+ "to": "2026-10-18",
+ "months": {
+  "1": {
+   "pm25_day_p50": 22.0,
+   "pm25_day_p75": 29.9,
+   "pm10_day_p50": 26.6,
+   "pm10_day_p75": 34.9,
+   "pm25_hour_p90": 43.3,
+   "co_hour_p90": 413,
+   "days": 279
+  },
+  "2": {
+   "pm25_day_p50": 19.9,
+   "pm25_day_p75": 27.3,
+   "pm10_day_p50": 26.5,
+   "pm10_day_p75": 34.1,
+   "pm25_hour_p90": 39.1,
+   "co_hour_p90": 373,
+   "days": 254
+  },
+  "3": {
+   "pm25_day_p50": 17.1,
+   "pm25_day_p75": 23.0,
+   "pm10_day_p50": 24.3,
+   "pm10_day_p75": 30.0,
+   "pm25_hour_p90": 32.3,
+   "co_hour_p90": 327,
+   "days": 279
+  },
+  "4": {
+   "pm25_day_p50": 14.5,
+   "pm25_day_p75": 17.8,
+   "pm10_day_p50": 18.9,
+   "pm10_day_p75": 23.9,
+   "pm25_hour_p90": 23.7,
+   "co_hour_p90": 259,
+   "days": 270
+  },
+  "5": {
+   "pm25_day_p50": 10.0,
+   "pm25_day_p75": 11.6,
+   "pm10_day_p50": 13.7,
+   "pm10_day_p75": 17.0,
+   "pm25_hour_p90": 16.0,
+   "co_hour_p90": 228,
+   "days": 279
+  },
+  "6": {
+   "pm25_day_p50": 10.6,
+   "pm25_day_p75": 12.8,
+   "pm10_day_p50": 14.4,
+   "pm10_day_p75": 18.3,
+   "pm25_hour_p90": 16.2,
+   "co_hour_p90": 238,
+   "days": 270
+  },
+  "7": {
+   "pm25_day_p50": 10.5,
+   "pm25_day_p75": 12.8,
+   "pm10_day_p50": 13.9,
+   "pm10_day_p75": 18.1,
+   "pm25_hour_p90": 16.2,
+   "co_hour_p90": 252,
+   "days": 310
+  },
+  "8": {
+   "pm25_day_p50": 11.3,
+   "pm25_day_p75": 13.6,
+   "pm10_day_p50": 15.2,
+   "pm10_day_p75": 18.8,
+   "pm25_hour_p90": 16.8,
+   "co_hour_p90": 279,
+   "days": 310
+  },
+  "9": {
+   "pm25_day_p50": 11.7,
+   "pm25_day_p75": 14.1,
+   "pm10_day_p50": 16.2,
+   "pm10_day_p75": 20.2,
+   "pm25_hour_p90": 17.8,
+   "co_hour_p90": 321,
+   "days": 300
+  },
+  "10": {
+   "pm25_day_p50": 14.2,
+   "pm25_day_p75": 18.1,
+   "pm10_day_p50": 19.7,
+   "pm10_day_p75": 25.0,
+   "pm25_hour_p90": 25.4,
+   "co_hour_p90": 329,
+   "days": 297
+  },
+  "11": {
+   "pm25_day_p50": 18.0,
+   "pm25_day_p75": 23.5,
+   "pm10_day_p50": 23.0,
+   "pm10_day_p75": 30.5,
+   "pm25_hour_p90": 32.5,
+   "co_hour_p90": 389,
+   "days": 270
+  },
+  "12": {
+   "pm25_day_p50": 19.2,
+   "pm25_day_p75": 27.2,
+   "pm10_day_p50": 24.3,
+   "pm10_day_p75": 33.8,
+   "pm25_hour_p90": 37.6,
+   "co_hour_p90": 406,
+   "days": 279
+  }
+ }
+}

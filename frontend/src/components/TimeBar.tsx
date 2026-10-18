@@ -156,7 +156,7 @@ export default function TimeBar({ mode, fc, hourIndex, setHourIndex, ready, prog
           ))}
         </div>
         <p className="faint tb-hide-m m-0 mt-0.5 text-[11px] leading-snug">
-          {m === "heat" ? "Feels-like temperature forecast for the city. Warm from 27°, hot from 32°. The map shows a summer satellite snapshot of ground temperature."
+          {m === "heat" ? "Feels-like temperature forecast for the city. Warm from 27°, hot from 32°. The map adds how much warmer or cooler each place usually is at that hour."
             : m === "pm"
             ? `Solid line: learned estimate for the whole city${band ? ", shaded: 10th to 90th percentile" : ""}.${raw ? " Dashed: regional model (CAMS, about 11 km), which runs high in episodes." : ""}`
             : "Air trapping score, 0 to 100: higher means more pollution stays near the ground. 35 and above is watch, 60 and above is an inversion warning."}

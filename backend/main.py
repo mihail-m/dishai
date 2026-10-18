@@ -786,6 +786,7 @@ async def api_dashboard(scenario: str | None = ScenarioQ):
     }
 
 
+from . import alerts_api  # noqa: E402
 from .cai_api import make_router  # noqa: E402
 
 def refresh_forecast_sources():
@@ -795,6 +796,7 @@ def refresh_forecast_sources():
 cai_router = make_router(build_forecast, build_sensors, Scenario, ScenarioQ, build_sensors_24h, district_at,
                          refresh_sources=refresh_forecast_sources, now=lambda: sofia_now())
 app.include_router(cai_router)
+app.include_router(alerts_api.make_router(build_forecast, Scenario, ScenarioQ, cache))  # /api/alerts and web push
 app.include_router(no2_model.make_router(build_forecast))  # /api/no2: NO2 forecast and the traffic-NO2 study
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 

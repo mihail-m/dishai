@@ -90,7 +90,7 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
     await expect(async () => {
       await page.mouse.move(0, 0);
       await page.mouse.move(box.x + box.width / 2 + 25, box.y + box.height / 2 - 25);
-      await expect(page.getByText("Surface 35 °C", { exact: false })).toBeVisible({ timeout: 1500 });
+      await expect(page.getByText("Feels like 35 °C", { exact: false })).toBeVisible({ timeout: 1500 });
     }).toPass({ timeout: 15_000 });
     await page.getByRole("button", { name: "Clean paths" }).click();
       await page.getByRole("button", { name: "Animate route flow" }).click();

@@ -19,3 +19,6 @@ data/history/
 
 # derived from Google Routes responses (typical travel times): not redistributed
 data/traffic_profile.json
+
+# web-push subscriptions (endpoints and keys of real browsers): never commit
+data/push_subs.json

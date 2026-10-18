@@ -155,13 +155,19 @@ export interface ReferenceResp {
   sensor_check?: { radius_m: number; median_ratio: number | null; verdict?: string; rows: { station: string; n_sensors: number; citizen_pm10: number; reference_pm10: number; ratio: number | null }[] };
 }
 
-export interface AreaCells { lon: number[]; lat: number[]; mean: number[]; max: number[]; min: number[]; street_m: number[]; n: number[]; pm25?: number[]; anomaly?: number[] }
+export interface AreaCells { lon: number[]; lat: number[]; mean: number[]; max: number[]; min: number[]; street_m: number[]; n: number[]; pm25?: number[]; anomaly?: number[]; air?: number[]; offset?: number[] }
 export interface AreaPlace { lon: number; lat: number; value: number; street_m: number; place: string }
 export interface AreasResp {
   metric: "air" | "heat"; mode: Mode; cell_m: number; unit: string; hour?: number; time?: string; scenario?: string | null; reference?: number;
   thresholds: { clean?: number; dirty?: number; hot?: number; cool?: number }; stats: { median: number; p10: number; p90: number; min: number; max: number };
   cells: AreaCells; extremes: { best: AreaPlace[]; worst: AreaPlace[] }; note: string;
+  /** heat only: colour centre and half-width (°C), the city's feels-like / air temperature and heat level for the hour, and whether the local model was available */
+  scale?: HeatScale; centre?: number; span?: number; model?: boolean;
+  city?: { feels: number; air: number; level: HeatLevel; city_level: HeatLevel };
+  validation?: { sensors: number | null; sensor_hours: number | null } | null;
 }
+export type HeatScale = "absolute" | "relative";
+export type HeatLevel = "none" | "caution" | "high" | "extreme";
 
 // ---- real traffic (Google Routes + TomTom) ----------------------------------------------------------------
 export interface TrafficCorridor {
