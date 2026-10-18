@@ -1,4 +1,5 @@
-import { useMemo, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
+import { AlertsContext, rank, type Alert } from "../alerts";
 import type { AreasResp, Forecast } from "../types";
 import { PM_WARNING, PM_WATCH, hhmm } from "../api";
 import { distanceKm, type LocStatus, type Place } from "../location";
@@ -68,6 +69,17 @@ export function suggest({ pm, score, fc, hourIndex, located, better }: Input): S
   return out;
 }
 
+const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock" };
+const LEAD_H = 12;
+
+/** The first thing to do about each alert that is under way or starts within 12 hours; these lead the list. */
+export function alertSuggestions(alerts: Alert[], now: string | null): Suggestion[] {
+  const t0 = now ? new Date(`${now}:00`).getTime() : Date.now();
+  return alerts
+    .filter((a) => rank(a.level) >= rank("watch") && a.actions.length && new Date(`${a.end}:00`).getTime() > t0 && new Date(`${a.start}:00`).getTime() - t0 <= LEAD_H * 3_600_000)
+    .map((a): Suggestion => ({ id: `alert-${a.id}`, tone: a.level === "warning" ? "warn" : "watch", icon: ALERT_ICON[a.kind], title: a.actions[0].title, body: `${a.title}. ${a.actions[0].body || a.message}`.trim() }));
+}
+
 function nearestCell(a: AreasResp | null, p: Place) {
   if (!a) return null;
   const c = a.cells, kx = Math.cos((p.lat * Math.PI) / 180);
@@ -94,7 +106,13 @@ export default function Suggestions({ areas, fc, hourIndex, status, place, distr
     const near = areas.extremes.best.map((b) => ({ name: b.place.replace(/^near /, ""), km: distanceKm(place.lat, place.lon, b.lat, b.lon), score: b.value })).filter((b) => b.km <= 6);
     return near.sort((a, b) => a.km - b.km)[0] ?? null;
   }, [areas, place]);
-  const items = useMemo(() => suggest({ pm: here?.pm ?? null, score: here?.score ?? null, fc, hourIndex, located: !!place && !!here, better }), [here, fc, hourIndex, place, better]);
+  const alerts = useContext(AlertsContext);
+  const items = useMemo(() => {
+    const lead = alertSuggestions(alerts, fc?.hours[fc.now_index]?.time ?? null);
+    const heatAlert = alerts.some((a) => a.kind === "heat" && rank(a.level) >= rank("watch"));
+    const own = suggest({ pm: here?.pm ?? null, score: here?.score ?? null, fc, hourIndex, located: !!place && !!here, better }).filter((s) => !(heatAlert && s.id === "heat"));
+    return [...lead, ...own];
+  }, [alerts, here, fc, hourIndex, place, better]);
 
   return (
     <section aria-label="Suggestions for you" className="grid gap-3">

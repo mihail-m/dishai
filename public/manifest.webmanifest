@@ -1,0 +1,10 @@
+{
+  "name": "DishAI",
+  "short_name": "DishAI",
+  "description": "Air quality, heat and clean routes for Sofia, with alerts.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f1f3ee",
+  "theme_color": "#1f5b3f",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

@@ -1,0 +1,68 @@
+{
+ "eval": {
+  "all hours": {
+   "rows": 571927,
+   "rank_model": 0.32,
+   "rank_old_landsat": 0.01,
+   "spatial_sd": 2.94,
+   "spatial_rmse_model": 2.85
+  },
+  "summer afternoons (Jun-Aug, 12-17 h, sun)": {
+   "rows": 27311,
+   "rank_model": 0.16,
+   "rank_old_landsat": 0.08,
+   "spatial_sd": 3.37,
+   "spatial_rmse_model": 3.37
+  },
+  "summer nights (Jun-Aug, 22-05 h)": {
+   "rows": 39108,
+   "rank_model": 0.42,
+   "rank_old_landsat": 0.0,
+   "spatial_sd": 2.28,
+   "spatial_rmse_model": 2.07
+  },
+  "clear calm winter nights (Dec-Feb)": {
+   "rows": 7770,
+   "rank_model": 0.38,
+   "rank_old_landsat": 0.02,
+   "spatial_sd": 2.63,
+   "spatial_rmse_model": 2.48
+  },
+  "winter days (Dec-Feb, 11-15 h)": {
+   "rows": 43982,
+   "rank_model": 0.27,
+   "rank_old_landsat": 0.01,
+   "spatial_sd": 3.64,
+   "spatial_rmse_model": 3.53
+  }
+ },
+ "sensors": 220,
+ "sensor_hours": 571927,
+ "type_effect": {
+  "bme280": 0.39,
+  "bmp280": 0.15,
+  "dht22": 0.28,
+  "sht30": -0.51,
+  "sht31": -0.11
+ },
+ "probe": {
+  "sunny afternoon": [
+   1.87,
+   -0.09,
+   -0.13,
+   -1.99
+  ],
+  "clear calm night": [
+   1.82,
+   -2.17,
+   -2.07,
+   -0.86
+  ],
+  "cloudy windy night": [
+   1.24,
+   -1.31,
+   -1.36,
+   -2.79
+  ]
+ }
+}

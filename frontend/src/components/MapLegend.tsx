@@ -15,7 +15,7 @@ const KEY: Record<LegendKind, React.ReactNode[]> = {
     <><Line c="#3b82f6" w={4} /><Line c="#78829a" w={4} /><Line c="#f0aa28" w={4} /><Line c="#be1e28" w={4} /> Live traffic: lighter to heavier than usual</>,
     <><Dot c="#be2828" /><Dot c="#e8742c" /><Dot c="#f0be28" /> Traffic incidents: closure, major, minor</>,
   ],
-  heat: [<>Summer satellite snapshot of ground temperature, not air temperature.</>, <>Shade, trees and water stay cooler.</>],
+  heat: [<>Feels-like temperature for the hour: the city forecast plus how much warmer or cooler each place usually is in this weather.</>, <>Built-up areas hold heat on calm nights; higher ground is cooler.</>],
   clean: [
     <><Line c="#00695c" w={5} /> Clean path: used by many of the cleanest routes</>,
     <><i className="mr-1.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-bold text-white" style={{ background: "#d6288c" }}>1</i> Busy street with poor air</>,
