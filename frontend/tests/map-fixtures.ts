@@ -83,6 +83,8 @@ export async function mockMapApi(page: Page) {
           extremes: { best: [{ lon: 23.32, lat: 42.69, value: 60, street_m: 1500, place: "Demo park" }], worst: [] }, note: "Test areas" };
         break;
       }
+      case "/api/alerts": data = { generated_at: time, scenario, alerts: [], sources: {}, push: { enabled: false } }; break;
+      case "/api/push/key": data = { enabled: false, public_key: null, kinds: [], levels: [] }; break;
       case "/api/advice": data = { cards: [] }; break;
       default: await route.fulfill({ status: 404, json: { detail: `Unmocked endpoint ${url.pathname}` } }); return;
     }
