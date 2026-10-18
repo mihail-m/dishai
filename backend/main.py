@@ -424,7 +424,7 @@ async def build_airthings(scenario: str | None) -> tuple[list[dict], dict]:
         recs, src = await cache.get("airthings", airthings.fetch_sensors, persist=False)  # memory only: the site states no licence
     except Exception:  # noqa: BLE001
         return [], {**info, "source": "unavailable"}
-    out = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"], "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs]
+    out = [{**r, "pm25": scenario_pm25(r["pm25"], scenario, r.get("lat"), r.get("lon")) if scenario else r["pm25"], "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs]
     out = [{**r, "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in out]
     return out, {**info, "count": len(out), "source": src}
 
@@ -438,7 +438,7 @@ async def build_sensors(scenario: str | None) -> dict:
     if src in ("live", "cache"):
         recs = sensors_mod.fresh_only(recs)
         recs, dropped = sensors_mod.drop_isolated_outliers(recs)
-    raw = [{**r, "pm25": scenario_pm25(r["pm25"], scenario) if scenario else r["pm25"]} for r in recs]
+    raw = [{**r, "pm25": scenario_pm25(r["pm25"], scenario, r.get("lat"), r.get("lon")) if scenario else r["pm25"]} for r in recs]
     recs, cal = calibrate_records(raw, await current_conditions(scenario))
     out = [{**r, "source": "sensor_community", "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in recs]
     extra, at_info = await build_airthings(scenario)

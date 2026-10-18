@@ -74,3 +74,12 @@ def test_quiet_air_and_sparse_areas_never_trip_the_rule():
     assert drop_isolated_outliers(quiet)[1] == []
     sparse = [_rec(1, 0.00, 4), _rec(9, 0.30, 200)]  # nothing within 5 km to compare against
     assert drop_isolated_outliers(sparse)[1] == []
+
+
+def test_winter_demo_has_a_dirty_pool_and_cleaner_ground_around_it():
+    from backend.scenario import demo_geography, scenario_pm25
+    assert demo_geography(42.690, 23.345, "winter_inversion") > 1.8      # the smoke pool
+    assert demo_geography(42.665, 23.335, "winter_inversion") < 0.8      # the cleaner way south of the centre
+    assert demo_geography(42.69, 23.34, "summer_heatwave") == 1.0         # other scenarios keep their uniform air
+    assert demo_geography(None, None, "winter_inversion") == 1.0          # no position, no change
+    assert scenario_pm25(4.0, "winter_inversion", 42.690, 23.345) > scenario_pm25(4.0, "winter_inversion", 42.665, 23.335) * 2

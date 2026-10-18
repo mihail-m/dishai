@@ -146,7 +146,35 @@ HOURLY = {"winter_inversion": winter_inversion_hourly, "summer_heatwave": summer
 SENSOR_SCALE = {"winter_inversion": (2.2, 28.0), "summer_heatwave": (0.8, 0.5), "birch_season": (0.9, 1.0)}
 
 
+# The winter demo also gets a geography, so the maps and the route planner have something to show. Real inversion episodes pool cold, stove-heated
+# air in the low eastern and central districts and leave the slopes of Vitosha and the north cleaner. Each entry is (lat, lon, radius km, change):
+# a Gaussian bump multiplying the sensor readings. These are DEMO values, not measurements.
+_DEMO_POOLS = {
+    "winter_inversion": (
+        (42.690, 23.345, 1.8, +1.10),   # the smoke pool over Iztok, Poduyane and the centre-east
+        (42.700, 23.310, 1.4, +0.60),   # the old centre, boulevards in still air
+        (42.665, 23.395, 2.0, +0.40),   # stove districts of the south-east (Mladost side, Druzhba)
+        (42.665, 23.335, 2.0, -0.50),   # Lozenets and the Hladilnika slope: a cleaner way south of the centre
+        (42.640, 23.290, 2.6, -0.35),   # Vitosha foot: Boyana, Dragalevtsi, Simeonovo
+        (42.735, 23.330, 2.4, -0.30),   # the north: Gorna Banya side
+        (42.690, 23.270, 1.8, -0.25),   # the green corridor of the west (Borisova gradina side)
+    ),
+}
+
+
+def demo_geography(lat: float | None, lon: float | None, scenario: str) -> float:
+    """Multiplier (about 0.6 to 1.8) for a sensor at lat/lon in the demo scenario; 1.0 elsewhere or without a position."""
+    pools = _DEMO_POOLS.get(scenario)
+    if not pools or lat is None or lon is None:
+        return 1.0
+    f = 1.0
+    for plat, plon, rad, delta in pools:
+        d = math.hypot((lat - plat) * 111.0, (lon - plon) * 111.0 * math.cos(math.radians(plat)))
+        f += delta * math.exp(-0.5 * (d / rad) ** 2)
+    return max(0.4, f)
+
+
 # Live sensor readings are re-scaled in the scenario so dots match the story.
-def scenario_pm25(live_value: float, scenario: str = "winter_inversion") -> float:
+def scenario_pm25(live_value: float, scenario: str = "winter_inversion", lat: float | None = None, lon: float | None = None) -> float:
     k, b = SENSOR_SCALE[scenario]
-    return round(min(250.0, live_value * k + b), 1)
+    return round(min(250.0, (live_value * k + b) * demo_geography(lat, lon, scenario)), 1)
