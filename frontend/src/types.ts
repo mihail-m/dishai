@@ -203,25 +203,6 @@ export interface AreasResp {
 export type HeatScale = "absolute" | "relative";
 export type HeatLevel = "none" | "caution" | "high" | "extreme";
 
-// ---- real traffic (Google Routes + TomTom) ----------------------------------------------------------------
-export interface TrafficCorridor {
-  id: string; name: string; polyline: [number, number][]; length_km: number;
-  live_index: number | null; typical_index: number | null; vs_typical: number | null;
-  google: { duration_s?: number; slow_share?: number; jam_share?: number; tti?: number };
-  tomtom: { tti?: number; points?: number };
-}
-export interface TrafficResp {
-  enabled: boolean; google: boolean; tomtom: boolean; ready: boolean; measured_profile: boolean; updated: string | null;
-  corridors: TrafficCorridor[]; profile: { wk: number[]; we: number[] } | null; volume_profile?: VolumeProfile | null;
-  usage: { day: string; google_requests: number; tomtom_requests: number }; note: string; sources: string[];
-}
-export interface Incident {
-  type: "Feature"; geometry: { type: "Point"; coordinates: [number, number] } | { type: "LineString"; coordinates: [number, number][] };
-  properties: { id: string; category: string; category_code: number; magnitude: string; magnitude_code: number; description: string;
-    from: string | null; to: string | null; length_m: number; delay_s: number | null; road: string; start: string | null; end: string | null; reports: number | null };
-}
-export interface IncidentsResp { type: "FeatureCollection"; features: Incident[]; enabled: boolean; count?: number; source?: string; updated?: string; error?: boolean }
-
 // ---- Google Air Quality + Pollen -----------------------------------------------------------------------------
 export interface GoogleAir {
   enabled: boolean; updated?: string; note?: string; source?: string;

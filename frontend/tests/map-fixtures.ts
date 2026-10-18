@@ -65,6 +65,8 @@ export async function mockMapApi(page: Page) {
       case "/api/validation": data = { warning: "Synthetic browser test data" }; break;
       case "/api/traffic": data = { enabled: false, google: false, tomtom: false, ready: false, measured_profile: false, updated: null, corridors: [], profile: null, usage: { day: "", google_requests: 0, tomtom_requests: 0 }, note: "", sources: [] }; break;
       case "/api/traffic/incidents": data = { type: "FeatureCollection", features: [], enabled: false }; break;
+      case "/api/plumes": data = { plume: null, green_ticket: [], sources: {} }; break;
+      case "/api/plumes": data = { plume: null, green_ticket: [], sources: {} }; break;
       case "/api/google-air": data = { enabled: false }; break;
       case "/api/no2": data = { enabled: false }; break;
       case "/api/cai/geometry": {

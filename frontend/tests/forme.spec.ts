@@ -46,10 +46,11 @@ test("choices are saved on this device and old saved choices still load", async 
   await page.getByRole("button", { name: "My health", exact: true }).first().click();
   await expect(page.getByRole("button", { name: "I am older or health-sensitive" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Asthma" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: "Birch" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Alder" }).click();
+  const triggers = page.getByRole("group", { name: "Pollen types" });
+  await expect(triggers.getByRole("button", { name: "Birch" })).toHaveAttribute("aria-pressed", "true");
+  await triggers.getByRole("button", { name: "Alder" }).click();
   await page.getByRole("button", { name: "Pollen allergy" }).click(); // off: the trigger list goes away
-  await expect(page.getByRole("button", { name: "Alder" })).toHaveCount(0);
+  await expect(triggers).toHaveCount(0);
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("dishai.foryou")!));
   expect(saved).toMatchObject({ profile: "vulnerable", toggles: ["asthma"], species: ["birch", "alder"] });
 });

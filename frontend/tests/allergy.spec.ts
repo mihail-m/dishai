@@ -20,13 +20,13 @@ test("the My health tab shows the pollen forecast by plant, the season calendar 
 
 test("choosing the pollen I react to puts those plants first and is remembered", async ({ page }) => {
   await page.getByRole("button", { name: "Pollen allergy" }).click();
-  await page.getByRole("group", { name: "Pollen I react to" }).getByRole("button", { name: "Grass" }).click();
+  await page.getByRole("group", { name: "Pollen types" }).getByRole("button", { name: "Grass" }).click();
   await expect(page.getByText("Your trigger")).toHaveCount(1);
   const first = page.locator("article").filter({ hasText: "Your trigger" });
   await expect(first.getByRole("heading", { name: /^Grass/ })).toBeVisible();
   await page.reload();
   await page.getByRole("navigation", { name: "Views" }).first().getByRole("button", { name: "My health" }).click();
-  await expect(page.getByRole("group", { name: "Pollen I react to" }).getByRole("button", { name: "Grass" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "Pollen types" }).getByRole("button", { name: "Grass" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Pollen allergy" })).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -34,7 +34,7 @@ test("calendar squares explain themselves and the symptom check-in asks once a d
   await page.getByRole("group", { name: /Typical pollen season/ }).getByRole("button", { name: /^Birch, Apr 1–10/ }).hover();
   await expect(page.getByText(/Birch · Apr 1–10: typically up to 120 grains/)).toBeVisible();
   await page.getByRole("button", { name: "Mild" }).click();
-  await expect(page.getByRole("status")).toContainText("Thanks");
+  await expect(page.getByRole("status").filter({ hasText: "Thanks" })).toBeVisible();
   await page.reload();
   await page.getByRole("navigation", { name: "Views" }).first().getByRole("button", { name: "My health" }).click();
   await expect(page.getByRole("button", { name: "Mild" })).toHaveCount(0);

@@ -202,7 +202,7 @@ export default function App() {
           )}
           {mapTab && <button className="map-locate" onClick={locate} aria-label={geo.place ? "Centre on my location" : "Show my location"} title={geo.place ? "Centre on my location" : "Show my location"} disabled={geo.status === "asking"}>{Icon.locate}</button>}
           {mapTab && extra.legend && <MapLegend kind={extra.legend.kind} title={extra.legend.title}>{extra.legend.bar}</MapLegend>}
-          <TimeBar mode={barMode} fc={fc} hourIndex={hourIndex} setHourIndex={chooseHour} ready={hourlyReady} progress={status} error={err} />
+          {!(tab === "explore" && layer === "clean") && <TimeBar mode={barMode} fc={fc} hourIndex={hourIndex} setHourIndex={chooseHour} ready={hourlyReady} progress={status} error={err} />}
         </div>
       </div>
 

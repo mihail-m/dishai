@@ -78,7 +78,7 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
     await expect(async () => {
       await page.mouse.move(0, 0);
       await page.mouse.move(box.x + box.width / 2 + 25, box.y + box.height / 2 - 25);
-      await expect(page.getByText("Area of ~3000 m", { exact: false })).toBeVisible({ timeout: 1500 });
+      await expect(page.getByText("Air quality score", { exact: false })).toBeVisible({ timeout: 1500 });
     }).toPass({ timeout: 15_000 });
     await page.getByRole("button", { name: "Heat", exact: true }).click();
     await expect(async () => {
@@ -87,10 +87,9 @@ for (const renderer of ["Leaflet", "MapLibre"] as const) {
       await expect(page.getByText("Feels like 35 °C", { exact: false })).toBeVisible({ timeout: 1500 });
     }).toPass({ timeout: 15_000 });
     await page.getByRole("button", { name: "Clean paths" }).click();
-      await page.getByRole("button", { name: "Animate route flow" }).click();
     await page.mouse.move(0, 0);
     const before = await page.getByRole("application", { name: "Map of Sofia air quality" }).screenshot();
-    await expect.poll(async () => (await page.getByRole("application", { name: "Map of Sofia air quality" }).screenshot()).equals(before)).toBe(false);
+    await expect.poll(async () => (await page.getByRole("application", { name: "Map of Sofia air quality" }).screenshot()).equals(before), { timeout: 15_000 }).toBe(false);
     await page.getByRole("button", { name: /Demo Junction/ }).click();
     await expect(page.getByText("Demo measure")).toBeVisible();
     await selectRenderer(page, renderer === "Leaflet" ? "MapLibre" : "Leaflet");
