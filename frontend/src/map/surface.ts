@@ -136,7 +136,7 @@ export class AreaSurface {
     if (this.from && next && (this.from.W !== next.W || this.from.H !== next.H)) this.from = null;
     this.to = next;
     this.t0 = performance.now();
-    this.dur = reduced() ? 0 : this.from && next ? 450 : 650;
+    this.dur = reduced() || (!this.from && !next) ? 0 : this.from && next ? 450 : 650; // nothing on screen and nothing to show: nothing to animate
     this.settledCanvas = null;
   }
 
@@ -145,7 +145,8 @@ export class AreaSurface {
     let base: Field | null;
     if (t >= 1) base = this.to;
     else {
-      const e = t * t * (3 - 2 * t), a = this.from, b = this.to, ref = (b ?? a)!;
+      const e = t * t * (3 - 2 * t), a = this.from, b = this.to, ref = b ?? a;
+      if (!ref) { this.shown = null; return { layers: [], settled: true }; }
       if (!this.scratch || this.scratch.length !== ref.data.length) this.scratch = new Uint8ClampedArray(ref.data.length);
       const data = this.scratch;
       for (let i = 0; i < data.length; i += 4) {
@@ -166,14 +167,25 @@ export class AreaSurface {
     let surface: HTMLCanvasElement;
     if (t >= 1) { this.settledCanvas ??= toCanvas(base); surface = this.settledCanvas; } else surface = toCanvas(base);
     const amb = this.ambient(base, now);
-    return { layers: [this.surfaceLayer(surface, base.bounds), ...(amb ? [this.surfaceLayer(amb.image, amb.bounds, "areas-ambient")] : [])], settled: false };
+    const swell = 1 - 0.14 * this.calm(now) * (0.5 + 0.5 * Math.sin(now / 1000 * 1.3 - 1.2));
+    return { layers: [this.surfaceLayer(surface, base.bounds, "areas-surface", swell), ...(amb ? [this.surfaceLayer(amb.image, amb.bounds, "areas-ambient")] : [])], settled: false };
   }
 
-  private surfaceLayer(image: HTMLCanvasElement, bounds: Field["bounds"], id = "areas-surface") {
-    return new BitmapLayer({ id, image, bounds, pickable: false, textureParameters: { minFilter: "linear", magFilter: "linear" } } as never);
+  private surfaceLayer(image: HTMLCanvasElement, bounds: Field["bounds"], id = "areas-surface", opacity = 1) {
+    return new BitmapLayer({ id, image, bounds, opacity, pickable: false, textureParameters: { minFilter: "linear", magFilter: "linear" } } as never);
   }
 
-  /** The ambient overlay is a tiny canvas stretched over the surface by the GPU, so each frame costs a few thousand pixels, not the whole raster. */
+  /** How far the shimmer has faded in: it is off while the data is changing (playing or scrubbing) and returns about a second after it settles. */
+  private calm(now: number) {
+    const c = Math.min(1, Math.max(0, (now - (this.t0 + this.dur) - 500) / 1000));
+    return c * c * (3 - 2 * c);
+  }
+
+  /**
+   * The breathing: the whole surface slowly swells and relaxes (its opacity), and a soft tint rolls across it in a wave, a little stronger over the
+   * dirtier or hotter places. The tint is a tiny canvas stretched by the GPU, so each frame costs a few thousand pixels, not the whole raster.
+   * The tint is deep green in the light theme and pale in the dark one (the opposite would vanish). The colours that carry the values never change.
+   */
   private ambient(f: Field, now: number): { image: HTMLCanvasElement; bounds: Field["bounds"] } | null {
     const co = (this.to ?? f).coarse;
     if (!co) return null;
@@ -181,20 +193,16 @@ export class AreaSurface {
       const mk = () => { const c = document.createElement("canvas"); c.width = co.w; c.height = co.h; return c; };
       this.sheen = { key: f, canvases: [mk(), mk()], image: new ImageData(co.w, co.h), flip: 0 };
     }
-    const sh = this.sheen, d = sh.image.data;
-    // the shimmer stays out of the way of the forecast: it fades out while the data is changing (playing or scrubbing) and returns about a second after it settles
-    const calm = Math.min(1, Math.max(0, (now - (this.t0 + this.dur) - 500) / 1000)), k = calm * calm * (3 - 2 * calm);
-    const dark = isDark(), tt = now / 1000, pos = ((tt / 7) % 2) - 0.5, cw = Math.cos(tt * 0.95), sw = Math.sin(tt * 0.95);
-    const [r, g, bl] = dark ? [226, 255, 234] : [10, 44, 28]; // the sweep lightens in the dark theme and deepens in the light one: the opposite would vanish
+    const sh = this.sheen, d = sh.image.data, k = this.calm(now);
+    const dark = isDark(), tt = now / 1000, cw = Math.cos(tt * 1.3), sw = Math.sin(tt * 1.3);
+    // inhale and exhale: where the wave is high the surface is tinted deeper, where it is low it is washed lighter (and the reverse in the dark theme)
+    const hiC = dark ? [226, 255, 234] : [8, 52, 30], loC = dark ? [0, 6, 3] : [255, 255, 255];
     for (let i = 0, n = co.w * co.h; i < n; i++) {
       const m = co.mask[i] / 255, o = i * 4;
       if (m < 0.04) { d[o + 3] = 0; continue; }
-      const dd = co.u[i] - pos;
-      let b = 1 - dd * dd * 16;
-      b = b > 0 ? b * b : 0;
-      const breathe = (co.dirt[i] / 255) * (0.5 + 0.5 * (co.sinPh[i] * cw + co.cosPh[i] * sw));
-      d[o] = r; d[o + 1] = g; d[o + 2] = bl;
-      d[o + 3] = k * m * (dark ? 85 * b + 60 * breathe : 120 * b + 75 * breathe);
+      const w = co.sinPh[i] * cw + co.cosPh[i] * sw, c = w >= 0 ? hiC : loC, amp = k * m * (0.72 + 0.28 * (co.dirt[i] / 255)) * Math.abs(w);
+      d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2];
+      d[o + 3] = amp * (w >= 0 ? (dark ? 105 : 125) : (dark ? 115 : 135));
     }
     sh.flip ^= 1;
     const cv = sh.canvases[sh.flip];
@@ -211,26 +219,19 @@ export function areaPickLayer(a: AreasResp, rows: AreaRow[]): Layer {
   } as never);
 }
 
-/** Radar-style pings and a soft glow on the worst places, drawn from the real "worst areas" list. */
+/** A small, slow ping on the worst places (from the real "worst areas" list). */
 export function pulseLayers(places: AreaPlace[], now: number, rgb: RGB = [196, 78, 58]): Layer[] {
   if (!places.length) return [];
-  const motion = !reduced();
-  type P = AreaPlace & { phase: number };
-  const rings: P[] = places.flatMap((p, i) => [0, 0.5].map((o) => ({ ...p, phase: motion ? ((now / 2400) + i * 0.23 + o) % 1 : 0.4 + o * 0.3 })));
+  const phase = reduced() ? 0.4 : (now / 3400) % 1;
   return [
     new ScatterplotLayer<AreaPlace>({
-      id: "area-glow", data: places, getPosition: (p: AreaPlace) => [p.lon, p.lat], radiusUnits: "pixels", getRadius: 30,
-      getFillColor: [...rgb, 46] as never, stroked: false, pickable: false,
-    } as never),
-    new ScatterplotLayer<P>({
-      id: "area-pulse", data: rings, getPosition: (p: P) => [p.lon, p.lat], radiusUnits: "pixels", stroked: true, filled: false, lineWidthUnits: "pixels",
-      getRadius: (p: P) => 7 + 44 * p.phase, getLineWidth: 2.5,
-      getLineColor: (p: P) => [...rgb, Math.round(230 * (1 - p.phase) ** 1.5)] as never,
+      id: "area-pulse", data: places, getPosition: (p: AreaPlace) => [p.lon, p.lat], radiusUnits: "pixels", stroked: true, filled: false, lineWidthUnits: "pixels",
+      getRadius: 5 + 15 * phase, getLineWidth: 1.5, getLineColor: [...rgb, Math.round(150 * (1 - phase) ** 1.6)] as never,
       updateTriggers: { getRadius: now, getLineColor: now }, pickable: false,
     } as never),
     new ScatterplotLayer<AreaPlace>({
-      id: "area-pulse-dot", data: places, getPosition: (p: AreaPlace) => [p.lon, p.lat], radiusUnits: "pixels", getRadius: 5,
-      getFillColor: [...rgb, 255] as never, stroked: true, getLineColor: [255, 255, 255, 90] as never, lineWidthUnits: "pixels", getLineWidth: 3, pickable: false,
+      id: "area-pulse-dot", data: places, getPosition: (p: AreaPlace) => [p.lon, p.lat], radiusUnits: "pixels", getRadius: 3.2,
+      getFillColor: [...rgb, 230] as never, stroked: false, pickable: false,
     } as never),
   ];
 }

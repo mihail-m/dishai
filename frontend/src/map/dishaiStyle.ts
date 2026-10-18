@@ -50,6 +50,7 @@ const cache = new Map<boolean, Promise<Json>>();
 export function loadBasemapStyle(dark: boolean): Promise<Json | string> {
   const url = "https://tiles.openfreemap.org/styles/positron";
   let p = cache.get(dark);
-  if (!p) { p = fetch(url).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then((j) => restyle(j, dark)); cache.set(dark, p); }
+  // a slow or unreachable style server must not keep the map from starting: after 4 s the plain style URL is used instead
+  if (!p) { p = fetch(url, { signal: AbortSignal.timeout(4000) }).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then((j) => restyle(j, dark)); cache.set(dark, p); }
   return p.catch(() => { cache.delete(dark); return url; });
 }
