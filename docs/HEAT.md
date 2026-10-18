@@ -34,4 +34,4 @@ The spatial spread among sensors in one hour is ~3 °C (much of it sensor mounti
 * Sunny afternoons are the weakest regime: sensors in direct sun read high and the signal is noisy. Surface temperature (radiant exposure) can matter for a person walking in the sun, but that was not what the layer claimed, and it is not validated.
 * **The street score's summer heat term (`backend/cai/features.py` H(e), gated by feels-like) still uses Landsat LST.** Switching it to this offset is the consistent next step; it changes routing, so it was left alone.
 * No temperature reference station (the EEA stations do not report it), so the only truth is the citizen sensors.
-* Refit: `PYTHONPATH=. .venv/bin/python -m backend.ml.heat_field` (needs `data/history/env.csv`, `make history-env` equivalent in `backend/data_prep/history_env.py`).
+* Refit: `PYTHONPATH=. .venv/bin/python -m backend.ml.heat_field` (needs `data/history/env.csv` from `python -m backend.data_prep.history_env`; also `make heat-field`).

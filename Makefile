@@ -1,4 +1,4 @@
-.PHONY: backtest heating reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
+.PHONY: heat-field backtest heating reference calibrate spatial dem construction construction-activity construction-districts history train setup dev backend frontend test districts data graph bikegraph roads ndvi lst canopy trees bake build start
 
 PY=.venv/bin/python
 
@@ -56,6 +56,8 @@ history:
 	$(PY) -m backend.data_prep.history              # Sensor.Community + Open-Meteo history -> data/history/ (~1 h, resumable)
 reference:
 	$(PY) -m backend.data_prep.reference_eea     # EEA hourly PM2.5/PM10 for Sofia -> data/history/reference.csv
+heat-field:
+	$(PY) -m backend.ml.heat_field        # local temperature offsets from the citizen sensors -> data/heat_field.joblib, data/heat_field_eval.json
 calibrate:
 	$(PY) -m backend.ml.calibrate                    # fit + evaluate the sensor calibration -> data/calibration.joblib
 backtest:
