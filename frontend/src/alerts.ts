@@ -21,18 +21,21 @@ export const rank = (l: AlertLevel) => LEVELS.indexOf(l);
 export const AlertsContext = createContext<Alert[]>([]);
 
 // ---- one shared poll per scenario ----------------------------------------------------------------------------------------------------------
-interface Slot { data: AlertsResp | null; error: string | null; at: number; listeners: Set<() => void>; timer: ReturnType<typeof setInterval> | null }
+interface Slot { data: AlertsResp | null; error: string | null; at: number; busy: boolean; listeners: Set<() => void>; timer: ReturnType<typeof setInterval> | null }
 const FRESH_MS = 60_000;
 const slots = new Map<string, Slot>();
-const slotOf = (s: Scenario): Slot => slots.get(s) ?? (slots.set(s, { data: null, error: null, at: 0, listeners: new Set(), timer: null }).get(s)!);
+const slotOf = (s: Scenario): Slot => slots.get(s) ?? (slots.set(s, { data: null, error: null, at: 0, busy: false, listeners: new Set(), timer: null }).get(s)!);
 
 async function pull(s: Scenario) {
   const slot = slotOf(s);
+  if (slot.busy) return; // React StrictMode mounts twice in development: one request is enough
+  slot.busy = true;
   try {
     const r = await fetch(`/api/alerts${s === "live" ? "" : `?scenario=${s}`}`, { cache: "no-store" });
     if (!r.ok) throw new Error(String(r.status));
     slot.data = await r.json(); slot.error = null; slot.at = Date.now();
   } catch (e) { slot.error = String(e); }
+  slot.busy = false;
   slot.listeners.forEach((f) => f());
 }
 
