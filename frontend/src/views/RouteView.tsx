@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PickingInfo } from "@deck.gl/core";
-import type { RouteResp, Scenario } from "../types";
+import type { Mode, RouteResp, Scenario } from "../types";
 import type { Stage } from "../stage";
 import { useHourlyPreload } from "../forecast";
 import { api2 } from "../api";
@@ -11,24 +11,24 @@ import PlaceSearch from "../components/PlaceSearch";
 type LL = [number, number]; // lat, lng
 interface Props { stage: Stage; scenario: Scenario; hourIndex: number }
 
-// One walking route, tuned for the cleanest air within the time cap the router allows: no settings to choose.
+// One route, tuned for the cleanest air within the time cap the router allows: the only choice is how you travel.
 const LAMBDA = 3;
-const MODE = "walk";
 
 export default function RouteView({ stage, scenario, hourIndex }: Props) {
   const [from, setFrom] = useState<LL | null>(PRESET_PAIRS[1].from as unknown as LL);
   const [to, setTo] = useState<LL | null>(PRESET_PAIRS[1].to as unknown as LL);
   const [picking, setPicking] = useState<"from" | "to" | null>(null);
   const [googleResult, setGoogleResult] = useState<{ key: string; value: RouteResp } | null>(null);
+  const [mode, setMode] = useState<Mode>("walk");
   const [labels, setLabels] = useState<{ from: string; to: string }>({ from: PRESET_PAIRS[1].label.split(" → ")[0].split(": ").pop() ?? "", to: PRESET_PAIRS[1].label.split(" → ")[1] ?? "" });
   const pickRef = useRef(picking);
   pickRef.current = picking;
   const { set } = stage;
 
   const window = stage.forecast;
-  const routeKey = window && from && to ? `${window.id}:route:${MODE}:${from.join()}:${to.join()}:${LAMBDA}` : null;
+  const routeKey = window && from && to ? `${window.id}:route:${mode}:${from.join()}:${to.join()}:${LAMBDA}` : null;
   const history = useHourlyPreload<RouteResp>(routeKey, window?.hours ?? [], hourIndex,
-    (hour, signal) => api2.route(from!, to!, LAMBDA, scenario, hour, MODE, { forecastId: window!.id, signal, includeGoogle: false }), 220);
+    (hour, signal) => api2.route(from!, to!, LAMBDA, scenario, hour, mode, { forecastId: window!.id, signal, includeGoogle: false }), 220);
   const googleKey = `${routeKey}:${hourIndex}`;
   const res = googleResult?.key === googleKey ? googleResult.value : history.value;
   const err = history.status.error;
@@ -44,7 +44,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
     if (!history.value?.google_available || !from || !to || !window) return;
     const controller = new AbortController();
     const ownRoute = history.value;
-    api2.route(from, to, LAMBDA, scenario, hourIndex, MODE, { forecastId: window.id, signal: controller.signal })
+    api2.route(from, to, LAMBDA, scenario, hourIndex, mode, { forecastId: window.id, signal: controller.signal })
       .then((value) => { if (!controller.signal.aborted) setGoogleResult({ key: googleKey, value }); })
       .catch(() => { if (!controller.signal.aborted) setGoogleResult({ key: googleKey, value: { ...ownRoute, google_status: "error" } }); });
     return () => controller.abort();
@@ -91,7 +91,13 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
 
   return (
     <div className="grid gap-4">
-      <h2 className="m-0 text-xl font-bold">Plan a cleaner walk</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="m-0 text-xl font-bold">Plan a cleaner {mode === "bike" ? "ride" : "walk"}</h2>
+        <div className="seg" role="group" aria-label="Travel mode">
+          <button aria-pressed={mode === "walk"} onClick={() => setMode("walk")}>Walk</button>
+          <button aria-pressed={mode === "bike"} onClick={() => setMode("bike")}>Cycle</button>
+        </div>
+      </div>
       {GOOGLE_KEY && <PlaceSearch onPick={(ll) => (picking === "to" ? setTo(ll) : setFrom(ll))} />}
       <div className="grid gap-2">
         <button className={`field ${picking === "from" ? "active" : ""}`} onClick={() => setPicking(picking === "from" ? null : "from")}>
@@ -119,7 +125,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
             {(!res.confidence || res.confidence.cleaner_exists) && <a className="btn btn-primary" href={res.open_in_google_maps_clean} target="_blank" rel="noreferrer">Open cleanest in Google Maps ↗</a>}
             <a className="btn" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
           </div>
-          <p className="faint m-0 text-[11px]">Exposure is modelled PM2.5 × minutes. The cleanest route adds at most 30 % to the walking time. Routes follow OpenStreetMap pedestrian data; times assume 4.8 km/h. No location is stored. Indicative.</p>
+          <p className="faint m-0 text-[11px]">Exposure is modelled PM2.5 × minutes. The cleanest route adds at most 30 % to the travel time. Cycling assumes 2× the walking breathing rate. Routes follow OpenStreetMap pedestrian and cycling data; times assume 4.8 km/h walking and 15 km/h cycling. No location is stored. Indicative.</p>
         </section>
       )}
     </div>
