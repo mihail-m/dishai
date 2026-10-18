@@ -168,7 +168,7 @@ def test_alerts_endpoint_shape_and_demo_scenarios(client):
 
 
 def test_push_is_off_without_keys_and_never_leaks_the_private_key(client, monkeypatch):
-    assert client.get("/api/push/key").json() == {"enabled": False, "public_key": None, "kinds": ["pm", "heat", "dust", "fire"], "levels": ["info", "watch", "warning"]}
+    assert client.get("/api/push/key").json() == {"enabled": False, "public_key": None, "kinds": ["pm", "heat", "dust", "fire", "transport"], "levels": ["info", "watch", "warning"]}
     assert client.post("/api/push/subscribe", json={"subscription": GOOD}).status_code == 503
     monkeypatch.setenv("VAPID_PUBLIC_KEY", "PUBLIC")
     monkeypatch.setenv("VAPID_PRIVATE_KEY", "SECRET")

@@ -4,6 +4,7 @@ import { PM_WARNING, PM_WATCH, api, api2, hhmm } from "../api";
 import { rank, useAlerts, type Alert } from "../alerts";
 import { distanceKm, districtAt, useLocation } from "../location";
 import AlertStrip, { NotificationSettings } from "../components/AlertStrip";
+import PlumeCard from "../components/PlumeCard";
 import Wizard from "../components/Wizard";
 import { Acc, Icon } from "../components/ui";
 
@@ -63,6 +64,7 @@ const HEADLINE: Record<Alert["kind"], Record<"warning" | "watch", string>> = {
   heat: { warning: "Dangerous heat today", watch: "Hot day: take care" },
   dust: { warning: "Heavy dust in the air", watch: "Dust in the air" },
   fire: { warning: "Smoke in the air", watch: "Smoke may reach the city" },
+  transport: { warning: "Leave the car at home", watch: "Green ticket: ride public transport" },
 };
 function verdict(alerts: Alert[], hour: Hour | undefined): Verdict {
   const top = [...alerts].filter((a) => rank(a.level) >= rank("watch")).sort((a, b) => Number(b.in_progress) - Number(a.in_progress) || rank(b.level) - rank(a.level))[0];
@@ -118,7 +120,7 @@ function PlanItem({ title, body, tone, icon }: { title: string; body: string; to
   );
 }
 const CARD_ICON: Record<string, keyof typeof Icon> = { heat: "thermo", heat_shelter: "thermo", pollen: "leaf", hold_fire: "fan", stay_in: "window", ventilate: "window", shift_trips: "clock", activity: "walk" };
-const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock" };
+const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock", transport: "route" };
 
 interface Props { scenario: Scenario; districts: DistrictsFC | null; district: string | null; setDistrict: (d: string) => void }
 
@@ -219,6 +221,8 @@ export default function ForMeView({ scenario, districts, district, setDistrict }
       </section>
 
       {fc && <DayStrip fc={fc} />}
+
+      <PlumeCard scenario={scenario} />
 
       <section className="card grid gap-3 p-4" aria-label="About you">
         <div className="flex items-baseline justify-between gap-2">

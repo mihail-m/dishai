@@ -8,20 +8,22 @@ Sources, and what each can honestly claim:
   pm    the city PM2.5 episode forecast (backend/alert.py): the learned model, back-tested in docs/PM_MODEL.md. CAMS, which feeds that model,
         already carries fire and dust emissions, so a smoke or dust episode raises this alert too; the other kinds below say WHY.
   heat  the city feels-like forecast against the advice bands (backend/advice.py HEAT_BANDS).
-  dust  CAMS mineral dust (Copernicus Atmosphere Monitoring Service, via Open-Meteo, no key). Thresholds come from the history of the field itself
-        (Jan 2025 - Oct 2026: dust reached 20 ug/m3 in 12 days and 40 in 3 days); a check against Sofia station PM10 had too few dust days in 2026 to
-        validate them (docs/ALERTS.md).
-  fire  active-fire detections (NASA FIRMS, VIIRS, via a free MAP_KEY) upwind of Sofia at 850 hPa. Indicative only: it says smoke may arrive,
-        not how much. Without a key this kind is simply absent and the response says so. (The EFFIS / GWIS web services were returning server
-        errors when checked, so they are not used.)
+  dust  CAMS mineral dust (Copernicus Atmosphere Monitoring Service, via Open-Meteo, no key), taken as published: the level comes from the dust forecast
+        itself (thresholds from the history of the field); the message adds CAMS's own daily PM10 and the dust share of it (backend/plumes.py).
+  fire  active-fire detections (NASA FIRMS, VIIRS, keyless regional files) near or upwind of Sofia at 850 hPa. Says smoke may arrive, not how much; it
+        becomes "likely" when CAMS also shows carbon monoxide or PM2.5 well above the usual for the month, and a warning when CAMS PM2.5 reaches the
+        PM2.5 warning level. (The EFFIS / GWIS web services were returning server errors when checked, so they are not used.)
+  transport  a suggestion, not a hazard: leave the car at home on a day CAMS forecasts worse than usual for the month, and the Sofia "green ticket" when
+        the municipality has announced one (backend/green_ticket.py; no feed exists, so announcements are entered by a person).
 Tested and dropped: a "smoke" rule from CAMS aerosol optical depth and carbon monoxide. It fired 69 times in 21 months, almost all ordinary haze.
 """
 from datetime import datetime, timedelta
 
 from .advice import HEAT_BANDS
+from .cai import config as C
 
 LEVELS = ("info", "watch", "warning")
-KINDS = ("pm", "heat", "dust", "fire")
+KINDS = ("pm", "heat", "dust", "fire", "transport")
 DUST_WATCH, DUST_WARNING = 20.0, 40.0  # ug/m3, CAMS dust
 DUST_MIN_HOURS = 2
 HEAT_MIN_HOURS = 2
@@ -89,14 +91,36 @@ ACTIONS = {
 }
 
 
+# A pollution episode needs a different answer depending on what it is made of (backend/plumes.py classifies it).
+PM_ACTIONS_BY_CAUSE = {
+    "fire": [("windows", "Keep windows and doors closed", "Smoke is fine particles that pass through gaps; seal what you can."),
+             ("purifier", "Run a HEPA air purifier", "In the room you sleep or work in. Turn off fans that draw outdoor air."),
+             ("mask", "FFP2 / N95 mask if you must go out", "Surgical masks and cloth masks do not stop smoke."),
+             ("exercise", "Skip outdoor exercise", "Smoke is most harmful while breathing hard."),
+             ("burn", "Do not add smoke yourself", "No wood stoves, barbecues, or burning leaves and waste.")],
+    "dust": [("windows", "Close windows facing the wind", "Dust is coarse: it settles on surfaces and irritates eyes, nose and airways."),
+             ("clean", "Wet-clean surfaces; do not dry-sweep", "Dry cleaning puts it back in the air."),
+             ("sensitive", "Asthma or hay fever: keep reliever medication to hand", "Wear glasses rather than contact lenses outdoors."),
+             ("car", "Recirculate air in the car", "Dust clogs filters: replace the cabin filter if it is dirty.")],
+    "local": [("burn", "Do not burn wood, coal or waste", "Burning adds straight to the episode; district heating or electricity does not."),
+              ("car", "Leave the car if you can", "Traffic adds to it on the streets that are already still and cold."),
+              ("airing", "Air the home in the afternoon", "When the air is deepest, usually 13:00-16:00; avoid the cold still hours at night."),
+              ("windows", "Keep windows closed in the evening and at night", "This is when trapped air is worst."),
+              ("sensitive", "Sensitive groups: keep trips short and away from busy streets", "")],
+}
+
+
 def _alert(kind: str, level: str, start: str, end: str, now: str, title: str, message: str, *, peak: dict | None = None, cause: list[str] | None = None,
-           source: str, confidence: str, audience: str = "everyone") -> dict:
+           source: str, confidence: str, audience: str = "everyone", detail: dict | None = None) -> dict:
     acts = ACTIONS.get(kind, {}).get(level) or ACTIONS.get(kind, {}).get("watch", [])
-    return {
+    out = {
         "id": f"{kind}-{start[:10]}", "kind": kind, "level": level, "title": title, "message": message, "start": start, "end": end,
         "in_progress": start <= now < end, "peak": peak, "cause": cause or [], "source": source, "confidence": confidence, "audience": audience,
         "actions": [{"id": i, "title": t, "body": b} for i, t, b in acts],
     }
+    if detail:
+        out["detail"] = detail
+    return out
 
 
 # ---- pm -------------------------------------------------------------------------------------------------------------------------------------
@@ -135,10 +159,12 @@ def heat_alerts(hours: list[dict], now_idx: int, now: str) -> list[dict]:
 
 
 # ---- dust -----------------------------------------------------------------------------------------------------------------------------------
-def dust_alerts(series: list[dict], now: str) -> list[dict]:
-    """series: [{time, dust}] from CAMS. One alert per run of at least DUST_MIN_HOURS hours at or above the watch threshold."""
+def dust_alerts(series: list[dict], now: str, outlook: list[dict] | None = None) -> list[dict]:
+    """series: [{time, dust}] from CAMS. One alert per run of at least DUST_MIN_HOURS hours at or above the watch threshold.
+    outlook (backend/plumes.outlook) adds CAMS's own daily PM10 for the day of the peak and the share of it that is dust."""
     rows = [r for r in series if r["time"] >= now[:13] + ":00"][:HORIZON_H]
     vals = [r.get("dust") if r.get("dust") is not None else 0.0 for r in rows]
+    days = {d["date"]: d for d in (outlook or [])}
     out = []
     for a, b in _runs([v >= DUST_WATCH for v in vals]):
         if b - a + 1 < DUST_MIN_HOURS:
@@ -147,43 +173,115 @@ def dust_alerts(series: list[dict], now: str) -> list[dict]:
         peak = vals[peak_i]
         lvl = "warning" if peak >= DUST_WARNING else "watch"
         start, end = rows[a]["time"], _end_time(rows[b]["time"])
-        out.append(_alert("dust", lvl, start, end, now, f"Mineral dust: up to {peak:.0f} µg/m³", f"Desert dust is forecast over the city {_when(start, end, now)}, peak {peak:.0f} µg/m³ around {rows[peak_i]['time'][11:16]}.",
+        day = days.get(rows[peak_i]["time"][:10])
+        extra, detail = "", None
+        if day:
+            share = f", {day['dust_share']:.0%} of it dust" if day.get("dust_share") is not None else ""
+            usual = f" (a usual {datetime.strptime(day['date'], '%Y-%m-%d').strftime('%B')} day: about {day['usual_pm10']:.0f})" if day.get("usual_pm10") else ""
+            extra = f" CAMS puts that day's PM10 at about {day['pm10']:.0f} µg/m³{usual}{share}."
+            detail = {"date": day["date"], "pm10": day["pm10"], "usual_pm10": day.get("usual_pm10"), "dust_share": day.get("dust_share")}
+        out.append(_alert("dust", lvl, start, end, now, f"Mineral dust: up to {peak:.0f} µg/m³", f"Desert dust is forecast over the city {_when(start, end, now)}, peak {peak:.0f} µg/m³ around {rows[peak_i]['time'][11:16]}.{extra}",
                           peak={"value": round(peak, 1), "unit": "µg/m³", "time": rows[peak_i]["time"]}, cause=["dust"], source="Copernicus CAMS mineral dust forecast (via Open-Meteo)",
-                          confidence="model", audience="sensitive" if lvl == "watch" else "everyone"))
+                          confidence="model", audience="sensitive" if lvl == "watch" else "everyone", detail=detail))
     return out
 
 
 # ---- fire -----------------------------------------------------------------------------------------------------------------------------------
-def fire_alert(threat: dict | None, now: str) -> dict | None:
+def fire_alert(threat: dict | None, now: str, plume: dict | None = None) -> dict | None:
+    """plume: backend/plumes.classify. CAMS confirming the smoke (CO or PM2.5 unusually high for the month) makes it "likely"; reaching the PM2.5 warning level, a warning."""
     if not threat:
         return None
     start = now[:13] + ":00"
-    end = (datetime.strptime(start, "%Y-%m-%dT%H:%M") + timedelta(hours=int(threat["arrival_h"]) + 12)).strftime("%Y-%m-%dT%H:%M")
-    where = f"{threat['count']} fire detections about {threat['nearest_km']:.0f} km {threat['direction']} of Sofia"
-    return _alert("fire", "watch", start, end, now, "Smoke may reach the city", f"{where.capitalize()}, upwind in the 850 hPa flow (about {threat['arrival_h']:.0f} h away). Indicative: this says smoke may arrive, not how much.",
-                  peak=None, cause=["fire"], source="NASA FIRMS VIIRS active fires + Open-Meteo 850 hPa wind", confidence="inferred", audience="sensitive")
+    hours = int(threat["arrival_h"]) + 12
+    end = (datetime.strptime(start, "%Y-%m-%dT%H:%M") + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M")
+    sure = bool(plume and "smoke" in plume.get("components", []))
+    pk = (plume or {}).get("pm25_peak_3h")
+    lvl = "warning" if sure and pk is not None and pk >= C.PM_WARNING else "watch"
+    near = threat.get("near")
+    where = f"{threat['count']} fire detections {'within' if near else 'about'} {threat['nearest_km']:.0f} km {threat['direction']} of Sofia"
+    how = "close to the city" if near else f"upwind in the 850 hPa flow (about {threat['arrival_h']:.0f} h away)"
+    if sure:
+        title = "Smoke is likely over the city" if lvl == "watch" else "Smoke is raising fine particles"
+        msg = f"{where.capitalize()}, {how}. CAMS also shows carbon monoxide or PM2.5 unusually high for the season" + (f" (PM2.5 around {pk:.0f} µg/m³)." if pk is not None else ".")
+    else:
+        title = "Smoke may reach the city"
+        msg = f"{where.capitalize()}, {how}. Indicative: this says smoke may arrive, not how much."
+    return _alert("fire", lvl, start, end, now, title, msg, peak={"value": pk, "unit": "µg/m³", "time": None} if sure and pk is not None else None, cause=["fire"],
+                  source="NASA FIRMS VIIRS active fires + Open-Meteo 850 hPa wind" + (" + Copernicus CAMS" if sure else ""), confidence="model" if sure else "inferred", audience="sensitive" if lvl == "watch" else "everyone",
+                  detail={"detections": threat["count"], "frp_mw": threat["frp_mw"], "nearest_km": threat["nearest_km"], "direction": threat["direction"], "arrival_h": threat["arrival_h"],
+                          "cams_confirms": sure, "near": bool(near)})
 
 
-def _annotate_causes(alerts: list[dict]) -> None:
-    """The PM alert is the headline; say if a dust or fire alert overlaps it, so the cause is visible."""
+# ---- transport ------------------------------------------------------------------------------------------------------------------------------
+TRANSPORT_ACTIONS = [("transit", "Take the metro, tram or bus", "Fewer cars on the street means less exhaust and less dust thrown back into the air."),
+                     ("park", "If you must drive, park at the edge and ride in", "Metro stations with car parks make that easy."),
+                     ("burn", "Keep wood and waste fires out of it too", "")]
+
+
+ACTIONS["transport"] = {"watch": TRANSPORT_ACTIONS, "info": TRANSPORT_ACTIONS}
+
+
+def _day_word(day: str, today: str) -> str:
+    d, t = datetime.strptime(day, "%Y-%m-%d"), datetime.strptime(today, "%Y-%m-%d")
+    return "today" if d == t else "tomorrow" if d == t + timedelta(days=1) else d.strftime("%A")
+
+
+def transport_alerts(days: list[dict], tickets: list[dict], now: str) -> list[dict]:
+    """Green ticket announced by the municipality (watch), else one suggestion for the first worse-than-usual day among today and tomorrow (info).
+    days: backend/plumes.outlook; tickets: backend/green_ticket.announced."""
+    today = now[:10]
+    out, ticket_days = [], {t["date"] for t in tickets}
+    for t in tickets:
+        w = _day_word(t["date"], today)
+        note = f" {t['note']}" if t.get("note") else ""
+        out.append(_alert("transport", "watch", f"{t['date']}T00:00", _end_time(f"{t['date']}T23:00"), now, f"Green ticket {w}: ride public transport",
+                          f"Sofia Municipality has announced the green ticket (a reduced-price all-day public-transport ticket) for {w}.{note} The most direct thing you can do for the air is to leave the car at home.",
+                          source=("Sofia Municipality announcement: " + t["source"]) if t.get("source") else "Sofia Municipality announcement (entered by hand)", confidence="forecast", detail={"green_ticket": True, "source_url": t.get("source") or None}))
+    late = int(now[11:13]) >= 17
+    for d in days[:2]:
+        if not d["worse_than_usual"] or d["date"] in ticket_days or (d["date"] == today and late):
+            continue
+        w = _day_word(d["date"], today)
+        month = datetime.strptime(d["date"], "%Y-%m-%d").strftime("%B")
+        if d["worse_by"] == "pm25":
+            what = f"PM2.5 about {d['pm25']:.0f} µg/m³ (a usual {month} day: {d['usual_pm25']:.0f})"
+        else:
+            what = f"PM10 about {d['pm10']:.0f} µg/m³ (a usual {month} day: {d['usual_pm10']:.0f})"
+        out.append(_alert("transport", "info", f"{d['date']}T00:00", _end_time(f"{d['date']}T23:00"), now, f"Air worse than usual {w}: use public transport",
+                          f"CAMS forecasts {what}, worse than a usual day. Leaving the car at home helps. Sofia sometimes announces a green ticket on days like this; none is announced yet, so check the municipality.",
+                          source="Copernicus CAMS forecast compared with its own history for the month", confidence="model", audience="everyone", detail={"green_ticket": False}))
+        break
+    return out
+
+
+def _annotate_causes(alerts: list[dict], plume: dict | None = None) -> None:
+    """The PM alert is the headline; say if a dust or fire alert overlaps it (or the episode is local winter pollution), so the cause is visible,
+    and swap the generic advice for the advice that fits a single cause."""
     pm = next((a for a in alerts if a["kind"] == "pm"), None)
     if not pm:
         return
     for a in alerts:
         if a["kind"] in ("dust", "fire") and a["start"] < pm["end"] and a["end"] > pm["start"]:
             pm["cause"] = sorted(set(pm["cause"]) | set(a["cause"]))
+    if not pm["cause"] and plume and plume.get("kind") == "local":
+        pm["cause"] = ["local"]
+    if len(pm["cause"]) == 1 and pm["cause"][0] in PM_ACTIONS_BY_CAUSE:
+        pm["actions"] = [{"id": i, "title": t, "body": b} for i, t, b in PM_ACTIONS_BY_CAUSE[pm["cause"][0]]]
 
 
-def build_alerts(fc: dict, dust_series: list[dict] | None = None, fire_threat: dict | None = None, now: str | None = None) -> list[dict]:
-    """All alerts for the forecast `fc` (backend.main.build_forecast), most severe first, then earliest."""
+def build_alerts(fc: dict, dust_series: list[dict] | None = None, fire_threat: dict | None = None, now: str | None = None, plume: dict | None = None,
+                 tickets: list[dict] | None = None) -> list[dict]:
+    """All alerts for the forecast `fc` (backend.main.build_forecast), most severe first, then earliest.
+    plume: backend.plumes.assess output {days, plume, ...}; without it the dust and fire alerts work from CAMS dust and the fire rule alone."""
     hours = fc["hours"]
     now = now or fc.get("generated_at") or hours[fc["now_index"]]["time"]
     out = []
     if (a := pm_alert(fc, now)) is not None:
         out.append(a)
     out += heat_alerts(hours, fc["now_index"], now)
-    out += dust_alerts(dust_series or [], now)
-    if (a := fire_alert(fire_threat, now)) is not None:
+    out += dust_alerts(dust_series or [], now, (plume or {}).get("days"))
+    if (a := fire_alert(fire_threat, now, (plume or {}).get("plume"))) is not None:
         out.append(a)
-    _annotate_causes(out)
+    out += transport_alerts((plume or {}).get("days") or [], tickets or [], now)
+    _annotate_causes(out, (plume or {}).get("plume"))
     return sorted(out, key=lambda a: (-rank(a["level"]), a["start"]))

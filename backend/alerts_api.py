@@ -9,20 +9,18 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
 from . import alerts as alerts_mod
-from . import fires, push
+from . import fires, green_ticket, plumes, push
 from .alerts import KINDS, LEVELS
+from .score import WATCH_FROM
 
 log = logging.getLogger("inversion_watch")
-LAT, LON = fires.LAT0, fires.LON0
-DUST_URL = ("https://air-quality-api.open-meteo.com/v1/air-quality"
-            f"?latitude={LAT}&longitude={LON}&hourly=dust&forecast_days=3&timezone=Europe%2FSofia")
 TEST_COOLDOWN_S = 60
 
 
 class SubscribeIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subscription: dict
-    kinds: list[Literal["pm", "heat", "dust", "fire"]] = []
+    kinds: list[Literal["pm", "heat", "dust", "fire", "transport"]] = []
     min_level: Literal["info", "watch", "warning"] = "watch"
 
 
@@ -35,23 +33,20 @@ def make_router(build_forecast, parse_scenario, scenario_query, cache) -> APIRou
     r = APIRouter()
     last_test: dict[str, float] = {}
 
-    async def dust_series() -> tuple[list[dict], str]:
+    async def cams_rows() -> tuple[list[dict], str]:
+        """Hourly CAMS aerosol fields (PM10, PM2.5, dust, optical depth, CO) for 2 days back and 4 ahead."""
         async def fetch():
             async with httpx.AsyncClient(timeout=12, follow_redirects=True) as c:
-                resp = await c.get(DUST_URL)
+                resp = await c.get(plumes.CAMS_URL)
                 resp.raise_for_status()
                 return resp.json()
         try:
-            data, src = await cache.get("open_meteo_cams_dust", fetch, persist=False)
+            data, src = await cache.get("open_meteo_cams_aerosol", fetch, persist=False)
         except Exception:  # noqa: BLE001
             return [], "unavailable"
-        h = data["hourly"]
-        return [{"time": t, "dust": v} for t, v in zip(h["time"], h["dust"])], src
+        return plumes.rows_from(data), src
 
     async def fire_threat() -> tuple[dict | None, dict]:
-        if not fires.enabled():
-            return None, {"enabled": False, "reason": "No FIRMS key (set FIRMS_MAP_KEY). Smoke-from-fire alerts are off."}
-
         async def fetch():
             async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
                 det, wind = await asyncio.gather(fires.fetch_detections(c), fires.fetch_wind(c))
@@ -63,20 +58,37 @@ def make_router(build_forecast, parse_scenario, scenario_query, cache) -> APIRou
         threat = fires.smoke_threat(data["detections"], tuple(data["wind"]) if data["wind"] else None)
         return threat, {"enabled": True, "detections": len(data["detections"]), "source": src}
 
+    def stagnant(fc: dict) -> bool:
+        """Trapped air in the next 24 h (stagnation score at or above the watch level)."""
+        i = fc["now_index"]
+        return any(h["score"] >= WATCH_FROM for h in fc["hours"][i : i + 24])
+
     async def compute(sc: str | None) -> dict:
         fc = await build_forecast(sc)
+        plume = None
         if sc:  # demo scenarios are replays: no live dust or fire feed
-            dust, dsrc, threat, fsrc = [], "scenario", None, {"enabled": False, "reason": "demo scenario"}
+            rows, dsrc, threat, fsrc = [], "scenario", None, {"enabled": False, "reason": "demo scenario"}
         else:
-            (dust, dsrc), (threat, fsrc) = await asyncio.gather(dust_series(), fire_threat())
-        return {"generated_at": fc["generated_at"], "scenario": sc, "alerts": alerts_mod.build_alerts(fc, dust, threat, fc["generated_at"]),
-                "sources": {"forecast": fc["source"], "cams_dust": dsrc, "fires": fsrc},
-                "push": {"enabled": push.enabled()}}
+            (rows, dsrc), (threat, fsrc) = await asyncio.gather(cams_rows(), fire_threat())
+            if rows:
+                plume = plumes.assess(rows, fc["generated_at"], threat, stagnant(fc))
+        dust = [{"time": r["time"], "dust": r["dust"]} for r in rows]
+        tickets = [] if sc else green_ticket.announced(fc["generated_at"][:10])
+        return {"generated_at": fc["generated_at"], "scenario": sc, "alerts": alerts_mod.build_alerts(fc, dust, threat, fc["generated_at"], plume, tickets),
+                "sources": {"forecast": fc["source"], "cams_dust": dsrc, "fires": fsrc}, "push": {"enabled": push.enabled()}, "plume": plume,
+                "fire_threat": threat, "green_ticket": tickets}
 
     @r.get("/api/alerts")
     async def get_alerts(scenario: str | None = scenario_query):
         """Active and upcoming alerts for the next 48 h, most severe first. kinds: pm (PM2.5 episode), heat, dust (CAMS mineral dust), fire (smoke from upwind fires)."""
         return await compute(parse_scenario(scenario))
+
+    @r.get("/api/plumes")
+    async def get_plumes(scenario: str | None = scenario_query):
+        """Dust, smoke and local-pollution outlook straight from the CAMS forecast: daily PM10 / PM2.5 against the month's usual, whether a day is worse than
+        usual, what kind of event it probably is and why, the hourly series, and any green ticket the municipality has announced. Demo scenarios have no live feed."""
+        res = await compute(parse_scenario(scenario))
+        return {k: res[k] for k in ("generated_at", "scenario", "plume", "fire_threat", "green_ticket", "sources")}
 
     @r.get("/api/push/key")
     async def push_key():

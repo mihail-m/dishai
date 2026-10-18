@@ -9,8 +9,8 @@ const TONE: Record<AlertLevel, { bg: string; fg: string; label: string }> = {
   info: { bg: "var(--surface-2)", fg: "var(--accent)", label: "Heads-up" },
 };
 const CONF: Record<Alert["confidence"], string> = { model: "Model forecast", forecast: "Weather forecast", inferred: "Inferred, indicative" };
-const CAUSE: Record<string, string> = { dust: "desert dust", fire: "smoke from fires" };
-const ICON: Record<AlertKind, keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock" };
+const CAUSE: Record<string, string> = { dust: "desert dust", fire: "smoke from fires", local: "local heating and traffic in still air" };
+const ICON: Record<AlertKind, keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock", transport: "route" };
 const LEVEL_WORD: Record<AlertLevel, string> = { info: "Any alert", watch: "Watch and warning", warning: "Warnings only" };
 
 function AlertCard({ a }: { a: Alert }) {
@@ -33,6 +33,7 @@ function AlertCard({ a }: { a: Alert }) {
               {a.actions.map((x) => <li key={x.id} className="text-[13px] leading-snug"><b>{x.title}.</b>{x.body ? <span className="muted"> {x.body}</span> : null}</li>)}
             </ul>
             <p className="faint m-0 mt-1.5 text-[11px]">{CONF[a.confidence]} · {a.source}</p>
+            {typeof a.detail?.source_url === "string" && /^https?:\/\//.test(a.detail.source_url) && <p className="m-0 mt-1 text-[11px]"><a href={a.detail.source_url} target="_blank" rel="noreferrer noopener">Announcement</a></p>}
           </details>
         </div>
       </div>

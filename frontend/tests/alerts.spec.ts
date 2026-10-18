@@ -40,7 +40,7 @@ test("turning on notifications works without push keys and says what that means"
   await page.getByRole("button", { name: "Turn on notifications" }).click();
   await expect(page.getByRole("status").filter({ hasText: "On while DishAI is open" })).toBeVisible();
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("dishai.alerts")!));
-  expect(saved).toMatchObject({ enabled: true, level: "warning", mode: "page", kinds: ["pm", "heat", "dust"] });
+  expect(saved).toMatchObject({ enabled: true, level: "warning", mode: "page", kinds: ["pm", "heat", "dust", "transport"] });
   await page.getByRole("button", { name: "Turn off" }).click();
   await expect(page.getByRole("button", { name: "Turn on notifications" })).toBeVisible();
 });
@@ -61,4 +61,40 @@ test("alerts are requested once, not on every render", async ({ page }) => {
   await page.getByRole("button", { name: "Heat", exact: true }).click();
   await page.getByRole("button", { name: "Air quality", exact: true }).click();
   expect(n).toBe(1);
+});
+
+const ticket = {
+  id: "transport-2026-10-18", kind: "transport", level: "watch", title: "Green ticket tomorrow: ride public transport", message: "Sofia Municipality has announced the green ticket for tomorrow.",
+  start: "2026-10-18T00:00", end: "2026-10-19T00:00", in_progress: false, peak: null, cause: [], source: "Sofia Municipality announcement: https://example.org/a", confidence: "forecast", audience: "everyone",
+  detail: { green_ticket: true, source_url: "https://example.org/a" }, actions: [{ id: "transit", title: "Take the metro, tram or bus", body: "Fewer cars on the street." }],
+};
+const plumes = {
+  generated_at: "2026-10-17T12:00", scenario: null, fire_threat: null, sources: { cams_dust: "live", fires: { enabled: true, detections: 221 } },
+  green_ticket: [{ date: "2026-10-18", source: "https://example.org/a", note: "" }],
+  plume: { yardstick: true, hours: [], plume: { kind: "dust", components: ["dust"], label: "Desert dust: coarse particles", evidence: ["CAMS mineral dust up to 45 µg/m³ at the surface, 60% of PM10"], vertical: "The forecast brings the dust to the surface (up to 45 µg/m³ in the lowest model level)." },
+    days: [{ date: "2026-10-17", pm10: 52, pm25: 21, usual_pm10: 20, usual_pm25: 14, worse_than_usual: true, worse_by: "pm10", dust_mean: 30, dust_max: 45, dust_share: 0.6 },
+           { date: "2026-10-18", pm10: 18, pm25: 12, usual_pm10: 20, usual_pm25: 14, worse_than_usual: false, worse_by: null, dust_mean: 1, dust_max: 3, dust_share: 0.05 }] },
+};
+
+test("a green ticket is a watch alert with a link, and the regional card shows CAMS next to the month's usual", async ({ page }) => {
+  await page.route("**/api/alerts*", (route) => route.fulfill({ json: { generated_at: "2026-10-17T12:00", scenario: null, alerts: [ticket], sources: {}, push: { enabled: false } } }));
+  await page.route("**/api/plumes*", (route) => route.fulfill({ json: plumes }));
+  await page.goto("/");
+  const strip = page.getByRole("region", { name: "Alerts" });
+  await expect(strip.getByRole("heading", { name: "Green ticket tomorrow: ride public transport" })).toBeVisible();
+  await strip.getByText("What to do").first().click();
+  await expect(strip.getByRole("link", { name: "Announcement" })).toHaveAttribute("href", "https://example.org/a");
+  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByText("Dust, smoke and regional air").click();
+  await expect(page.getByText("Desert dust: coarse particles.")).toBeVisible();
+  await expect(page.getByText("worse than usual")).toBeVisible();
+  await expect(page.getByText("Green ticket: announced for Tomorrow.")).toBeVisible();
+});
+
+test("without an announcement the card says so and does not invent one", async ({ page }) => {
+  await page.route("**/api/plumes*", (route) => route.fulfill({ json: { ...plumes, green_ticket: [] } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByText("Dust, smoke and regional air").click();
+  await expect(page.getByText("Green ticket: none announced.")).toBeVisible();
 });
