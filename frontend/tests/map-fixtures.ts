@@ -88,3 +88,12 @@ export async function mockMapApi(page: Page) {
     await route.fulfill({ json: data });
   });
 }
+
+/** The Live menu holds the data scenarios, refresh and the map style. */
+export async function openMenu(page: Page) {
+  await page.getByRole("button", { name: /^(Live|Demo)/ }).click();
+}
+export async function pickProvider(page: Page, name: "Leaflet" | "MapLibre") {
+  await openMenu(page);
+  await page.getByRole("menuitemradio", { name: name === "Leaflet" ? "Leaflet · OSM" : "MapLibre · OpenFreeMap", exact: true }).click();
+}

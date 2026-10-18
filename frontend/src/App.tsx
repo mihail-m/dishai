@@ -1,28 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Layer, PickingInfo } from "@deck.gl/core";
+import type { Layer as DeckLayer, PickingInfo } from "@deck.gl/core";
 import type { DistrictsFC, ForecastWindow, ReferenceResp, Scenario } from "./types";
 import { api, api2 } from "./api";
 import type { Stage } from "./stage";
 import { retainForecast, type PreloadStatus } from "./forecast";
 import BaseMap, { type MapHandle } from "./map/BaseMap";
+import { GOOGLE_KEY, preferredMapProvider, saveMapProvider, type MapProvider } from "./map/config";
 import { loadGeometry, type Geometry } from "./map/cai";
-import { caiLayer, referenceLayers, sensorLayer } from "./map/layers";
-import Banner from "./components/Banner";
+import { caiLayer, locationLayers, referenceLayers, sensorLayer } from "./map/layers";
+import { districtAt, useLocation } from "./location";
 import Dashboard from "./components/Dashboard";
 import ForYou from "./components/ForYou";
-import HourSlider from "./components/HourSlider";
 import MapLegend from "./components/MapLegend";
-import Timeline from "./components/Timeline";
-import CaiView from "./views/CaiView";
-import NetworkView from "./views/NetworkView";
+import TimeBar, { type TimeBarMode } from "./components/TimeBar";
+import { Icon, Logo, McBtn, McGroup } from "./components/ui";
+import { useTheme } from "./theme";
+import ExploreView, { LAYERS, type Layer } from "./views/ExploreView";
 import RouteView from "./views/RouteView";
 
-type Tab = "map" | "route" | "network" | "me" | "city";
-const TABS: [Tab, string][] = [["map", "Clean Air map"], ["route", "Route planner"], ["network", "Clean-air network"], ["me", "For me"], ["city", "Municipality"]];
-const MAP_TABS: Tab[] = ["map", "route", "network"];
+type Tab = "explore" | "route" | "me" | "city";
+const TABS: [Tab, string, keyof typeof Icon][] = [["explore", "Explore", "map"], ["route", "Route", "route"], ["me", "For me", "me"], ["city", "City insights", "city"]];
+const SCENARIOS: [Scenario, string, string][] = [
+  ["live", "Live data", ""],
+  ["winter_inversion", "Winter inversion", "Simulated January"],
+  ["summer_heatwave", "Summer heatwave", "Simulated July"],
+  ["birch_season", "Birch season", "Simulated April"],
+];
+const PROVIDERS: [MapProvider, string][] = [["maplibre", "MapLibre · OpenFreeMap"], ["leaflet", "Leaflet · OSM"], ...(GOOGLE_KEY ? [["google", "Google Maps"] as [MapProvider, string]] : [])];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("map");
+  const [tab, setTab] = useState<Tab>("explore");
+  const [layer, setLayer] = useState<Layer>("air");
   const [scenario, setScenario] = useState<Scenario>("live");
   const [snapshot, setSnapshot] = useState<ForecastWindow | null>(null);
   const window = snapshot?.forecast.scenario === (scenario === "live" ? null : scenario) ? snapshot : null;
@@ -41,10 +49,25 @@ export default function App() {
   const [geometry, setGeometry] = useState<Geometry | null>(null);
   const values = window?.values[hourIndex] ?? null;
   const [relative, setRelative] = useState(false);
-  const [extra, setExtra] = useState<{ layers: Layer[]; base: "full" | "dim" | "off"; cursor?: string; legend?: React.ReactNode }>({ layers: [], base: "full" });
+  const [extra, setExtra] = useState<{ layers: DeckLayer[]; base: "full" | "dim" | "points" | "off"; cursor?: string; legend?: Parameters<Stage["set"]>[0]["legend"]; controls?: React.ReactNode; animated?: Parameters<Stage["set"]>[0]["animated"] }>({ layers: [], base: "full" });
   const tooltip = useRef<Parameters<Stage["set"]>[0]["tooltip"]>(undefined);
   const pick = useRef<((i: PickingInfo) => void) | undefined>(undefined);
   const mapHandle = useRef<MapHandle>(null);
+  const [provider, setProvider] = useState<MapProvider>(preferredMapProvider);
+  const [menu, setMenu] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [theme, toggleTheme] = useTheme();
+  const geo = useLocation();
+  const flown = useRef(false);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenu(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(false); };
+    document.addEventListener("mousedown", close); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [menu]);
 
   useEffect(() => {
     let disposed = false;
@@ -91,7 +114,7 @@ export default function App() {
   }, [window]);
 
   const stage: Stage = useMemo(() => ({
-    set: (s) => { pick.current = s.onPick; tooltip.current = s.tooltip; setExtra({ layers: s.layers, base: s.base, cursor: s.cursor, legend: s.legend }); },
+    set: (s) => { pick.current = s.onPick; tooltip.current = s.tooltip; setExtra({ layers: s.layers, base: s.base, cursor: s.cursor, legend: s.legend, controls: s.controls, animated: s.animated }); },
     map: mapHandle, geometry, values, sensors, reference, relative, setRelative, forecast: window, reportPreload,
   }), [geometry, values, sensors, reference, relative, window, reportPreload]);
   // views call stage.set from effects; keep that function identity stable
@@ -99,69 +122,98 @@ export default function App() {
   const stableStage = useMemo(() => ({ ...stage, set: setRef.current }), [stage]);
 
   const layers = useMemo(() => {
-    const out: Layer[] = [];
-    if (geometry && values && extra.base !== "off") out.push(caiLayer(geometry, values.cai, relative, extra.base));
-    if (sensors && extra.base === "full") out.push(...sensorLayer(sensors.sensors));
-    if (reference?.enabled && extra.base === "full") out.push(...referenceLayers(reference.stations));
+    const out: DeckLayer[] = [];
+    if (geometry && values && (extra.base === "full" || extra.base === "dim")) out.push(caiLayer(geometry, values.cai, relative, extra.base));
+    // stations stay visible on the neighbourhood map ("points"): they are the evidence behind the colours
+    if (sensors && (extra.base === "full" || extra.base === "points")) out.push(...sensorLayer(sensors.sensors));
+    if (reference?.enabled && (extra.base === "full" || extra.base === "points")) out.push(...referenceLayers(reference.stations));
+    if (geo.place) out.push(...locationLayers(geo.place));
     return [...out, ...extra.layers];
-  }, [geometry, values, sensors, reference, relative, extra]);
+  }, [geometry, values, sensors, reference, relative, extra, geo.place]);
+  // centre the map on the first fix only; after that the user stays in control of the camera
+  useEffect(() => {
+    if (geo.place && !flown.current) { flown.current = true; mapHandle.current?.flyTo(geo.place.lon, geo.place.lat, 13); }
+    if (!geo.place) flown.current = false;
+  }, [geo.place]);
+  const myDistrict = geo.place ? districtAt(districts, geo.place.lat, geo.place.lon) : null;
+  const locate = () => { if (geo.place) mapHandle.current?.flyTo(geo.place.lon, geo.place.lat, 14); else geo.request(); };
 
-  const mapTab = MAP_TABS.includes(tab);
-  const status = preload?.id === window?.id && preload?.view === tab ? preload.status : null;
-  const hourlyReady = !!window && (tab === "map" ? !status || status.loaded === status.total : !!status && status.loaded === status.total);
+  const mapTab = tab === "explore" || tab === "route";
+  const expectedView = tab === "route" ? "route" : layer === "air" ? "map" : "network";
+  const status = preload?.id === window?.id && preload?.view === expectedView ? preload.status : null;
+  const hourlyReady = !!window && (expectedView === "map" ? !status || status.loaded === status.total : !!status && status.loaded === status.total);
+  // the forecast graph follows the layer: air quality shows PM2.5 or air trapping, heat shows the temperature forecast, the rest keep a slim time control
+  const barMode: TimeBarMode = tab === "explore" && layer === "air" ? "air" : tab === "explore" && layer === "heat" ? "heat" : "compact";
   const chooseHour = (index: number) => { if (hourlyReady) setHourIndex(index); };
-  const hourControls = <HourSlider fc={fc} hourIndex={hourIndex} setHourIndex={chooseHour}
-    ready={hourlyReady} refreshing={refreshing} onRefresh={() => setRefreshCount((n) => n + 1)}
-    progress={status} error={err} />;
+  const chooseProvider = (next: MapProvider) => { saveMapProvider(next); setProvider(next); };
+  const go = (next: Tab) => { setTab(next); setSheetOpen(false); setMenu(false); };
+  const scenarioLabel = SCENARIOS.find(([k]) => k === scenario)?.[1] ?? "Live";
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1360px] flex-col gap-4 px-4 py-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div aria-hidden className="grid h-9 w-9 place-items-center rounded-xl text-white" style={{ background: "var(--warn)" }}>≋</div>
-          <div>
-            <h1 className="text-lg font-semibold leading-tight">Inversion Watch</h1>
-            <div className="faint text-xs">Sofia · from air-quality forecast to action</div>
-          </div>
-        </div>
-        <nav className="flex flex-wrap gap-1" role="tablist" aria-label="Views">
-          {TABS.map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className="tab" onClick={() => setTab(id)}>{label}</button>
+    <div className="app">
+      <header className="topbar">
+        <div className="logo"><Logo />DishAI</div>
+        <nav className="nav" aria-label="Views">
+          {TABS.map(([id, label, ic]) => (
+            <button key={id} className="nav-item" aria-current={tab === id ? "page" : undefined} onClick={() => go(id)}>{Icon[ic]}{label}</button>
           ))}
         </nav>
-        <div className="seg" role="group" aria-label="Data mode">
-          <button aria-pressed={scenario === "live"} onClick={() => setScenario("live")}>Live</button>
-          <button aria-pressed={scenario === "winter_inversion"} onClick={() => setScenario("winter_inversion")} title="Demo: simulated January inversion">Winter inversion demo</button>
-          <button aria-pressed={scenario === "summer_heatwave"} onClick={() => setScenario("summer_heatwave")} title="Demo: simulated July heatwave">Summer heatwave</button>
-          <button aria-pressed={scenario === "birch_season"} onClick={() => setScenario("birch_season")} title="Demo: simulated April birch pollen peak">Birch season</button>
+        <div className="top-right" ref={menuRef}>
+          <button className="theme-btn" onClick={toggleTheme} aria-pressed={theme === "dark"} aria-label="Dark theme" title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>{theme === "dark" ? Icon.sun : Icon.moon}</button>
+          <button className="live-btn" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
+            <span className={`live-dot ${scenario === "live" ? "" : "demo"}`} />
+            <span className="lbl">{scenario === "live" ? "Live" : `Demo: ${scenarioLabel}`}</span><span aria-hidden="true">▾</span>
+          </button>
+          {menu && (
+            <div className="menu" role="menu" aria-label="Data and settings">
+              <h4>Data</h4>
+              <button role="menuitemradio" aria-checked={scenario === "live"} onClick={() => { setScenario("live"); setMenu(false); }}><span>Live data</span></button>
+              <button role="menuitem" disabled={refreshing} onClick={() => setRefreshCount((n) => n + 1)}>{refreshing ? "Refreshing…" : "Refresh forecast"}</button>
+              <h4>Try a demo</h4>
+              {SCENARIOS.filter(([k]) => k !== "live").map(([k, label, sub]) => (
+                <button key={k} role="menuitemradio" aria-checked={scenario === k} onClick={() => { setScenario(k); setMenu(false); }}><span>{label} demo<small>{sub}</small></span></button>
+              ))}
+              <h4>Map style</h4>
+              {PROVIDERS.map(([k, label]) => (
+                <button key={k} role="menuitemradio" aria-checked={provider === k} onClick={() => { chooseProvider(k); setMenu(false); }}>{label}</button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 
-      <Banner fc={fc} />
-
-
-      <main className="flex-1">
-        {/* The map stays mounted (hidden on other tabs) so the street layer is not re-uploaded to the GPU. */}
-        <div className={mapTab ? "grid gap-4 lg:grid-cols-[1fr_380px]" : "hidden"}>
-          <div className="grid content-start gap-3">
-            <div className="card relative h-[min(64vh,640px)] min-h-[440px] overflow-hidden">
-              {mapTab && <MapLegend tab={tab as "map" | "route" | "network"} custom={extra.legend} />}
-              <BaseMap layers={layers} active={mapTab} handle={mapHandle} cursor={extra.cursor} onClick={(i) => pick.current?.(i)} tooltip={(i) => tooltip.current?.(i) ?? null} />
-            </div>
-            {hourControls}
-            {tab === "map" && fc && (
-              <section className="card hidden p-4 lg:block"><Timeline fc={fc} hourIndex={hourIndex} onPick={chooseHour} /></section>
-            )}
-          </div>
-          <aside className="grid content-start gap-3">
-            {tab === "map" && <CaiView stage={stableStage} fc={fc} scenario={scenario} hourIndex={hourIndex} setHourIndex={chooseHour} />}
+      {/* The map stays mounted (hidden on the other tabs) so the street layer is not re-uploaded to the GPU. */}
+      <div className={`workspace ${mapTab ? "" : "off"}`} data-sheet={sheetOpen ? "open" : "closed"}>
+        <aside className="sidebar" aria-label={tab === "route" ? "Route planner" : "Air quality"}>
+          <button className="grab" onClick={() => setSheetOpen((o) => !o)} aria-expanded={sheetOpen} aria-label={sheetOpen ? "Collapse panel" : "Expand panel"} />
+          <div className="sidebar-in">
+            {tab === "explore" && <ExploreView stage={stableStage} fc={fc} scenario={scenario} hourIndex={hourIndex} setHourIndex={chooseHour} layer={layer} geo={geo} district={myDistrict} />}
             {tab === "route" && <RouteView stage={stableStage} scenario={scenario} hourIndex={window?.hours[hourIndex] ?? 0} />}
-            {tab === "network" && <NetworkView stage={stableStage} scenario={scenario} hourIndex={window?.hours[hourIndex] ?? 0} />}
-          </aside>
+          </div>
+        </aside>
+        <div className="mapwrap">
+          <BaseMap layers={layers} active={mapTab} handle={mapHandle} cursor={extra.cursor} animated={extra.animated} provider={provider} dark={theme === "dark"} onProviderChange={chooseProvider}
+            onClick={(i) => pick.current?.(i)} tooltip={(i) => tooltip.current?.(i) ?? null} />
+          {mapTab && (tab === "explore" || extra.controls) && (
+            <div className="map-controls">
+              {tab === "explore" && <McGroup label="Map layer">{LAYERS.map(([k, l]) => <McBtn key={k} on={layer === k} onClick={() => setLayer(k)}>{l}</McBtn>)}</McGroup>}
+              {extra.controls}
+            </div>
+          )}
+          {mapTab && <button className="map-locate" onClick={locate} aria-label={geo.place ? "Centre on my location" : "Show my location"} title={geo.place ? "Centre on my location" : "Show my location"} disabled={geo.status === "asking"}>{Icon.locate}</button>}
+          {mapTab && extra.legend && <MapLegend kind={extra.legend.kind} title={extra.legend.title}>{extra.legend.bar}</MapLegend>}
+          <TimeBar mode={barMode} fc={fc} hourIndex={hourIndex} setHourIndex={chooseHour} ready={hourlyReady} progress={status} error={err} />
         </div>
-        {tab === "me" && <ForYou scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} />}
-        {tab === "city" && <Dashboard scenario={scenario} active />}
-      </main>
+      </div>
+
+      {tab === "me" && <main className="pageview"><ForYou scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} /></main>}
+      {tab === "city" && <main className="pageview"><Dashboard scenario={scenario} active /></main>}
+
+      <nav className="tabbar" aria-label="Views">
+        {TABS.map(([id, label, ic]) => (
+          <button key={id} aria-current={tab === id ? "page" : undefined} onClick={() => go(id)}>{Icon[ic]}<span>{id === "city" ? "Insights" : label}</span></button>
+        ))}
+      </nav>
     </div>
   );
 }

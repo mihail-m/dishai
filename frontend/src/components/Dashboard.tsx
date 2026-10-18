@@ -33,7 +33,11 @@ export default function Dashboard({ scenario, active }: { scenario: Scenario; ac
   const top = d.hotspots[0];
 
   return (
-    <div className="grid gap-4">
+    <div className="mx-auto grid max-w-[1040px] gap-4">
+      <div>
+        <h2 className="m-0 text-[1.75rem] font-bold">City insights</h2>
+        <p className="muted m-0 mt-1">Where the air is worst, who is affected and which measures from the Sofia climate plan help. For the municipality and planners.</p>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Tile label="Top hotspot (next 24 h)" value={top?.district ?? "–"} sub={top ? `peak ${Math.round(top.peak_24h)} × ${top.leads} leads` : ""} />
         <Tile label="C.3.2 leads" value={String(d.leads_total)} sub={`${d.leads_total - d.leads_submitted} sample + ${d.leads_submitted} submitted live`} />
@@ -81,7 +85,7 @@ export default function Dashboard({ scenario, active }: { scenario: Scenario; ac
       </div>
 
       <section className="card p-4">
-        <h2 className="font-semibold">Street chokepoints <span className="faint text-xs font-normal">where many routes are forced through dirty air · ranked by usage × (1 − CAI/100)</span></h2>
+        <h2 className="font-semibold">Busy streets with poor air <span className="faint text-xs font-normal">where many routes are forced through dirty air · ranked by usage × (1 − score/100)</span></h2>
         {!net && <div className="mt-3 h-24 animate-pulse rounded-lg" style={{ background: "var(--surface-2)" }} />}
         {net && (
           <ol className="mt-3 grid gap-2 lg:grid-cols-2">
@@ -91,7 +95,7 @@ export default function Dashboard({ scenario, active }: { scenario: Scenario; ac
                   <span className="faint w-4 tabular-nums">{c.rank}</span>
                   <span className="font-semibold">{c.street}</span>
                   <span className="faint text-xs">{c.district}</span>
-                  <span className="ml-auto flex items-center gap-1 text-xs tabular-nums"><i className="inline-block h-2 w-2 rounded-full" style={{ background: caiCss(c.mean_cai) }} />CAI {Math.round(c.mean_cai)}</span>
+                  <span className="ml-auto flex items-center gap-1 text-xs tabular-nums"><i className="inline-block h-2 w-2 rounded-full" style={{ background: caiCss(c.mean_cai) }} />{Math.round(c.mean_cai)}</span>
                   <span className="muted text-xs tabular-nums">score {c.score}</span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
@@ -103,7 +107,7 @@ export default function Dashboard({ scenario, active }: { scenario: Scenario; ac
             ))}
           </ol>
         )}
-        <p className="faint mt-3 text-xs">Indicative screening: from {net?.n_od ?? 400} seeded random walks on the modelled CAI. Measures are suggestions mapped to the plan, not engineering assessments.</p>
+        <p className="faint mt-3 text-xs">Indicative screening: from {net?.n_od ?? 400} seeded random walks on the modelled air quality score. Measures are suggestions mapped to the plan, not engineering assessments.</p>
       </section>
 
       <section className="card p-4">
@@ -127,8 +131,8 @@ export default function Dashboard({ scenario, active }: { scenario: Scenario; ac
 function Tile({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="card p-4">
-      <div className="faint text-xs uppercase tracking-wide">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      <div className="eyebrow">{label}</div>
+      <div className="display mt-1 text-2xl font-bold tabular-nums">{value}</div>
       <div className="muted mt-0.5 text-xs">{sub}</div>
     </div>
   );

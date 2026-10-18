@@ -40,12 +40,12 @@ export function sensorLayer(sensors: Sensor[]): Layer[] {
   return [
     new ScatterplotLayer<Sensor>({
       id: "sensors", data: sensors.filter((s) => !isAt(s)), getPosition: (s) => [s.lon, s.lat], getFillColor: (s) => pmColor(s.pm25),
-      radiusUnits: "pixels", getRadius: 4, stroked: true, getLineColor: [255, 255, 255, 255], lineWidthUnits: "pixels", getLineWidth: 1, pickable: false,
+      radiusUnits: "pixels", getRadius: 3.6, stroked: true, getLineColor: [16, 38, 26, 120], lineWidthUnits: "pixels", getLineWidth: 1, pickable: false,
     }),
     // Sofia's Airthings pilot stations: larger, dark-blue ring, hoverable (name + hourly value)
     new ScatterplotLayer<Sensor>({
       id: "airthings-sensors", data: sensors.filter(isAt), getPosition: (s) => [s.lon, s.lat], getFillColor: (s) => pmColor(s.pm25),
-      radiusUnits: "pixels", getRadius: 6.5, stroked: true, getLineColor: [29, 78, 216, 255], lineWidthUnits: "pixels", getLineWidth: 2.5, pickable: true,
+      radiusUnits: "pixels", getRadius: 6, stroked: true, getLineColor: [16, 38, 26, 230], lineWidthUnits: "pixels", getLineWidth: 2, pickable: true,
     }),
   ];
 }
@@ -54,14 +54,28 @@ export function sensorLayer(sensors: Sensor[]): Layer[] {
 export function referenceLayers(stations: RefStation[]): Layer[] {
   return [
     new ScatterplotLayer<RefStation>({
-      id: "reference-stations", data: stations, getPosition: (s: RefStation) => [s.lon, s.lat], radiusUnits: "pixels", getRadius: 9,
-      getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: [17, 24, 39, 255], lineWidthUnits: "pixels", getLineWidth: 3,
+      id: "reference-stations", data: stations, getPosition: (s: RefStation) => [s.lon, s.lat], radiusUnits: "pixels", getRadius: 7.5,
+      getFillColor: [24, 78, 54, 255], stroked: true, getLineColor: [150, 214, 172, 255], lineWidthUnits: "pixels", getLineWidth: 2.5,
     }),
     new TextLayer<RefStation>({
       id: "reference-labels", data: stations, getPosition: (s: RefStation) => [s.lon, s.lat],
-      getText: (s: RefStation) => (s.pm10 != null ? `${s.name} · PM10 ${Math.round(s.pm10)}` : s.name), getSize: 12, getColor: [17, 24, 39, 255],
+      getText: (s: RefStation) => (s.pm10 != null ? `${s.name} · PM10 ${Math.round(s.pm10)}` : s.name), getSize: 12, getColor: [236, 248, 240, 255],
       fontWeight: 700, getTextAnchor: "start", getAlignmentBaseline: "center", getPixelOffset: [14, 0], background: true,
-      getBackgroundColor: [255, 255, 255, 235], backgroundPadding: [4, 2, 4, 2],
+      getBackgroundColor: [18, 46, 32, 225], backgroundPadding: [6, 3, 6, 3], getBorderRadius: 6,
+    } as never),
+  ];
+}
+
+/** "You are here": an accuracy halo and a blue dot. */
+export function locationLayers(p: { lat: number; lon: number; accuracy: number }): Layer[] {
+  return [
+    new ScatterplotLayer({
+      id: "my-location-halo", data: [p], getPosition: (d: typeof p) => [d.lon, d.lat], radiusUnits: "meters", getRadius: Math.min(400, Math.max(40, p.accuracy)),
+      getFillColor: [37, 99, 235, 40] as never, stroked: true, getLineColor: [37, 99, 235, 110] as never, lineWidthUnits: "pixels", getLineWidth: 1, pickable: false,
+    } as never),
+    new ScatterplotLayer({
+      id: "my-location", data: [p], getPosition: (d: typeof p) => [d.lon, d.lat], radiusUnits: "pixels", getRadius: 8,
+      getFillColor: [37, 99, 235, 255] as never, stroked: true, getLineColor: [255, 255, 255, 240] as never, lineWidthUnits: "pixels", getLineWidth: 3, pickable: false,
     } as never),
   ];
 }
@@ -148,7 +162,6 @@ function tripsData(trips: [number, number][][]) {
 export const fmtDose = (r: RouteStats) => `${Math.round(r.dose)} µg·min/m³`;
 
 // ---- areas (air / heat) and clean channels ---------------------------------------------------------------
-import { GridCellLayer } from "@deck.gl/layers";
 import type { AreasResp } from "../types";
 
 export interface AreaRow { lon: number; lat: number; mean: number; min: number; max: number; street_m: number; n: number; pm25?: number; anomaly?: number }
@@ -164,24 +177,6 @@ export function heatColor(anomaly: number, range: number): [number, number, numb
   const cool: RGB = [33, 102, 172], mid: RGB = [247, 247, 247], hot: RGB = [178, 24, 43];
   const [a, b, u] = t < 0 ? [mid, cool, -t] : [mid, hot, t];
   return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * u)) as RGB;
-}
-
-export function areaLayer(a: AreasResp, rows: AreaRow[], scale: "relative" | "absolute"): Layer {
-  const { lo, hi } = relRange(rows.map((r) => r.mean));
-  const heat = a.metric === "heat";
-  const range = Math.max(Math.abs(a.thresholds.cool ?? 0), Math.abs(a.thresholds.hot ?? 0), 1);
-  const extreme = (r: AreaRow) => (heat ? (r.anomaly ?? 0) >= (a.thresholds.hot ?? 99) || (r.anomaly ?? 0) <= (a.thresholds.cool ?? -99)
-    : r.mean >= (a.thresholds.clean ?? 101) || r.mean <= (a.thresholds.dirty ?? -1));
-  return new GridCellLayer<AreaRow>({
-    id: "areas", data: rows, getPosition: (r: AreaRow) => [r.lon, r.lat], cellSize: a.cell_m, coverage: 0.96, extruded: false, material: false,
-    getFillColor: (r: AreaRow) => {
-      const c = heat ? heatColor(r.anomaly ?? 0, range)
-        : scale === "relative" ? relColor(r.mean, lo, hi) : caiColor(r.mean);
-      return [...c, extreme(r) ? 215 : 120] as never; // the cleanest/dirtiest (or coolest/hottest) 10 % stand out
-    },
-    pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 90],
-    updateTriggers: { getFillColor: [a.metric, a.time, scale, a.mode] },
-  } as never);
 }
 
 const CHANNEL: RGB = [0, 105, 92];

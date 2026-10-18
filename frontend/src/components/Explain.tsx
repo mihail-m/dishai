@@ -13,8 +13,8 @@ export default function Explain({ e, onClose }: { e: EdgeExplain | null; onClose
   if (!e) {
     return (
       <div className="card p-4">
-        <div className="text-sm font-semibold">Why is this red?</div>
-        <p className="muted mt-1 text-sm">Click any street on the map to see what drives its Clean Air Index: background, traffic, trapped air, greenery and heat.</p>
+        <div className="text-sm font-semibold">Why this colour?</div>
+        <p className="muted mt-1 text-sm">Click any street on the map to see what drives its air quality score: background, trapped air, greenery and heat.</p>
       </div>
     );
   }
@@ -33,7 +33,7 @@ export default function Explain({ e, onClose }: { e: EdgeExplain | null; onClose
         <button className="btn !px-2 !py-0.5 text-xs" onClick={onClose} aria-label="Close">✕</button>
       </div>
       <div className="mt-3 flex items-baseline gap-4">
-        <div><span className="text-4xl font-semibold tabular-nums" style={{ color: caiCss(e.cai) }}>{e.cai}</span><span className="faint text-sm"> CAI</span></div>
+        <div><span className="text-4xl font-semibold tabular-nums" style={{ color: caiCss(e.cai) }}>{e.cai}</span><span className="faint text-sm"> score</span></div>
         <div className="muted text-sm tabular-nums">{e.pm25} µg/m³ PM2.5</div>
       </div>
       <ul className="mt-3 grid gap-2">
@@ -54,7 +54,7 @@ export default function Explain({ e, onClose }: { e: EdgeExplain | null; onClose
         })}
         <li className="flex justify-between text-xs">
           <span title="Landsat surface-temperature anomaly, only on hot sunny hours">Heat</span>
-          <span className="tabular-nums font-semibold">{e.drivers.heat_weight === 0 ? "off (not hot)" : `${e.heat_points > 0 ? "+" : ""}${e.heat_points} CAI points`}</span>
+          <span className="tabular-nums font-semibold">{e.drivers.heat_weight === 0 ? "off (not hot)" : `${e.heat_points > 0 ? "+" : ""}${e.heat_points} score points`}</span>
         </li>
       </ul>
       {e.observed_traffic ? (

@@ -31,6 +31,8 @@ export const api = {
 
 export const hhmm = (t: string) => t.slice(11, 16);
 export const dayHour = (t: string) => `${t.slice(8, 10)}.${t.slice(5, 7)} ${t.slice(11, 16)}`;
+/** "Sat 23:00" style label for an ISO local time. */
+export const dayTime = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { weekday: "short" })} ${t.slice(11, 16)}`;
 export const clamp = (x: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
 export const levelOf = (s: number) => (s >= 60 ? "warning" : s >= 35 ? "watch" : "good") as "good" | "watch" | "warning";
 export const LEVEL_TEXT = { good: "Good", watch: "Watch", warning: "Inversion warning" } as const;  // stagnation score

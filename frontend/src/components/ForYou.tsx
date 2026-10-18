@@ -58,34 +58,33 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
   const flip = (t: Toggle) => setToggles((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
 
   return (
-    <div className="grid gap-4">
-      <div className="card flex flex-wrap items-end gap-x-6 gap-y-3 p-4">
+    <div className="mx-auto grid max-w-[1040px] gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="faint mb-1 text-xs uppercase tracking-wide">I am a…</div>
-          <div className="seg" role="group" aria-label="Profile">
-            {PROFILES.map((p) => (
-              <button key={p.id} aria-pressed={profile === p.id} title={p.hint} onClick={() => setProfile(p.id)}>{p.label}</button>
-            ))}
-          </div>
+          <h2 className="m-0 text-[1.75rem] font-bold">Advice for {district ?? "your district"}</h2>
+          <p className="muted m-0 mt-1">Based on today&apos;s forecast. Choose what applies to you.</p>
         </div>
-        <label>
-          <div className="faint mb-1 text-xs uppercase tracking-wide">My district</div>
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          My district
           <select value={district ?? ""} onChange={(e) => setDistrict(e.target.value)} aria-label="District">
             {names.map((n) => <option key={n}>{n}</option>)}
           </select>
         </label>
-        <div className="w-full">
-          <div className="faint mb-1 text-xs uppercase tracking-wide">Also tailor for me <span className="normal-case">(saved on this device only)</span></div>
+      </div>
+      <div className="card grid gap-4 p-4">
+        <div>
+          <div className="eyebrow mb-1.5">I am a…</div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Profile">
+            {PROFILES.map((p) => (
+              <button key={p.id} className={`chip ${profile === p.id ? "on" : ""}`} aria-pressed={profile === p.id} title={p.hint} onClick={() => setProfile(p.id)}>{p.label}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="eyebrow mb-1.5">Also tailor for me <span className="font-medium normal-case tracking-normal">(saved on this device only)</span></div>
           <div className="flex flex-wrap gap-2" role="group" aria-label="Personal toggles">
             {TOGGLES.map((t) => (
-              <button
-                key={t.id}
-                className="seg px-3 py-1.5 text-sm"
-                style={{ background: toggles.includes(t.id) ? "var(--accent)" : undefined, color: toggles.includes(t.id) ? "#fff" : "var(--ink-2)", cursor: "pointer" }}
-                aria-pressed={toggles.includes(t.id)}
-                title={t.hint}
-                onClick={() => flip(t.id)}
-              >{t.label}</button>
+              <button key={t.id} className={`chip ${toggles.includes(t.id) ? "on" : ""}`} aria-pressed={toggles.includes(t.id)} title={t.hint} onClick={() => flip(t.id)}>{t.label}</button>
             ))}
           </div>
         </div>
@@ -109,7 +108,7 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
               <span className={`badge pill-${adv.status.level}`}>{PM_LEVEL_TEXT[adv.status.level]}</span>
             </div>
           </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
             {adv.cards.map((c) => (
               <article key={c.id} className="card flex flex-col p-4" style={c.severity === "action" ? { borderColor: "var(--accent)" } : undefined}>
                 {c.measure && (
@@ -117,7 +116,7 @@ export default function ForYou({ scenario, districts, district, setDistrict }: P
                     {c.measure.label}
                   </span>
                 )}
-                <h3 className={`${c.measure ? "mt-2 " : ""}text-base font-semibold leading-snug`}>{c.title}</h3>
+                <h3 className={`${c.measure ? "mt-2 " : ""}text-[17px] font-bold leading-snug`}>{c.title}</h3>
                 <p className="muted mt-1 text-sm">{c.body}</p>
                 {c.id === "zone_lookup" && (
                   <div className="mt-3 rounded-lg p-2.5 text-sm font-semibold" style={{ background: "var(--surface-2)" }}>

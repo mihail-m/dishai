@@ -1,4 +1,4 @@
-# Inversion Watch (Sofia)
+# DishAI (Sofia)
 
 From air-quality forecast to action. Predicts when pollution is trapped by a temperature inversion, scores **every
 street segment** with a Clean Air Index (CAI), plans lower-exposure walking routes, shows where Sofia's clean
@@ -51,7 +51,7 @@ Without keys the app runs on **MapLibre + OSM tiles** and **our own router**. Op
 `MAP_PROVIDER=google|maplibre|leaflet` picks the initial basemap (default `google` only if a browser key exists). **The Google paths were not
 exercised against the real API** (no keys were available); the Routes client is covered by tests with a mocked transport.
 
-Use **Map style → Leaflet · OSM** above the map for the full-colour OpenStreetMap presentation with Leaflet **1.9.4**.
+Use **Live menu (top right) → Map style → Leaflet · OSM** for the full-colour OpenStreetMap presentation with Leaflet **1.9.4**.
 The choice is remembered in that browser. Switch back to MapLibre at any time, or Google Maps when a browser key is configured.
 Switching preserves the map position, selected route, hour and overlay controls. All providers share the same deck.gl overlays:
 street CAI and selection, citizen/reference sensors, walking/cycling routes, area/heat grids, clean channels, chokepoints and animated flows.
@@ -79,13 +79,12 @@ set `PLAYWRIGHT_CHANNEL=chrome` before running the tests.
 
 | Screen | What it shows | Plan measure it supports |
 |---|---|---|
-| **Clean Air map** | Street-level CAI, preloaded forecast slider, citizen sensors, "Why is this red?" breakdown, honest validation card, stagnation-score timeline | A.3.4 early warning, A.3.3 self-cleaning potential of the air |
-| **Route planner** | Fastest / balanced / cleanest walk or ride, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
-| **Clean-air network** | Pedestrians or cyclists; air-quality **areas** (~250 m cells) and **cool/hot spots** (Landsat surface temperature); dark-teal **clean channels**; ranked chokepoints with suggested measures; named cleanest/dirtiest areas; hover tooltips; optional flow animation | A.4.3, A.4.4, A.4.7, C.1.1 |
+| **Explore** | One panel with a plain-language status card (verdict, PM2.5, next-24-hour outlook) and three layers. **Air quality**: neighbourhood squares (or indicative streets, "Why this colour?" breakdown), suggestions for where you are (open the windows, take a walk, run the air purifier), based on the air around your location when you share it (kept in the tab, never stored or sent). **Heat**: Landsat surface temperature, coolest and hottest spots. **Clean paths**: clean channels and busy streets with poor air with suggested measures, pedestrians or cyclists. The time bar at the bottom is the forecast chart: PM2.5 or air trapping on Air quality, feels-like temperature on Heat, and a slim control on Clean paths and Route. Official stations, validation and forecast charts behind accordions | A.3.4 early warning, A.3.3 self-cleaning potential of the air, A.4.3, A.4.4, A.4.7, C.1.1 |
+| **Route** | Fastest / balanced / cleanest walk or ride, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
 | **For me** | Profile cards (driver / wood or coal heater / vulnerable), zone lookup, C.3.2 eligibility wizard (anonymous lead) | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
-| **Municipality** | Hotspot districts, C.3.2 leads, street chokepoints (street level), street-washing list (**sample street names**) | C.3.2, A.4.7, A.3.4, A.4.3, A.4.4, C.1.1 |
+| **City insights** (for the municipality and planners) | Hotspot districts, C.3.2 leads, street chokepoints (street level), street-washing list (**sample street names**) | C.3.2, A.4.7, A.3.4, A.4.3, A.4.4, C.1.1 |
 
-A **Live / Winter inversion / Summer heatwave / Birch season** switch (the last two drive the heat and pollen cards on *For me*) replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
+The **Live menu** (top right) holds the **Live / Winter inversion / Summer heatwave / Birch season** switch, Refresh forecast and the map style. The demo scenarios (the last two drive the heat and pollen cards on *For me*) replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
 interesting case shows even in October. In demo mode sensor values are simulated from live positions and the validation is disabled.
 
 ## How it works

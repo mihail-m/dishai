@@ -27,7 +27,7 @@ export default function TrafficCard({ t, inc, show, setShow, hour, weekend }: Pr
   const rows = [...t.corridors].sort((a, b) => (b.vs_typical ?? 0) - (a.vs_typical ?? 0));
   const closures = (inc?.features ?? []).filter((f) => f.properties.magnitude_code === 4 || f.properties.category_code === 8).length;
   return (
-    <div className="card p-4">
+    <div className="grid gap-1">
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">Real traffic <span className="faint font-normal">· live vs typical</span></div>
         <label className="flex cursor-pointer items-center gap-1.5 text-xs">
