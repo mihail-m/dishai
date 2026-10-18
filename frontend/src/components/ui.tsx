@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { LOGO_PATH } from "./logoPath";
 
 const svg = { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
 export const Icon = {
@@ -22,25 +23,19 @@ export const Icon = {
   pause: <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z" /></svg>,
 };
 
+/** The brain-and-lungs mark (public/icon.svg, traced from Brain-Lung-Icon.png by scripts/make_logo.py), in the theme's accent colours. */
 export function Logo() {
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="logo-sheen" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#fff" stopOpacity=".16" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
       <rect width="32" height="32" rx="9" fill="var(--accent)" />
-      <g fill="var(--brand-ink)">
-        <path d="M14.4 11C10 11.4 6.6 15.6 6.6 20.8 6.6 23.6 8.1 25 10.1 25 12.6 25 14.4 23.5 14.4 21Z"/>
-        <path d="M17.6 11C22 11.4 25.4 15.6 25.4 20.8 25.4 23.6 23.9 25 21.9 25 19.4 25 17.6 23.5 17.6 21Z"/>
-      </g>
-      <path d="M16 6.5V12M16 12l-2.6 2.2M16 12l2.6 2.2" stroke="var(--brand-ink)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-      <g stroke="var(--accent)" strokeWidth=".9" strokeLinecap="round" strokeLinejoin="round" fill="none">
-        <path d="M13.4 15.3c-1.4-.3-1.9 1-3 .9s-1.2-1.3-2.2-.7"/>
-        <path d="M10.4 16.2c.3 1.3-.8 1.7-.6 2.8"/>
-        <path d="M13.6 18.4c-1.2-.2-1.5 1.1-2.6 1.1M9.2 20.2c-.9.7-.6 1.9.3 2.1"/>
-        <path d="M13.6 22c-1.1.1-1.3-1-2.3-.8"/>
-        <path d="M18.6 15.3c1.4-.3 1.9 1 3 .9s1.2-1.300 2.200-.7"/>
-        <path d="M21.6 16.2c-.3 1.3.8 1.7.6 2.8"/>
-        <path d="M18.4 18.4c1.2-.2 1.5 1.1 2.600 1.100M22.800 20.200c.9.7.6 1.900-.3 2.100"/>
-        <path d="M18.400 22c1.100.1 1.300-1 2.300-.8"/>
-      </g>
+      <rect width="32" height="32" rx="9" fill="url(#logo-sheen)" />
+      <path fill="var(--brand-ink)" fillRule="evenodd" d={LOGO_PATH} />
     </svg>
   );
 }
