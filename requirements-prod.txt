@@ -9,3 +9,4 @@ pyproj
 rasterio
 scikit-learn
 joblib
+pywebpush
