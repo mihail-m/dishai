@@ -7,6 +7,7 @@ import ValidationCard from "../components/ValidationCard";
 import { Acc } from "../components/ui";
 import CaiView from "./CaiView";
 import NetworkView from "./NetworkView";
+import HeatView from "./HeatView";
 
 export const LAYERS: [Layer, string][] = [["air", "Air quality"], ["heat", "Heat"], ["clean", "Clean paths"]];
 export type Layer = "air" | "heat" | "clean";
@@ -21,6 +22,7 @@ export default function ExploreView({ stage, fc, scenario, hourIndex, setHourInd
       <StatusCard fc={fc} hour={fc?.hours[hourIndex]} />
       <div className="peek-hide grid gap-4">
         {layer === "air" ? <CaiView stage={stage} fc={fc} scenario={scenario} hourIndex={hourIndex} geo={geo} district={district} />
+          : layer === "heat" ? <HeatView stage={stage} scenario={scenario} hourIndex={window?.hours[hourIndex] ?? 0} />
           : <NetworkView stage={stage} scenario={scenario} hourIndex={window?.hours[hourIndex] ?? 0} layer={layer} />}
         <div>
           {stage.reference?.enabled && <Acc title="Official air stations"><ReferenceCard ref_={stage.reference} /></Acc>}

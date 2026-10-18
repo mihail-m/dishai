@@ -78,7 +78,8 @@ export async function mockMapApi(page: Page) {
         const metric = url.searchParams.get("metric") ?? "air";
         data = { metric, mode, cell_m: 3000, unit: "", hour, time, scenario, reference: 30,
           thresholds: { clean: 75, dirty: 25, hot: 2, cool: -2 }, stats: { median: 50, p10: 25, p90: 75, min: 20, max: 80 },
-          cells: { lon: [23.32], lat: [42.69], mean: [metric === "air" ? 60 : 35], min: [30], max: [80], street_m: [1500], n: [10], pm25: [15], anomaly: [5] },
+          cells: { lon: [23.32], lat: [42.69], mean: [metric === "air" ? 60 : 35], min: [30], max: [80], street_m: [1500], n: [10], pm25: [15], anomaly: [5], ...(metric === "heat" ? { air: [33], offset: [1.5] } : {}) },
+          ...(metric === "heat" ? { scale: "absolute", centre: 18, span: 20, model: true, city: { feels: 30, air: 28, level: "caution", city_level: "caution" }, validation: { sensors: 220, sensor_hours: 570000 } } : {}),
           extremes: { best: [{ lon: 23.32, lat: 42.69, value: 60, street_m: 1500, place: "Demo park" }], worst: [] }, note: "Test areas" };
         break;
       }

@@ -41,7 +41,7 @@ export const PM_WATCH = 15;  // WHO 24 h guideline
 export const PM_WARNING = 25;  // EU 24 h limit
 
 import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, IncidentsResp, Mode, No2Resp, NetworkResp, ReferenceResp, RouteResp, TrafficResp, Validation } from "./types";
-export interface ForecastRequest { forecastId?: string; signal?: AbortSignal; includeGoogle?: boolean }
+export interface ForecastRequest { forecastId?: string; signal?: AbortSignal; includeGoogle?: boolean; heatScale?: "absolute" | "relative" }
 const snapshotQuery = (opts?: ForecastRequest) => opts?.forecastId ? `&forecast_id=${encodeURIComponent(opts.forecastId)}` : "";
 export const api2 = {
   values: (s: Scenario, hour?: number) => j<CaiValues>(`/api/cai/values?${[q(s), hour != null ? `hour=${hour}` : ""].filter(Boolean).join("&")}`),
@@ -55,7 +55,7 @@ export const api2 = {
   },
   network: (s: Scenario, hour?: number, mode: Mode = "walk", opts?: ForecastRequest) => j<NetworkResp>(`/api/network?${[q(s), hour != null ? `hour=${hour}` : "", `mode=${mode}`].filter(Boolean).join("&")}${snapshotQuery(opts)}`, { signal: opts?.signal }),
   areas: (s: Scenario, hour: number | undefined, mode: Mode, metric: "air" | "heat", opts?: ForecastRequest) =>
-    j<AreasResp>(`/api/cai/areas?${[q(s), hour != null ? `hour=${hour}` : "", `mode=${mode}`, `metric=${metric}`].filter(Boolean).join("&")}${snapshotQuery(opts)}`, { signal: opts?.signal }),
+    j<AreasResp>(`/api/cai/areas?${[q(s), hour != null ? `hour=${hour}` : "", `mode=${mode}`, `metric=${metric}`, ...(metric === "heat" && opts?.heatScale ? [`scale=${opts.heatScale}`] : [])].filter(Boolean).join("&")}${snapshotQuery(opts)}`, { signal: opts?.signal }),
   reference: (s: Scenario) => j<ReferenceResp>(`/api/reference?${q(s)}`),
   validation: (s: Scenario) => j<Validation>(`/api/validation?${q(s)}`),
   traffic: () => j<TrafficResp>("/api/traffic", { cache: "no-store" }),
