@@ -172,7 +172,7 @@ export interface TrafficCorridor {
 }
 export interface TrafficResp {
   enabled: boolean; google: boolean; tomtom: boolean; ready: boolean; measured_profile: boolean; updated: string | null;
-  corridors: TrafficCorridor[]; profile: { wk: number[]; we: number[] } | null;
+  corridors: TrafficCorridor[]; profile: { wk: number[]; we: number[] } | null; volume_profile?: VolumeProfile | null;
   usage: { day: string; google_requests: number; tomtom_requests: number }; note: string; sources: string[];
 }
 export interface Incident {
@@ -195,4 +195,26 @@ export interface GoogleAir {
 export interface ObservedTraffic {
   corridor: string; live_index: number; typical_index: number | null; vs_typical: number | null;
   google_min: number | null; tomtom_index: number | null; jam_share: number | null;
+}
+
+/** Measured typical vehicle volume by local hour, as a share of the weekday peak (BGTOLL open data, CC BY 4.0). */
+export interface VolumeProfile {
+  source: string; points: { scp: number; name: string }[]; from: string; to: string; hours_used: number;
+  weekday: number[]; weekend: number[]; heavy_share: { weekday: number; weekend: number }; note: string;
+}
+
+// ---- NO2 with measured traffic (backend/no2_model.py) -----------------------------------------------------------
+export interface No2Station { station: string; type: string; elasticity: number; lo: number; hi: number; cv_gain_pct_no_hour_fe: number; cv_gain_pct_with_hour_fe: number; hours: number }
+export interface No2Resp {
+  enabled: boolean;
+  forecast?: { time: string; no2: number; p10: number; p90: number; with_cams: boolean }[]; mean_24h?: number | null; who_24h?: number;
+  scenarios?: { traffic_cut_pct: number; no2_change_pct: number; range_pct: [number, number] }[];
+  traffic_profile?: { weekday: number[]; weekend: number[] };
+  study?: {
+    weekday_weekend_ratio: { no2: number; traffic: number }; diurnal_no2: { weekday: number[]; weekend: number[] };
+    stations: No2Station[]; pm: { pm25: No2Station; pm10: No2Station }; reading: string;
+  };
+  eval?: Record<string, { rmse_log: number; skill_pct: number } | number>;
+  elasticity?: { mean: number; lo: number; hi: number };
+  trained?: string; range?: [string, string]; n_hours?: number; stations?: string[]; caveats?: string[];
 }

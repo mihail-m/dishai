@@ -7,6 +7,7 @@ import { api2 } from "../api";
 import { PRESET_PAIRS, GOOGLE_KEY } from "../map/config";
 import { markerLayer, routeLayers, ROUTE_COLORS } from "../map/layers";
 import PlaceSearch from "../components/PlaceSearch";
+import { Acc } from "../components/ui";
 
 type LL = [number, number]; // lat, lng
 interface Props { stage: Stage; scenario: Scenario; hourIndex: number }
@@ -72,6 +73,7 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
   useEffect(() => {
     set({
       layers, base: "dim", cursor: picking ? "crosshair" : undefined,
+      legend: { kind: "route", title: "Routes", bar: <div className="mt-1.5 grid gap-1"><span className="flex items-center gap-2"><i className="inline-block h-1 w-5 rounded" style={{ background: "#1f8a70" }} />Cleanest</span><span className="flex items-center gap-2"><i className="inline-block w-5" style={{ borderTop: "3px solid #4a5563" }} />Fastest</span></div> },
       onPick: (info: PickingInfo) => {
         const p = pickRef.current;
         if (!p || !info.coordinate) return;
@@ -94,92 +96,107 @@ export default function RouteView({ stage, scenario, hourIndex }: Props) {
     ? [["fastest", res.routes.fastest], ["balanced", res.routes.balanced], ["cleanest", res.routes.cleanest], ["chosen", res.routes.chosen]]
     : [];
 
+  const main = res ? res.routes.chosen ?? res.routes.cleanest : null;
+  const noBetter = !!res?.confidence && !res.confidence.cleaner_exists;
+  const gain = main ? Math.abs(Math.round(main.dose_change_pct)) : 0;
+  const place = (v: LL | null, label: string, fallback: string) => (v ? label || v.map((x) => x.toFixed(4)).join(", ") : fallback);
+
   return (
-    <div className="grid gap-3">
-      <div className="card grid gap-3 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-semibold">Clean-air {mode === "bike" ? "cycling" : "walking"} route <span className="faint font-normal">· indicative</span></div>
-          <div className="seg" role="group" aria-label="Travel mode">
-            <button aria-pressed={mode === "walk"} onClick={() => setMode("walk")}>🚶 Walk</button>
-            <button aria-pressed={mode === "bike"} onClick={() => setMode("bike")}>🚴 Cycle</button>
-          </div>
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="m-0 text-xl font-bold">Plan a cleaner {mode === "bike" ? "ride" : "walk"}</h2>
+        <div className="seg" role="group" aria-label="Travel mode">
+          <button aria-pressed={mode === "walk"} onClick={() => setMode("walk")}>Walk</button>
+          <button aria-pressed={mode === "bike"} onClick={() => setMode("bike")}>Cycle</button>
         </div>
-        {GOOGLE_KEY && <PlaceSearch onPick={(ll) => (picking === "to" ? setTo(ll) : setFrom(ll))} />}
-        <div className="flex flex-wrap gap-2">
-          <button className={`btn ${picking === "from" ? "btn-primary" : ""}`} onClick={() => setPicking(picking === "from" ? null : "from")}>
-            {picking === "from" ? "Click the map…" : `A: ${from ? labels.from || from.map((x) => x.toFixed(4)).join(", ") : "set origin"}`}
-          </button>
-          <button className={`btn ${picking === "to" ? "btn-primary" : ""}`} onClick={() => setPicking(picking === "to" ? null : "to")}>
-            {picking === "to" ? "Click the map…" : `B: ${to ? labels.to || to.map((x) => x.toFixed(4)).join(", ") : "set destination"}`}
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
+      </div>
+      {GOOGLE_KEY && <PlaceSearch onPick={(ll) => (picking === "to" ? setTo(ll) : setFrom(ll))} />}
+      <div className="grid gap-2">
+        <button className={`field ${picking === "from" ? "active" : ""}`} onClick={() => setPicking(picking === "from" ? null : "from")}>
+          <i className="pin" style={{ background: "var(--accent)" }} />
+          <span className="min-w-0 truncate">{picking === "from" ? "Click the map…" : `From: ${place(from, labels.from, "set origin")}`}</span>
+        </button>
+        <button className={`field ${picking === "to" ? "active" : ""}`} onClick={() => setPicking(picking === "to" ? null : "to")}>
+          <i className="pin" style={{ background: "#c0392f" }} />
+          <span className="min-w-0 truncate">{picking === "to" ? "Click the map…" : `To: ${place(to, labels.to, "set destination")}`}</span>
+        </button>
+        <div className="peek-hide"><div className="flex flex-wrap gap-1.5">
           {PRESET_PAIRS.map((p) => (
-            <button key={p.id} className="badge cursor-pointer" onClick={() => { setFrom(p.from as unknown as LL); setTo(p.to as unknown as LL); const [a, b] = p.label.split(" → "); setLabels({ from: a.split(": ").pop() ?? "", to: b ?? "" }); }}>{p.label}</button>
+            <button key={p.id} className="chip" onClick={() => { setFrom(p.from as unknown as LL); setTo(p.to as unknown as LL); const [a, b] = p.label.split(" → "); setLabels({ from: a.split(": ").pop() ?? "", to: b ?? "" }); }}>{p.label}</button>
           ))}
-        </div>
-        <div>
-          <div className="flex justify-between text-xs"><span className="font-semibold">Faster</span><span className="muted">setting {lam.toFixed(1)}</span><span className="font-semibold">Cleaner</span></div>
-          <input type="range" min={0} max={3} step={0.1} value={lam} onChange={(e) => setLam(Number(e.target.value))} aria-label="Faster to cleaner" />
-        </div>
+        </div></div>
+      </div>
+      <div>
+        <div className="flex justify-between text-[13px]"><span className="font-semibold">Faster</span><span className="muted">setting {lam.toFixed(1)}</span><span className="font-semibold">Cleaner</span></div>
+        <input type="range" min={0} max={3} step={0.1} value={lam} onChange={(e) => setLam(Number(e.target.value))} aria-label="Faster to cleaner" className="h-8" />
       </div>
 
       {err && <div className="card p-3 text-sm" style={{ color: "var(--warn)" }}>{err}</div>}
       {busy && !res && <div className="card h-40 animate-pulse" />}
-      {res && (
-        <div className="card p-3">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="faint text-left"><th className="py-1 font-normal">Route</th><th className="font-normal">Time</th><th className="font-normal">Dose*</th><th className="font-normal">Mean PM2.5</th><th className="font-normal">CAI</th></tr>
-            </thead>
-            <tbody>
-              {rows.filter(([, r]) => r).map(([n, r]) => r && (
-                <tr key={n} onClick={() => setFocus(n)} className="cursor-pointer border-t" style={{ borderColor: "var(--line)", background: focus === n ? "var(--surface-2)" : undefined }}>
-                  <td className="py-1.5"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm" style={{ background: css(n) }} /><b>{NAMES[n]}</b></td>
-                  <td className="tabular-nums">{Math.round(r.time_min)} min<span className="faint"> {r.time_change_pct ? `(+${r.time_change_pct}%)` : ""}</span></td>
-                  <td className="tabular-nums"><b style={{ color: r.dose_change_pct < 0 ? "var(--good)" : undefined }}>{r.dose_change_pct === 0 ? "base" : `${r.dose_change_pct}%`}</b></td>
-                  <td className="tabular-nums">{r.mean_pm25}</td>
-                  <td className="tabular-nums">{r.mean_cai != null ? Math.round(r.mean_cai) : "–"}</td>
-                </tr>
-              ))}
-              {res.google_baseline && (
-                <tr className="border-t" style={{ borderColor: "var(--line)" }}>
-                  <td className="py-1.5"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm border border-dashed" style={{ borderColor: "var(--ink-2)" }} /><b>Google</b></td>
-                  <td className="tabular-nums">{Math.round(res.google_baseline.time_min)} min</td>
-                  <td className="tabular-nums"><b>{res.google_baseline.dose_change_pct}%</b></td>
-                  <td className="tabular-nums">{res.google_baseline.mean_pm25}</td>
-                  <td className="tabular-nums">{res.google_baseline.mean_cai != null ? Math.round(res.google_baseline.mean_cai) : "–"}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          {res.confidence && !res.confidence.cleaner_exists && (
-            <p className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--watch-bg)", color: "var(--watch)" }}>
-              <b>{res.confidence.message}</b> Take the fastest route, or the one you prefer.
-            </p>
-          )}
-          {res.confidence?.cleaner_exists && (
-            <p className="faint mt-2 text-[11px]">
-              Clearly cleaner than the fastest: {res.confidence.better.map((k) => `${NAMES[k]} (${Math.abs(res.confidence!.routes[k].diff_pct)}% lower mean PM2.5, uncertainty ±${res.confidence!.routes[k].sd_pct}%)`).join("; ")}.
-            </p>
-          )}
-          <p className="faint mt-2 text-[11px] leading-snug">
-            *Dose = modelled PM2.5 × minutes × relative breathing rate (µg·min/m³; cycling assumes 2× walking), % vs the fastest route. Balanced and cleanest are capped at +30 % time.
-            {res.routes.cleanest.lambda_used !== undefined && res.routes.cleanest.lambda_used < 3 ? ` The cap limited the cleanest route to setting ${res.routes.cleanest.lambda_used}.` : ""}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {(!res.confidence || res.confidence.cleaner_exists) && <a className="btn text-xs" href={res.open_in_google_maps_clean} target="_blank" rel="noreferrer">Open cleanest in Google Maps ↗</a>}
-            <a className="btn text-xs" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
+      {res && main && (
+        <>
+          <section className="reco" aria-label="Recommended route">
+            <div className="eyebrow" style={{ color: "var(--accent)" }}>{noBetter ? "No clearly cleaner route here" : "Recommended"}</div>
+            <div className="big">{noBetter ? "Take the fastest, or the one you prefer" : gain > 0 ? `${gain}% less polluted air` : "Same air as the fastest route"}</div>
+            {noBetter && <p className="muted m-0 text-[13px]">{res.confidence?.message}</p>}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="stat"><b className="tabular-nums">{Math.round(main.time_min)} min</b><span>{main.time_change_pct ? `+${main.time_change_pct}% vs fastest` : "same as fastest"}</span></div>
+              <div className="stat"><b className="tabular-nums">{main.mean_pm25} µg/m³</b><span>average PM2.5 on the route</span></div>
+            </div>
+            {res.confidence?.cleaner_exists && (
+              <p className="muted m-0 text-xs">
+                Clearly cleaner than the fastest: {res.confidence.better.map((k) => `${NAMES[k]} (${Math.abs(res.confidence!.routes[k].diff_pct)}% lower mean PM2.5, uncertainty ±${res.confidence!.routes[k].sd_pct}%)`).join("; ")}.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {(!res.confidence || res.confidence.cleaner_exists) && <a className="btn btn-primary" href={res.open_in_google_maps_clean} target="_blank" rel="noreferrer">Open cleanest in Google Maps ↗</a>}
+              <a className="btn" href={res.open_in_google_maps} target="_blank" rel="noreferrer">Open direct ↗</a>
+            </div>
+          </section>
+          <div>
+            <Acc title="Compare all routes">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="faint text-left"><th className="py-1 font-normal">Route</th><th className="font-normal">Time</th><th className="font-normal">Exposure*</th><th className="font-normal">PM2.5</th><th className="font-normal">Score</th></tr>
+                </thead>
+                <tbody>
+                  {rows.filter(([, r]) => r).map(([n, r]) => r && (
+                    <tr key={n} onClick={() => setFocus(n)} className="cursor-pointer border-t" style={{ borderColor: "var(--line)", background: focus === n ? "var(--surface-2)" : undefined }}>
+                      <td className="py-2"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm" style={{ background: css(n) }} /><b>{NAMES[n]}</b></td>
+                      <td className="tabular-nums">{Math.round(r.time_min)} min<span className="faint"> {r.time_change_pct ? `(+${r.time_change_pct}%)` : ""}</span></td>
+                      <td className="tabular-nums"><b style={{ color: r.dose_change_pct < 0 ? "var(--good)" : undefined }}>{r.dose_change_pct === 0 ? "base" : `${r.dose_change_pct}%`}</b></td>
+                      <td className="tabular-nums">{r.mean_pm25}</td>
+                      <td className="tabular-nums">{r.mean_cai != null ? Math.round(r.mean_cai) : "–"}</td>
+                    </tr>
+                  ))}
+                  {res.google_baseline && (
+                    <tr className="border-t" style={{ borderColor: "var(--line)" }}>
+                      <td className="py-2"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm border border-dashed" style={{ borderColor: "var(--ink-2)" }} /><b>Google</b></td>
+                      <td className="tabular-nums">{Math.round(res.google_baseline.time_min)} min</td>
+                      <td className="tabular-nums"><b>{res.google_baseline.dose_change_pct}%</b></td>
+                      <td className="tabular-nums">{res.google_baseline.mean_pm25}</td>
+                      <td className="tabular-nums">{res.google_baseline.mean_cai != null ? Math.round(res.google_baseline.mean_cai) : "–"}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <p className="faint m-0 text-[11px] leading-snug">
+                *Exposure = modelled PM2.5 × minutes × relative breathing rate (µg·min/m³; cycling assumes 2× walking), % vs the fastest route. Balanced and cleanest are capped at +30 % time.
+                {res.routes.cleanest.lambda_used !== undefined && res.routes.cleanest.lambda_used < 3 ? ` The cap limited the cleanest route to setting ${res.routes.cleanest.lambda_used}.` : ""}
+              </p>
+              <p className="faint m-0 text-[11px]">
+                {res.google_available && googleResult?.key !== googleKey ? "Loading Google's walking comparison for this hour…"
+                  : res.google_status === "n/a" ? "Google baseline is walking-only; cycling uses our own router." : res.google_status === "ok"
+                  ? res.snapped.used ? `Cleanest route shown is Google's walking route through ${res.snapped.waypoints.length} of our waypoints (ETA ${res.snapped.eta_min} min).` : "Google snapped route unavailable; showing our own polyline."
+                  : res.google_status === "no_key" ? "Google baseline needs GOOGLE_ROUTES_SERVER_KEY (see README); routing and the air quality score never depend on it." : "Google Routes request failed; showing our own routes."}
+              </p>
+            </Acc>
+            <Acc title="About these routes">
+              <p className="faint m-0 text-[11px]">Routes follow OpenStreetMap pedestrian data (some crossings or private paths may be missing). Times assume 4.8 km/h. No location is stored. Indicative.</p>
+            </Acc>
           </div>
-          <p className="faint mt-2 text-[11px]">
-            {res.google_available && googleResult?.key !== googleKey ? "Loading Google's walking comparison for this hour…"
-              : res.google_status === "n/a" ? "Google baseline is walking-only; cycling uses our own router." : res.google_status === "ok"
-              ? res.snapped.used ? `Cleanest route shown is Google's walking route through ${res.snapped.waypoints.length} of our waypoints (ETA ${res.snapped.eta_min} min).` : "Google snapped route unavailable; showing our own polyline."
-              : res.google_status === "no_key" ? "Google baseline needs GOOGLE_ROUTES_SERVER_KEY (see README); routing and CAI never depend on it." : "Google Routes request failed; showing our own routes."}
-          </p>
-        </div>
+        </>
       )}
-      <p className="faint text-[11px]">Routes follow OpenStreetMap pedestrian data (some crossings or private paths may be missing). Times assume 4.8 km/h. No location is stored.</p>
     </div>
   );
 }

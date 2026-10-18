@@ -1,0 +1,108 @@
+{
+ "head2head_lead0": {
+  "all": {
+   "hours": 2649,
+   "rows": 118553,
+   "level_trend_mae": 2.938,
+   "krige_mae": 2.784,
+   "direct_mae": 3.764,
+   "level_trend_rho": 0.161,
+   "krige_rho": 0.254,
+   "direct_rho": 0.068,
+   "krige_cov80": 0.791,
+   "direct_cov80": 0.0
+  },
+  "heating": {
+   "hours": 1613,
+   "rows": 69845,
+   "level_trend_mae": 5.292,
+   "krige_mae": 4.771,
+   "direct_mae": 6.355,
+   "level_trend_rho": 0.192,
+   "krige_rho": 0.318,
+   "direct_rho": 0.094,
+   "krige_cov80": 0.788,
+   "direct_cov80": 0.0
+  },
+  "summer": {
+   "hours": 1036,
+   "rows": 48708,
+   "level_trend_mae": 1.453,
+   "krige_mae": 1.442,
+   "direct_mae": 2.02,
+   "level_trend_rho": 0.112,
+   "krige_rho": 0.156,
+   "direct_rho": 0.027,
+   "krige_cov80": 0.796,
+   "direct_cov80": 0.0
+  },
+  "polluted heating (city>15)": {
+   "hours": 930,
+   "rows": 39302,
+   "level_trend_mae": 8.96,
+   "krige_mae": 8.068,
+   "direct_mae": 10.462,
+   "level_trend_rho": 0.207,
+   "krige_rho": 0.339,
+   "direct_rho": 0.119,
+   "krige_cov80": 0.764,
+   "direct_cov80": 0.0
+  },
+  "city>25": {
+   "hours": 436,
+   "rows": 17637,
+   "level_trend_mae": 13.315,
+   "krige_mae": 11.595,
+   "direct_mae": 15.242,
+   "level_trend_rho": 0.214,
+   "krige_rho": 0.36,
+   "direct_rho": 0.137,
+   "krige_cov80": 0.759,
+   "direct_cov80": 0.0
+  }
+ },
+ "random_leads": {
+  "0h": {
+   "rows": 2928,
+   "direct_mae": 3.408,
+   "persistence_mae": 2.719,
+   "direct_rho": NaN,
+   "coverage80": 0.0
+  },
+  "1-5h": {
+   "rows": 13655,
+   "direct_mae": 3.809,
+   "persistence_mae": 3.434,
+   "direct_rho": NaN,
+   "coverage80": 0.0
+  },
+  "6-23h": {
+   "rows": 37463,
+   "direct_mae": 4.028,
+   "persistence_mae": 4.35,
+   "direct_rho": 0.048,
+   "coverage80": 0.0
+  },
+  "24-47h": {
+   "rows": 21681,
+   "direct_mae": 4.877,
+   "persistence_mae": 6.033,
+   "direct_rho": 0.067,
+   "coverage80": 0.0
+  },
+  "heating": {
+   "rows": 45850,
+   "direct_mae": 6.694,
+   "persistence_mae": 7.394,
+   "direct_rho": 0.089,
+   "coverage80": 0.0
+  },
+  "polluted heating (city>15)": {
+   "rows": 23191,
+   "direct_mae": 11.458,
+   "persistence_mae": 11.625,
+   "direct_rho": 0.127,
+   "coverage80": 0.0
+  }
+ }
+}

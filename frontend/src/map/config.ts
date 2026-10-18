@@ -8,7 +8,7 @@ export const MAP_PROVIDER: MapProvider = wanted === "leaflet" ? "leaflet"
 export const GOOGLE_KEY = key;
 export const SOFIA_CENTER: [number, number] = [23.32, 42.69];
 
-const PREFERENCE = "dishai.map-provider";
+const PREFERENCE = "dishai.map-provider.v2"; // v2: the new DishAI basemap is the default for everyone once
 export function preferredMapProvider(): MapProvider {
   try {
     const saved = localStorage.getItem(PREFERENCE);

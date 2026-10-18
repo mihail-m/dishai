@@ -43,6 +43,10 @@ export async function mockMapApi(page: Page) {
       case "/api/sensors": data = { scenario, simulated: !!scenario, source: "fixture", count: 1, median_pm25: 12, label: "Test sensors", sensors: [{ id: 1, lat: 42.70, lon: 23.31, pm25: 12, pm10: 20, district: "Sredets" }] }; break;
       case "/api/reference": data = { enabled: true, attribution: "Test reference", pm25_available: false, note: "", stations: [{ uid: 1, name: "Test station", lat: 42.68, lon: 23.31, pm10: 18 }] }; break;
       case "/api/validation": data = { warning: "Synthetic browser test data" }; break;
+      case "/api/traffic": data = { enabled: false, google: false, tomtom: false, ready: false, measured_profile: false, updated: null, corridors: [], profile: null, usage: { day: "", google_requests: 0, tomtom_requests: 0 }, note: "", sources: [] }; break;
+      case "/api/traffic/incidents": data = { type: "FeatureCollection", features: [], enabled: false }; break;
+      case "/api/google-air": data = { enabled: false }; break;
+      case "/api/no2": data = { enabled: false }; break;
       case "/api/cai/geometry": {
         const buf = Buffer.alloc(8 + 8 + 16 + 1);
         buf.writeUInt32LE(1, 0); buf.writeUInt32LE(2, 4);
@@ -83,4 +87,13 @@ export async function mockMapApi(page: Page) {
     }
     await route.fulfill({ json: data });
   });
+}
+
+/** The Live menu holds the data scenarios, refresh and the map style. */
+export async function openMenu(page: Page) {
+  await page.getByRole("button", { name: /^(Live|Demo)/ }).click();
+}
+export async function pickProvider(page: Page, name: "Leaflet" | "MapLibre") {
+  await openMenu(page);
+  await page.getByRole("menuitemradio", { name: name === "Leaflet" ? "Leaflet · OSM" : "MapLibre · OpenFreeMap", exact: true }).click();
 }

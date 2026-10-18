@@ -1,0 +1,375 @@
+{
+ "sofia": {
+  "raw": {
+   "mae": 5.16,
+   "bias": -4.78,
+   "r": 0.742,
+   "ratio_RH_min": 0.37,
+   "ratio_RH_max": 0.76,
+   "mae>25": 15.07,
+   "bias>25": -15.07
+  },
+  "sofia (own station, weeks held out)": {
+   "mae": 3.22,
+   "bias": -0.41,
+   "r": 0.797,
+   "ratio_RH_min": 0.97,
+   "ratio_RH_max": 1.04,
+   "mae>25": 8.01,
+   "bias>25": -6.82
+  },
+  "other cities only (never saw Sofia)": {
+   "mae": 3.31,
+   "bias": 0.1,
+   "r": 0.787,
+   "ratio_RH_min": 0.97,
+   "ratio_RH_max": 1.14,
+   "mae>25": 8.48,
+   "bias>25": -7.67
+  },
+  "all cities pooled, Sofia weeks held out": {
+   "mae": 3.31,
+   "bias": 0.03,
+   "r": 0.787,
+   "ratio_RH_min": 0.97,
+   "ratio_RH_max": 1.13,
+   "mae>25": 8.8,
+   "bias>25": -8.25
+  }
+ },
+ "leave_one_city_out": [
+  {
+   "city": 6,
+   "country": "DE",
+   "stations": 5,
+   "hours": 9941,
+   "ref_med": 9.7,
+   "raw": 7.07,
+   "others": 3.43,
+   "sofia_only": 4.24,
+   "own": 2.95
+  },
+  {
+   "city": 2,
+   "country": "BE",
+   "stations": 4,
+   "hours": 7872,
+   "ref_med": 6.5,
+   "raw": 3.2,
+   "others": 2.31,
+   "sofia_only": 2.36,
+   "own": 1.77
+  },
+  {
+   "city": 0,
+   "country": "BE",
+   "stations": 3,
+   "hours": 6199,
+   "ref_med": 5.1,
+   "raw": 2.94,
+   "others": 2.51,
+   "sofia_only": 2.56,
+   "own": 1.98
+  },
+  {
+   "city": 7,
+   "country": "DE",
+   "stations": 4,
+   "hours": 6198,
+   "ref_med": 8.0,
+   "raw": 6.14,
+   "others": 2.86,
+   "sofia_only": 3.31,
+   "own": 2.59
+  },
+  {
+   "city": 13,
+   "country": "DE",
+   "stations": 3,
+   "hours": 5554,
+   "ref_med": 8.5,
+   "raw": 5.46,
+   "others": 2.59,
+   "sofia_only": 3.28,
+   "own": 2.77
+  },
+  {
+   "city": 16,
+   "country": "DE",
+   "stations": 3,
+   "hours": 5166,
+   "ref_med": 6.4,
+   "raw": 4.15,
+   "others": 2.17,
+   "sofia_only": 2.33,
+   "own": 2.16
+  },
+  {
+   "city": 11,
+   "country": "DE",
+   "stations": 2,
+   "hours": 4116,
+   "ref_med": 6.6,
+   "raw": 4.7,
+   "others": 2.39,
+   "sofia_only": 2.63,
+   "own": 2.36
+  },
+  {
+   "city": 10,
+   "country": "DE",
+   "stations": 2,
+   "hours": 4106,
+   "ref_med": 8.5,
+   "raw": 7.18,
+   "others": 3.96,
+   "sofia_only": 4.42,
+   "own": 3.28
+  },
+  {
+   "city": 20,
+   "country": "DE",
+   "stations": 2,
+   "hours": 4036,
+   "ref_med": 6.8,
+   "raw": 5.47,
+   "others": 2.01,
+   "sofia_only": 2.8,
+   "own": 1.7
+  },
+  {
+   "city": 15,
+   "country": "DE",
+   "stations": 2,
+   "hours": 4035,
+   "ref_med": 6.6,
+   "raw": 4.6,
+   "others": 2.4,
+   "sofia_only": 2.7,
+   "own": 2.27
+  },
+  {
+   "city": 19,
+   "country": "DE",
+   "stations": 2,
+   "hours": 3639,
+   "ref_med": 8.3,
+   "raw": 6.15,
+   "others": 4.7,
+   "sofia_only": 4.73,
+   "own": 4.26
+  },
+  {
+   "city": 23,
+   "country": "MK",
+   "stations": 2,
+   "hours": 2504,
+   "ref_med": 10.0,
+   "raw": 8.96,
+   "others": 7.67,
+   "sofia_only": 8.59,
+   "own": 7.22
+  },
+  {
+   "city": 12,
+   "country": "DE",
+   "stations": 2,
+   "hours": 2492,
+   "ref_med": 7.4,
+   "raw": 6.04,
+   "others": 3.25,
+   "sofia_only": 3.75,
+   "own": 1.72
+  },
+  {
+   "city": 8,
+   "country": "DE",
+   "stations": 1,
+   "hours": 2088,
+   "ref_med": 7.3,
+   "raw": 4.5,
+   "others": 2.38,
+   "sofia_only": 2.59,
+   "own": 2.21
+  },
+  {
+   "city": 9,
+   "country": "DE",
+   "stations": 1,
+   "hours": 2088,
+   "ref_med": 8.0,
+   "raw": 6.95,
+   "others": 3.59,
+   "sofia_only": 4.2,
+   "own": 2.75
+  },
+  {
+   "city": 1,
+   "country": "BE",
+   "stations": 1,
+   "hours": 2057,
+   "ref_med": 6.5,
+   "raw": 3.2,
+   "others": 2.1,
+   "sofia_only": 2.32,
+   "own": 1.44
+  },
+  {
+   "city": 5,
+   "country": "BG",
+   "stations": 1,
+   "hours": 2040,
+   "ref_med": 8.6,
+   "raw": 4.43,
+   "others": 3.1,
+   "sofia_only": 3.16,
+   "own": 2.77
+  },
+  {
+   "city": 21,
+   "country": "DE",
+   "stations": 1,
+   "hours": 2040,
+   "ref_med": 7.0,
+   "raw": 6.5,
+   "others": 3.14,
+   "sofia_only": 3.94,
+   "own": 2.06
+  },
+  {
+   "city": 26,
+   "country": "RO",
+   "stations": 1,
+   "hours": 2012,
+   "ref_med": 9.1,
+   "raw": 4.14,
+   "others": 4.35,
+   "sofia_only": 4.32,
+   "own": 2.99
+  },
+  {
+   "city": 14,
+   "country": "DE",
+   "stations": 1,
+   "hours": 2006,
+   "ref_med": 7.3,
+   "raw": 3.97,
+   "others": 2.22,
+   "sofia_only": 2.34,
+   "own": 2.11
+  },
+  {
+   "city": 3,
+   "country": "BG",
+   "stations": 1,
+   "hours": 1995,
+   "ref_med": 10.5,
+   "raw": 7.96,
+   "others": 5.19,
+   "sofia_only": 5.31,
+   "own": 4.81
+  },
+  {
+   "city": 4,
+   "country": "BG",
+   "stations": 1,
+   "hours": 1989,
+   "ref_med": 9.1,
+   "raw": 5.16,
+   "others": 3.31,
+   "sofia_only": NaN,
+   "own": 3.22
+  },
+  {
+   "city": 17,
+   "country": "DE",
+   "stations": 1,
+   "hours": 1965,
+   "ref_med": 6.1,
+   "raw": 4.78,
+   "others": 1.92,
+   "sofia_only": 2.3,
+   "own": 1.58
+  },
+  {
+   "city": 18,
+   "country": "DE",
+   "stations": 1,
+   "hours": 1944,
+   "ref_med": 9.8,
+   "raw": 6.82,
+   "others": 5.09,
+   "sofia_only": 5.07,
+   "own": 5.08
+  },
+  {
+   "city": 24,
+   "country": "NL",
+   "stations": 1,
+   "hours": 1943,
+   "ref_med": 7.4,
+   "raw": 3.88,
+   "others": 6.07,
+   "sofia_only": 6.6,
+   "own": 2.52
+  },
+  {
+   "city": 28,
+   "country": "SK",
+   "stations": 1,
+   "hours": 1825,
+   "ref_med": 10.4,
+   "raw": 6.75,
+   "others": 4.59,
+   "sofia_only": 4.66,
+   "own": 4.18
+  },
+  {
+   "city": 27,
+   "country": "SE",
+   "stations": 1,
+   "hours": 1735,
+   "ref_med": 5.6,
+   "raw": 4.08,
+   "others": 1.74,
+   "sofia_only": 2.24,
+   "own": 1.52
+  },
+  {
+   "city": 25,
+   "country": "NL",
+   "stations": 1,
+   "hours": 1716,
+   "ref_med": 6.2,
+   "raw": 4.54,
+   "others": 2.41,
+   "sofia_only": 2.58,
+   "own": 2.43
+  },
+  {
+   "city": 22,
+   "country": "GR",
+   "stations": 1,
+   "hours": 1008,
+   "ref_med": 12.0,
+   "raw": 9.01,
+   "others": 5.54,
+   "sofia_only": 5.69,
+   "own": 4.65
+  }
+ ],
+ "pooled_coef": {
+  "const": 1.4188697179448673,
+  "log_raw": 0.8241956321241061,
+  "rh": -0.6693916222874589,
+  "temp": -0.05554634839281369,
+  "heating": 0.005205999242376008
+ },
+ "sofia_coef": {
+  "const": 0.7618017793814138,
+  "log_raw": 0.8993550934134588,
+  "rh": -0.6155514923590147,
+  "temp": 0.17040770127003974,
+  "heating": 0.3136090426111079
+ }
+}

@@ -1,0 +1,286 @@
+{
+ "trained": "2026-10-17",
+ "range": [
+  "2026-03-05 19:00:00",
+  "2026-10-16 23:00:00"
+ ],
+ "n_hours": 5169,
+ "target": "mean NO2 of 5 urban EEA stations (3 background, 2 traffic), ug/m3",
+ "stations": [
+  "BG0040A",
+  "BG0050A",
+  "BG0052A",
+  "BG0073A",
+  "BG0079A"
+ ],
+ "feats": [
+  "const",
+  "lblh",
+  "wind",
+  "t2m",
+  "rh",
+  "lcams",
+  "ltraffic"
+ ],
+ "coef": [
+  3.7913518918275053,
+  -0.12096861098247284,
+  -0.01713123686017101,
+  -0.009238008450329904,
+  -0.623582246518886,
+  0.4237929584132701,
+  0.30208786228255785
+ ],
+ "coef_no_cams": [
+  5.393442914505247,
+  -0.2500283921125963,
+  -0.030938265031103022,
+  -0.0152935091997505,
+  -0.488566046288402,
+  0.3426722845257857
+ ],
+ "resid_q": {
+  "p10": -0.3737,
+  "p50": -0.0149,
+  "p90": 0.4015
+ },
+ "resid_q_no_cams": {
+  "p10": -0.4504,
+  "p50": -0.0183,
+  "p90": 0.4946
+ },
+ "traffic_profile": {
+  "weekday": [
+   0.092,
+   0.068,
+   0.058,
+   0.062,
+   0.08,
+   0.142,
+   0.337,
+   0.854,
+   0.986,
+   0.798,
+   0.707,
+   0.678,
+   0.674,
+   0.69,
+   0.713,
+   0.745,
+   0.863,
+   1.0,
+   0.821,
+   0.554,
+   0.369,
+   0.243,
+   0.176,
+   0.131
+  ],
+  "weekend": [
+   0.107,
+   0.086,
+   0.072,
+   0.072,
+   0.085,
+   0.115,
+   0.2,
+   0.316,
+   0.413,
+   0.506,
+   0.59,
+   0.64,
+   0.656,
+   0.647,
+   0.639,
+   0.631,
+   0.627,
+   0.618,
+   0.588,
+   0.515,
+   0.393,
+   0.285,
+   0.214,
+   0.154
+  ]
+ },
+ "elasticity": {
+  "mean": 0.083,
+  "lo": 0.034,
+  "hi": 0.145,
+  "note": "log NO2 per log traffic, within hour of day; 90 % block-bootstrap interval"
+ },
+ "eval": {
+  "constant": {
+   "rmse_log": 0.528,
+   "skill_pct": 0.0
+  },
+  "CAMS NO2 only": {
+   "rmse_log": 0.395,
+   "skill_pct": 25.1
+  },
+  "weather only": {
+   "rmse_log": 0.446,
+   "skill_pct": 15.5
+  },
+  "weather + CAMS NO2": {
+   "rmse_log": 0.379,
+   "skill_pct": 28.1
+  },
+  "weather + typical traffic": {
+   "rmse_log": 0.376,
+   "skill_pct": 28.6
+  },
+  "weather + CAMS NO2 + typical traffic (served)": {
+   "rmse_log": 0.317,
+   "skill_pct": 39.9
+  },
+  "weather + CAMS NO2 + live counts": {
+   "rmse_log": 0.328,
+   "skill_pct": 37.9
+  },
+  "weather + CAMS NO2 + hour-of-week dummies": {
+   "rmse_log": 0.311,
+   "skill_pct": 41.0
+  },
+  "median_abs_error_ugm3": 3.22,
+  "median_abs_error_constant_ugm3": 5.89,
+  "band_coverage_p10_p90": 0.8
+ },
+ "study": {
+  "weekday_weekend_ratio": {
+   "no2": 1.3,
+   "traffic": 1.3
+  },
+  "diurnal_no2": {
+   "weekday": [
+    20.4,
+    17.8,
+    15.6,
+    13.9,
+    14.1,
+    16.6,
+    22.5,
+    31.8,
+    34.4,
+    32.4,
+    27.8,
+    22.1,
+    18.2,
+    15.4,
+    14.3,
+    14.2,
+    15.5,
+    18.1,
+    20.6,
+    23.3,
+    24.8,
+    26.8,
+    27.0,
+    24.1
+   ],
+   "weekend": [
+    20.3,
+    18.0,
+    16.6,
+    15.2,
+    14.7,
+    15.5,
+    18.0,
+    21.1,
+    20.9,
+    19.6,
+    17.4,
+    14.6,
+    12.4,
+    11.2,
+    10.0,
+    9.8,
+    9.9,
+    10.8,
+    13.2,
+    16.7,
+    20.2,
+    22.5,
+    23.1,
+    21.1
+   ]
+  },
+  "stations": [
+   {
+    "station": "BG0040A",
+    "type": "background",
+    "elasticity": 0.261,
+    "lo": 0.114,
+    "hi": 0.486,
+    "cv_gain_pct_no_hour_fe": 6.6,
+    "cv_gain_pct_with_hour_fe": 0.6,
+    "hours": 4896
+   },
+   {
+    "station": "BG0050A",
+    "type": "background",
+    "elasticity": 0.094,
+    "lo": 0.043,
+    "hi": 0.162,
+    "cv_gain_pct_no_hour_fe": 8.2,
+    "cv_gain_pct_with_hour_fe": 0.2,
+    "hours": 4934
+   },
+   {
+    "station": "BG0052A",
+    "type": "background",
+    "elasticity": 0.12,
+    "lo": 0.068,
+    "hi": 0.17,
+    "cv_gain_pct_no_hour_fe": 12.2,
+    "cv_gain_pct_with_hour_fe": 0.3,
+    "hours": 5095
+   },
+   {
+    "station": "BG0073A",
+    "type": "traffic",
+    "elasticity": 0.118,
+    "lo": 0.039,
+    "hi": 0.226,
+    "cv_gain_pct_no_hour_fe": 9.8,
+    "cv_gain_pct_with_hour_fe": 0.0,
+    "hours": 5082
+   },
+   {
+    "station": "BG0079A",
+    "type": "traffic",
+    "elasticity": 0.073,
+    "lo": 0.009,
+    "hi": 0.131,
+    "cv_gain_pct_no_hour_fe": 8.4,
+    "cv_gain_pct_with_hour_fe": 0.0,
+    "hours": 5132
+   }
+  ],
+  "pm": {
+   "pm25": {
+    "elasticity": 0.02,
+    "lo": -0.053,
+    "hi": 0.08,
+    "cv_gain_pct_no_hour_fe": 0.1,
+    "cv_gain_pct_with_hour_fe": -0.1,
+    "hours": 5167
+   },
+   "pm10": {
+    "elasticity": 0.044,
+    "lo": -0.011,
+    "hi": 0.097,
+    "cv_gain_pct_no_hour_fe": 1.0,
+    "cv_gain_pct_with_hour_fe": -0.0,
+    "hours": 5169
+   }
+  },
+  "reading": "NO2 follows measured traffic (weekday/weekend ratio and elasticity); PM2.5 and PM10 show no usable traffic signal in these months."
+ },
+ "caveats": [
+  "Fitted on March to October 2026 only: no heating season, so winter NO2 is an extrapolation.",
+  "Traffic is counted on the ring road and its approaches (BGTOLL), not on city streets: this is a city-wide level, not a street map.",
+  "Typical traffic by hour of week; public holidays are not treated as Sundays.",
+  "The weekday/weekend and elasticity results are associations with weather and hour of day controlled, not proof of cause."
+ ]
+}

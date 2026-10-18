@@ -6,7 +6,9 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
 import type { Layer, PickingInfo } from "@deck.gl/core";
-import { GOOGLE_KEY, SOFIA_CENTER, preferredMapProvider, saveMapProvider, type MapProvider } from "./config";
+import { SOFIA_CENTER, type MapProvider } from "./config";
+import type { Animated } from "./surface";
+import { loadBasemapStyle } from "./dishaiStyle";
 import { googleLoader } from "./google";
 
 maplibregl.setWorkerUrl(workerUrl);
@@ -22,6 +24,11 @@ interface Props {
   tooltip?: (i: PickingInfo) => { html: string; style?: Record<string, string> } | null;
   active: boolean;
   handle?: Ref<MapHandle>;
+  /** drawn every frame: soft surfaces that morph and pings that pulse, under and over the static layers */
+  animated?: Animated;
+  provider: MapProvider;
+  dark: boolean;
+  onProviderChange: (p: MapProvider) => void;
 }
 
 // The shared camera uses deck.gl/MapLibre's 512px world tiles.
@@ -36,16 +43,23 @@ const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright" ta
 // still let deck.gl reuse GPU state across updates within the same renderer.
 const cloneLayers = (layers: Layer[]) => layers.map((layer) => layer.clone({}));
 
-export default function BaseMap({ layers, onClick, cursor, tooltip, active, handle }: Props) {
+export default function BaseMap({ layers, onClick, cursor, tooltip, active, handle, animated, provider, dark, onProviderChange }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const overlay = useRef<Overlay | null>(null);
   const resize = useRef<() => void>(() => {});
   const move = useRef<MapHandle>({ flyTo: () => {}, fitBounds: () => {} });
   const camera = useRef<Camera>({ ...INITIAL });
   const pendingMove = useRef<((map: MapHandle) => void) | null>(null);
-  const latest = useRef({ layers, onClick, cursor, tooltip });
-  latest.current = { layers, onClick, cursor, tooltip };
-  const [provider, setProvider] = useState<MapProvider>(preferredMapProvider);
+  const latest = useRef({ layers, onClick, cursor, tooltip, animated });
+  latest.current = { layers, onClick, cursor, tooltip, animated };
+  const applied = useRef(false); // the last frame drawn had nothing moving
+  const compose = (now = performance.now()) => {
+    const a = latest.current.animated?.(now);
+    applied.current = a ? a.settled : true;
+    return cloneLayers([...(a?.under ?? []), ...latest.current.layers, ...(a?.over ?? [])]);
+  };
+  const composeRef = useRef(compose);
+  composeRef.current = compose;
   const [ready, setReady] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const readyRef = useRef(false);
@@ -60,11 +74,7 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
     },
   }), []);
 
-  const chooseProvider = (next: MapProvider) => {
-    setNote(null);
-    saveMapProvider(next);
-    setProvider(next);
-  };
+  const fellBack = useRef(false); // keep the 'unavailable' note when the provider switch was our own fallback
 
   useEffect(() => {
     if (!el.current) return;
@@ -77,6 +87,8 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
     let cleanup = () => {};
     readyRef.current = false;
     setReady(false);
+    if (!fellBack.current) setNote(null);
+    fellBack.current = false;
     const deckProps = {
       onClick: (info: PickingInfo) => latest.current.onClick?.(info),
       getTooltip: (info: PickingInfo) => latest.current.tooltip?.(info) ?? null,
@@ -85,7 +97,7 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
     };
     const mounted = () => {
       // Data can arrive while a lazy renderer or Google Maps is still loading.
-      overlay.current?.setProps({ layers: cloneLayers(latest.current.layers) });
+      overlay.current?.setProps({ layers: composeRef.current() });
       readyRef.current = true;
       setReady(true);
       resize.current();
@@ -93,19 +105,13 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
       pendingMove.current = null;
     };
 
-    const startMapLibre = () => {
-      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const startMapLibre = async () => {
+      const style = await loadBasemapStyle(dark);
+      if (disposed) return;
       const c = camera.current;
       const map = new maplibregl.Map({
         container, center: [c.lng, c.lat], zoom: c.zoom, attributionControl: { compact: true },
-        style: {
-          version: 8,
-          sources: { osm: { type: "raster", tiles: [OSM], tileSize: 256, attribution: ATTRIBUTION, maxzoom: 18 } },
-          layers: [
-            { id: "bg", type: "background", paint: { "background-color": dark ? "#1b2420" : "#e8ece9" } },
-            { id: "osm", type: "raster", source: "osm", paint: { "raster-opacity": dark ? 0.28 : 0.55, "raster-saturation": -0.85, "raster-brightness-max": dark ? 0.5 : 1 } },
-          ],
-        },
+        style: style as never,
       });
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
       const ov = new MapboxOverlay({ interleaved: false, layers: [], ...deckProps });
@@ -181,13 +187,14 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
       try {
         if (provider === "leaflet") await startLeaflet();
         else if (provider === "google") await startGoogle();
-        else startMapLibre();
+        else await startMapLibre();
       } catch (error) {
         if (disposed) return;
         console.warn(`${provider} map unavailable`, error);
         if (provider !== "maplibre") {
           setNote(`${provider === "leaflet" ? "Leaflet" : "Google Maps"} unavailable. Using MapLibre with OpenStreetMap.`);
-          setProvider("maplibre");
+          fellBack.current = true;
+          onProviderChange("maplibre");
         } else setNote("The map could not start. Please reload or try Leaflet.");
       }
     };
@@ -203,9 +210,23 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
       resize.current = () => {};
       container.remove();
     };
-  }, [provider]);
+  }, [provider, provider === "maplibre" ? dark : null]); // only the MapLibre basemap follows the theme; the camera is kept across the restart
 
-  useEffect(() => { overlay.current?.setProps({ layers: cloneLayers(layers) }); }, [layers, provider]);
+  useEffect(() => { overlay.current?.setProps({ layers: composeRef.current() }); }, [layers, animated, provider]);
+  useEffect(() => {
+    let raf = 0, last = 0;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (!latest.current.animated || !overlay.current || !readyRef.current || now - last < 60) return;
+      last = now;
+      const frame = latest.current.animated(now);
+      if (frame.settled && applied.current) return; // nothing is moving: leave the last frame on screen
+      applied.current = frame.settled;
+      overlay.current.setProps({ layers: cloneLayers([...frame.under, ...latest.current.layers, ...frame.over]) });
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
   useEffect(() => {
     if (!active) return;
     const timer = setTimeout(() => resize.current(), 30);
@@ -214,16 +235,10 @@ export default function BaseMap({ layers, onClick, cursor, tooltip, active, hand
 
   return (
     <div className="map-shell" data-map-provider={provider} data-map-ready={ready}>
-      <div className="map-toolbar">
-        <div className="map-style-options" role="group" aria-label="Map renderer">
-          <span className="map-style-label">Map style</span>
-          <button aria-pressed={provider === "leaflet"} onClick={() => chooseProvider("leaflet")} title="Leaflet 1.9.4 with OpenStreetMap">Leaflet · OSM</button>
-          <button aria-pressed={provider === "maplibre"} onClick={() => chooseProvider("maplibre")}>MapLibre · OSM</button>
-          {GOOGLE_KEY && <button aria-pressed={provider === "google"} onClick={() => chooseProvider("google")}>Google Maps</button>}
-        </div>
-        <button className="map-reset" onClick={() => move.current.flyTo(INITIAL.lng, INITIAL.lat, INITIAL.zoom)} disabled={!ready} title="Return to the Sofia overview">Reset view</button>
-      </div>
-      <div className="map-viewport" ref={el} role="application" aria-label="Map of Sofia street-level Clean Air Index" />
+      <div className="map-viewport" ref={el} role="application" aria-label="Map of Sofia air quality" />
+      <button className="map-reset" onClick={() => move.current.flyTo(INITIAL.lng, INITIAL.lat, INITIAL.zoom)} disabled={!ready} title="Back to the Sofia overview" aria-label="Reset view">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+      </button>
       {!ready && !note && <div className="map-notice" role="status">Loading map…</div>}
       {note && <div className="map-notice" role="status">{note}</div>}
     </div>

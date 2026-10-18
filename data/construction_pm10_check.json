@@ -1,0 +1,38 @@
+{
+ "cleared since last summer (PRE-SPECIFIED)": {
+  "near": 24,
+  "far": 47,
+  "gap": 0.043,
+  "ci95": [
+   -0.095,
+   0.169
+  ]
+ },
+ "bare now (NDVI < 0.2)": {
+  "near": 98,
+  "far": 47,
+  "gap": -0.019,
+  "ci95": [
+   -0.142,
+   0.086
+  ]
+ },
+ "any mapped site": {
+  "near": 129,
+  "far": 47,
+  "gap": -0.024,
+  "ci95": [
+   -0.141,
+   0.075
+  ]
+ },
+ "green now (control)": {
+  "near": 68,
+  "far": 47,
+  "gap": -0.005,
+  "ci95": [
+   -0.133,
+   0.104
+  ]
+ }
+}

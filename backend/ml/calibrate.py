@@ -191,12 +191,14 @@ def city_check(sens: pd.DataFrame, d: pd.DataFrame, terms) -> dict:
 def pm10_check(ref: pd.DataFrame) -> tuple[Calibration | None, dict]:
     """Same procedure against the PM10 stations, using the short PM10 sensor pull (autumn 2026 only, ~9 days): does the humidity
     behaviour look like PM2.5's? Few days and a narrow RH range, so this is a cross-check and a stop-gap for the PM10 comparison."""
-    f = HIST / "sensors_pm10_partial.csv"
+    f = HIST / "sensors_pm10.csv"  # the full PM10 re-pull (make history --name sensors_pm10 --same-days); else the 9-day stop-gap
+    if not f.exists():
+        f = HIST / "sensors_pm10_partial.csv"
     if not f.exists():
         return None, {"error": "no PM10 sensor history"}
     s10 = pd.read_csv(f)
     s10["t"] = pd.to_datetime(s10.pop("hour_utc"))
-    d = colocation(s10, ref[ref.pollutant == "PM10"], RADIUS_M, col="pm10", block_days=2).dropna(subset=["raw", "ref", "rh", "temp"]).reset_index(drop=True)
+    d = colocation(s10, ref[ref.pollutant == "PM10"], RADIUS_M, col="pm10", block_days=7 if f.name == "sensors_pm10.csv" else 2).dropna(subset=["raw", "ref", "rh", "temp"]).reset_index(drop=True)
     if len(d) < 200:
         return None, {"error": f"only {len(d)} PM10 station-hours"}
     out = {"rows": int(len(d)), "stations": sorted(d.station.unique()), "days": int(d.t.dt.normalize().nunique()),

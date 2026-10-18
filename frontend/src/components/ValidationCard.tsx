@@ -108,8 +108,7 @@ export default function ValidationCard({ scenario }: { scenario: Scenario }) {
     return () => { off = true; };
   }, [scenario]);
   return (
-    <div className="card p-4">
-      <div className="text-sm font-semibold">How far to trust this map</div>
+    <div className="grid gap-1">
       <p className="faint mt-0.5 text-xs">Leave-one-out check against outdoor citizen sensors.</p>
       {err && <p className="muted mt-2 text-xs">Validation unavailable.</p>}
       {!v && !err && <div className="mt-2 h-20 animate-pulse rounded-lg" style={{ background: "var(--surface-2)" }} />}

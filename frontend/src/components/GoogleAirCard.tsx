@@ -23,7 +23,7 @@ export default function GoogleAirCard({ g, ours }: { g: GoogleAir | null; ours: 
   const idx = (code: string) => c?.indexes.find((i) => i.code === code);
   const ratio = pm != null && ours != null && ours > 0 ? pm / ours : null;
   return (
-    <div className="card p-4">
+    <div className="grid gap-1">
       <div className="text-sm font-semibold">Google air quality &amp; pollen <span className="faint font-normal">· central Sofia, independent model</span></div>
       {c && (
         <>

@@ -8,9 +8,8 @@ export default function ReferenceCard({ ref_ }: { ref_: ReferenceResp | null }) 
   }
   const sc = ref_.sensor_check;
   return (
-    <div className="card p-4">
-      <div className="text-sm font-semibold">Municipal reference stations</div>
-      <p className="faint mt-0.5 text-xs">Ringed dots on the map. Calibrated instruments, hourly.</p>
+    <div className="grid gap-1">
+      <p className="faint m-0 text-xs">Ringed dots on the map. Calibrated instruments, hourly.</p>
       <table className="mt-2 w-full text-xs">
         <thead><tr className="faint text-left"><th className="font-normal">Station</th><th className="font-normal">PM10 µg/m³</th><th className="font-normal">NO₂ AQI</th><th className="font-normal">O₃ AQI</th></tr></thead>
         <tbody>

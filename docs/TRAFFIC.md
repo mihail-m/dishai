@@ -40,3 +40,34 @@ replaces `T` with the value the model treats as typical (z = 0), so no street mo
 ## Endpoints
 `GET /api/traffic`, `GET /api/traffic/incidents`, `GET /api/google-air`, `GET /api/cai/edge` (`observed_traffic`),
 `GET /api/traffic/tiles/{z}/{x}/{y}.png` (TomTom delay raster proxy, unvalidated, not shown in the UI).
+
+
+## Other sources evaluated (October 2026)
+| Source | Real time | History | Verdict |
+|---|---|---|---|
+| **BGTOLL open data** (bgtoll.bg/en/open-data, CC BY 4.0) | 15-minute counts, speeds and vehicle classes per control point, but published to Dropbox in daily batches (latest file was the previous day); no live endpoint is documented | 15-minute archive 2026-03-05 onward (976 MB zip, downloaded); per-vehicle crossings 2020-2025 as one 228 GB zip stream (no ranges, not fetched) | **Used** for the measured hour-of-week volume profile (`backend/data_prep/bgtoll.py` -> `data/bgtoll_profile.json`). Control points are on the national network around Sofia (12 on the ring road and approaches), not city streets. |
+| TomTom Traffic Index (tomtom.com/traffic-index) | no | yearly city aggregates, charts only | Not usable: no download or API, all rights reserved. The licensed route to the same data is TomTom MOVE / Traffic Stats (30-day trial). |
+| MDPI Appl. Sci. 13(8) 4678 (Brezov and Burov, 2023) | no | modelled street-level traffic for Sofia (baseline 2018) | A *model*, not measurements; no data availability statement found. Worth an email to the authors (Sofia University) for the street-level volumes. |
+| xmap.ai Bulgaria road traffic data | claims real time | not stated | Commercial catalogue (road-segment speeds, FRC); sample by form, no price, licence or source stated. Ask for a sample if street-level history is needed. |
+| trafficindex.org | no | 2017-2025 charts, paywalled | Not usable: scraped from Google Maps, subscription, rights reserved. |
+
+### Does measured traffic improve the PM2.5 estimate? (tested, no)
+Hourly ring-road volume (12 BGTOLL points) against hourly PM2.5 at the EEA stations Hipodruma and BG0050A, 5 March to 16 October 2026 (about
+5,000 hours each). Baseline: log PM2.5 on log CAMS, boundary-layer height, wind, temperature, humidity, rain, cloud and hour-of-day. Adding log traffic:
+week-blocked cross-validated RMSE changed by +0.10 % and -0.05 % (no improvement); the coefficient is +0.04 to +0.07 (a doubling of traffic is +3 to +5 % PM2.5,
+90 % interval touching zero at one station). Weekend alone was worse. Limits: summer-heavy (no heating season), ring-road counts are not street-level, and
+hour-of-day already carries most of the daily traffic pattern. So it is **not** a model input. The measured profile also shows the old hand-set curve was wrong at night:
+traffic at 02:00-04:00 is about 6-9 % of the weekday peak (the removed curve said 40 %), peaks are at 08:00 and 17:00, and weekend volume is 0.77 of weekday (old guess 0.75).
+
+
+## NO2: where real traffic does show up (October 2026)
+`python -m backend.data_prep.no2_eea` fetches hourly NO2 from the EEA stations (CC BY 4.0) and `python -m backend.no2_model` fits and evaluates
+the model and writes `data/no2_model.json`; `GET /api/no2` serves the forecast and the study; the card is `frontend/src/components/No2Card.tsx`.
+- **Correlation.** Weekday NO2 is 1.30x weekend and so is measured traffic. With weather and hour of day controlled, the city-mean elasticity is 0.083
+  (90 % block-bootstrap range 0.034 to 0.145: doubling traffic goes with +6 % NO2); per station 0.07 to 0.26, all intervals above zero. For PM2.5 (0.02, -0.05 to 0.08)
+  and PM10 (0.04, -0.01 to 0.10) zero is inside the interval, and adding traffic improves week-blocked CV error by about 0 to 1 %, against 7 to 12 % for NO2 without hour-of-day controls.
+- **Model.** log(city NO2) on log boundary-layer height, wind, temperature, humidity, log CAMS NO2 and log typical traffic (BGTOLL hour-of-week volume). Week-blocked CV on 5,169 hours:
+  40 % better than a constant, median error 3.2 vs 5.9 ug/m3, 10-90 % band covers 80 %. Hour-of-week dummies instead of traffic reach 41 %, so the measured traffic profile carries
+  nearly all of that signal. Live day-specific counts were worse than the typical profile (38 %), so the model uses the typical profile and needs no live feed.
+- **Scenario.** 20 % less traffic city-wide: NO2 -1.8 % (-0.8 to -3.2 %); 50 %: -5.6 %. City-mean NO2 is mostly background; this says nothing about streets beside busy roads.
+- **Limits.** March to October only (no heating season: winter is an extrapolation); ring-road counts, not street-level; holidays are not treated as Sundays; associations, not proof of cause.

@@ -1,0 +1,314 @@
+{
+ "diagnostics": {
+  "Sofia": {
+   "sensors": 261,
+   "hours": 3115,
+   "offset_sd": 0.571,
+   "nn_offset_corr": 0.17,
+   "n_close_pairs": 159,
+   "variogram_nugget_share": 0.26,
+   "range_km": 14.2
+  },
+  "Berlin": {
+   "sensors": 172,
+   "hours": 2088,
+   "offset_sd": 0.675,
+   "nn_offset_corr": 0.15,
+   "n_close_pairs": 39,
+   "variogram_nugget_share": 0.0,
+   "range_km": 0.6
+  },
+  "Cologne": {
+   "sensors": 139,
+   "hours": 2088,
+   "offset_sd": 0.402,
+   "nn_offset_corr": 0.086,
+   "n_close_pairs": 39,
+   "variogram_nugget_share": 0.1,
+   "range_km": 0.1
+  },
+  "Stuttgart": {
+   "sensors": 129,
+   "hours": 2088,
+   "offset_sd": 0.626,
+   "nn_offset_corr": -0.24,
+   "n_close_pairs": 48,
+   "variogram_nugget_share": 0.47,
+   "range_km": 20.0
+  },
+  "Skopje": {
+   "sensors": 26,
+   "hours": 2088,
+   "offset_sd": 0.593,
+   "nn_offset_corr": null,
+   "n_close_pairs": 4,
+   "variogram_nugget_share": 0.0,
+   "range_km": 0.7
+  },
+  "Plovdiv": {
+   "sensors": 29,
+   "hours": 2088,
+   "offset_sd": 0.839,
+   "nn_offset_corr": -0.479,
+   "n_close_pairs": 10,
+   "variogram_nugget_share": 0.44,
+   "range_km": 6.0
+  },
+  "Budapest": {
+   "sensors": 45,
+   "hours": 2088,
+   "offset_sd": 0.563,
+   "nn_offset_corr": 0.363,
+   "n_close_pairs": 14,
+   "variogram_nugget_share": 0.14,
+   "range_km": 8.3
+  }
+ },
+ "results": {
+  "Sofia": {
+   "all": {
+    "rows": 102205,
+    "krige_mae": 1.875,
+    "krige_rho": 0.199,
+    "A_mae": 1.887,
+    "A_rho": 0.186,
+    "O_mae": 1.869,
+    "O_rho": 0.208,
+    "C_mae": 1.846,
+    "C_rho": 0.203
+   },
+   "heating": {
+    "rows": 62128,
+    "krige_mae": 3.196,
+    "krige_rho": 0.271,
+    "A_mae": 3.219,
+    "A_rho": 0.258,
+    "O_mae": 3.326,
+    "O_rho": 0.28,
+    "C_mae": 3.18,
+    "C_rho": 0.276
+   },
+   "polluted": {
+    "rows": 22054,
+    "krige_mae": 7.864,
+    "krige_rho": 0.348,
+    "A_mae": 7.861,
+    "A_rho": 0.347,
+    "O_mae": 8.473,
+    "O_rho": 0.346,
+    "C_mae": 7.931,
+    "C_rho": 0.353
+   }
+  },
+  "Berlin": {
+   "all": {
+    "rows": 59266,
+    "krige_mae": 1.284,
+    "krige_rho": 0.015,
+    "A_mae": 1.279,
+    "A_rho": 0.034,
+    "O_mae": 1.257,
+    "O_rho": 0.014,
+    "C_mae": 1.257,
+    "C_rho": 0.012
+   },
+   "heating": {
+    "rows": 23895,
+    "krige_mae": 3.266,
+    "krige_rho": -0.068,
+    "A_mae": 3.345,
+    "A_rho": 0.049,
+    "O_mae": 3.28,
+    "O_rho": -0.062,
+    "C_mae": 3.31,
+    "C_rho": -0.041
+   },
+   "polluted": {
+    "rows": 6308,
+    "krige_mae": 12.72,
+    "krige_rho": -0.171,
+    "A_mae": 12.387,
+    "A_rho": 0.057,
+    "O_mae": 13.397,
+    "O_rho": -0.129,
+    "C_mae": 13.06,
+    "C_rho": -0.089
+   }
+  },
+  "Cologne": {
+   "all": {
+    "rows": 37703,
+    "krige_mae": 0.966,
+    "krige_rho": 0.133,
+    "A_mae": 0.993,
+    "A_rho": 0.085,
+    "O_mae": 0.978,
+    "O_rho": 0.142,
+    "C_mae": 0.967,
+    "C_rho": 0.119
+   },
+   "heating": {
+    "rows": 11986,
+    "krige_mae": 1.605,
+    "krige_rho": 0.158,
+    "A_mae": 1.655,
+    "A_rho": 0.032,
+    "O_mae": 1.505,
+    "O_rho": 0.21,
+    "C_mae": 1.54,
+    "C_rho": 0.183
+   },
+   "polluted": {
+    "rows": 1482,
+    "krige_mae": 5.75,
+    "krige_rho": 0.138,
+    "A_mae": 6.298,
+    "A_rho": -0.068,
+    "O_mae": 5.931,
+    "O_rho": 0.353,
+    "C_mae": 5.804,
+    "C_rho": 0.288
+   }
+  },
+  "Stuttgart": {
+   "all": {
+    "rows": 43936,
+    "krige_mae": 1.128,
+    "krige_rho": 0.052,
+    "A_mae": 1.118,
+    "A_rho": 0.05,
+    "O_mae": 1.098,
+    "O_rho": 0.055,
+    "C_mae": 1.11,
+    "C_rho": 0.044
+   },
+   "heating": {
+    "rows": 17617,
+    "krige_mae": 2.239,
+    "krige_rho": 0.033,
+    "A_mae": 2.26,
+    "A_rho": 0.067,
+    "O_mae": 2.25,
+    "O_rho": 0.057,
+    "C_mae": 2.268,
+    "C_rho": 0.055
+   },
+   "polluted": {
+    "rows": 2551,
+    "krige_mae": 10.842,
+    "krige_rho": -0.041,
+    "A_mae": 10.281,
+    "A_rho": 0.129,
+    "O_mae": 10.579,
+    "O_rho": -0.005,
+    "C_mae": 10.129,
+    "C_rho": 0.008
+   }
+  },
+  "Skopje": {
+   "all": {
+    "rows": 11549,
+    "krige_mae": 2.219,
+    "krige_rho": 0.105,
+    "A_mae": 2.305,
+    "A_rho": 0.179,
+    "O_mae": 2.16,
+    "O_rho": 0.13,
+    "C_mae": 2.203,
+    "C_rho": 0.145
+   },
+   "heating": {
+    "rows": 5751,
+    "krige_mae": 5.795,
+    "krige_rho": 0.126,
+    "A_mae": 5.64,
+    "A_rho": 0.282,
+    "O_mae": 5.681,
+    "O_rho": 0.242,
+    "C_mae": 5.835,
+    "C_rho": 0.242
+   },
+   "polluted": {
+    "rows": 3670,
+    "krige_mae": 9.652,
+    "krige_rho": 0.224,
+    "A_mae": 9.191,
+    "A_rho": 0.399,
+    "O_mae": 9.452,
+    "O_rho": 0.361,
+    "C_mae": 9.872,
+    "C_rho": 0.372
+   }
+  },
+  "Plovdiv": {
+   "all": {
+    "rows": 12320,
+    "krige_mae": 1.16,
+    "krige_rho": 0.048,
+    "A_mae": 1.106,
+    "A_rho": 0.021,
+    "O_mae": 1.095,
+    "O_rho": 0.072,
+    "C_mae": 1.101,
+    "C_rho": 0.071
+   },
+   "heating": {
+    "rows": 6122,
+    "krige_mae": 2.175,
+    "krige_rho": 0.057,
+    "A_mae": 1.986,
+    "A_rho": 0.082,
+    "O_mae": 1.869,
+    "O_rho": 0.116,
+    "C_mae": 1.923,
+    "C_rho": 0.111
+   },
+   "polluted": {
+    "rows": 2945,
+    "krige_mae": 3.988,
+    "krige_rho": 0.105,
+    "A_mae": 3.806,
+    "A_rho": 0.098,
+    "O_mae": 3.328,
+    "O_rho": 0.186,
+    "C_mae": 3.45,
+    "C_rho": 0.188
+   }
+  },
+  "Budapest": {
+   "all": {
+    "rows": 16555,
+    "krige_mae": 1.256,
+    "krige_rho": 0.161,
+    "A_mae": 1.273,
+    "A_rho": 0.104,
+    "O_mae": 1.225,
+    "O_rho": 0.136,
+    "C_mae": 1.214,
+    "C_rho": 0.158
+   },
+   "heating": {
+    "rows": 7025,
+    "krige_mae": 3.434,
+    "krige_rho": 0.195,
+    "A_mae": 3.646,
+    "A_rho": 0.171,
+    "O_mae": 3.398,
+    "O_rho": 0.176,
+    "C_mae": 3.365,
+    "C_rho": 0.194
+   },
+   "polluted": {
+    "rows": 2858,
+    "krige_mae": 7.702,
+    "krige_rho": 0.159,
+    "A_mae": 7.525,
+    "A_rho": 0.178,
+    "O_mae": 7.62,
+    "O_rho": 0.19,
+    "C_mae": 7.369,
+    "C_rho": 0.17
+   }
+  }
+ }
+}

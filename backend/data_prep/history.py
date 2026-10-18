@@ -121,7 +121,7 @@ def episode_days(n: int) -> list[date]:
     return sorted({x for d in chosen for x in (d, d + timedelta(days=1))})
 
 
-async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensors", since: date | None = None) -> None:
+async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensors", since: date | None = None, same_days: bool = False) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     f = OUT / f"{name}.csv"
     done_f = OUT / (f"{name}_days_done.txt" if name != "sensors" else "days_done.txt")
@@ -131,6 +131,8 @@ async def fetch_sensors(days: int, step: int, episodes: int, name: str = "sensor
     wanted = [today - timedelta(days=k + j) for k in range(3, days, step) for j in (0, -1)]
     if episodes:
         wanted += [d for d in episode_days(episodes) if d not in wanted]
+    if same_days:  # exactly the days of the existing PM2.5 history (so a re-pull for PM10 lines up with it)
+        wanted = [date.fromisoformat(x) for x in (OUT / "days_done.txt").read_text().split()]
     if since:
         wanted = [d for d in wanted if d >= since]
     sem = asyncio.Semaphore(CONCURRENCY)
@@ -195,6 +197,7 @@ async def main() -> None:
     ap.add_argument("--name", default="sensors", help="output file stem under data/history (e.g. sensors_pm10 for a separate PM10 pull)")
     ap.add_argument("--concurrency", type=int, default=CONCURRENCY)
     ap.add_argument("--since", type=date.fromisoformat, help="skip days before this date (e.g. 2026-01-01: the EEA reference starts then)")
+    ap.add_argument("--same-days", action="store_true", help="fetch exactly the days listed in days_done.txt (for the PM10 re-pull)")
     ap.add_argument("--types-only", action="store_true", help="only refresh data/history/sensor_types.csv from the live feed")
     ap.add_argument("--no-series", action="store_true", help="skip re-fetching weather/CAMS")
     ap.add_argument("--series-days", type=int, default=800, help="how far back weather/CAMS go (episodes are picked from this)")
@@ -208,7 +211,7 @@ async def main() -> None:
     if not a.no_series:
         await fetch_series(WEATHER, "weather.csv", a.series_days)
         await fetch_series(CAMS, "cams.csv", a.series_days)
-    await fetch_sensors(a.days, a.step, a.episodes, a.name, a.since)
+    await fetch_sensors(a.days, a.step, a.episodes, a.name, a.since, a.same_days)
 
 
 if __name__ == "__main__":

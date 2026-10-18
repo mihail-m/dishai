@@ -31,6 +31,8 @@ export const api = {
 
 export const hhmm = (t: string) => t.slice(11, 16);
 export const dayHour = (t: string) => `${t.slice(8, 10)}.${t.slice(5, 7)} ${t.slice(11, 16)}`;
+/** "Sat 23:00" style label for an ISO local time. */
+export const dayTime = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { weekday: "short" })} ${t.slice(11, 16)}`;
 export const clamp = (x: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
 export const levelOf = (s: number) => (s >= 60 ? "warning" : s >= 35 ? "watch" : "good") as "good" | "watch" | "warning";
 export const LEVEL_TEXT = { good: "Good", watch: "Watch", warning: "Inversion warning" } as const;  // stagnation score
@@ -38,7 +40,7 @@ export const PM_LEVEL_TEXT = { good: "Fine", watch: "Sensitive groups", warning:
 export const PM_WATCH = 15;  // WHO 24 h guideline
 export const PM_WARNING = 25;  // EU 24 h limit
 
-import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, IncidentsResp, Mode, NetworkResp, ReferenceResp, RouteResp, TrafficResp, Validation } from "./types";
+import type { AreasResp, CaiValues, EdgeExplain, GoogleAir, IncidentsResp, Mode, No2Resp, NetworkResp, ReferenceResp, RouteResp, TrafficResp, Validation } from "./types";
 export interface ForecastRequest { forecastId?: string; signal?: AbortSignal; includeGoogle?: boolean }
 const snapshotQuery = (opts?: ForecastRequest) => opts?.forecastId ? `&forecast_id=${encodeURIComponent(opts.forecastId)}` : "";
 export const api2 = {
@@ -59,4 +61,5 @@ export const api2 = {
   traffic: () => j<TrafficResp>("/api/traffic", { cache: "no-store" }),
   incidents: () => j<IncidentsResp>("/api/traffic/incidents", { cache: "no-store" }),
   googleAir: () => j<GoogleAir>("/api/google-air"),
+  no2: () => j<No2Resp>("/api/no2"),
 };

@@ -1,0 +1,67 @@
+{
+ "all": {
+  "hours": 1694,
+  "rows": 74799,
+  "trend_mae": 3.17,
+  "krige_mae": 2.987,
+  "ml_mae": 3.03,
+  "ml_half_mae": 2.992,
+  "oracle_mae": 1.62,
+  "krige_rho": 0.264,
+  "oracle_rho": 0.778,
+  "ml_rho": 0.256,
+  "ml_half_rho": 0.263
+ },
+ "heating": {
+  "hours": 1043,
+  "rows": 44075,
+  "trend_mae": 6.126,
+  "krige_mae": 5.54,
+  "ml_mae": 5.682,
+  "ml_half_mae": 5.606,
+  "oracle_mae": 2.605,
+  "krige_rho": 0.33,
+  "oracle_rho": 0.808,
+  "ml_rho": 0.316,
+  "ml_half_rho": 0.325
+ },
+ "summer": {
+  "hours": 651,
+  "rows": 30724,
+  "trend_mae": 1.429,
+  "krige_mae": 1.417,
+  "ml_mae": 1.396,
+  "ml_half_mae": 1.391,
+  "oracle_mae": 0.956,
+  "krige_rho": 0.16,
+  "oracle_rho": 0.73,
+  "ml_rho": 0.16,
+  "ml_half_rho": 0.164
+ },
+ "polluted heating (city>15)": {
+  "hours": 675,
+  "rows": 27832,
+  "trend_mae": 9.615,
+  "krige_mae": 8.575,
+  "ml_mae": 8.83,
+  "ml_half_mae": 8.701,
+  "oracle_mae": 4.066,
+  "krige_rho": 0.35,
+  "oracle_rho": 0.797,
+  "ml_rho": 0.337,
+  "ml_half_rho": 0.347
+ },
+ "city>25": {
+  "hours": 369,
+  "rows": 14681,
+  "trend_mae": 13.858,
+  "krige_mae": 11.973,
+  "ml_mae": 12.308,
+  "ml_half_mae": 12.121,
+  "oracle_mae": 6.122,
+  "krige_rho": 0.358,
+  "oracle_rho": 0.769,
+  "ml_rho": 0.34,
+  "ml_half_rho": 0.352
+ }
+}
