@@ -119,7 +119,7 @@ export async function sendTest(): Promise<void> {
   const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
   if (sub) return post("/api/push/test", { endpoint: sub.endpoint });
   const reg = await registration();
-  await reg.showNotification("DishAI alerts are on", { body: "You will get a message like this when air or heat needs your attention.", tag: "test", icon: "/icon.svg" });
+  await reg.showNotification("dishai alerts are on", { body: "You will get a message like this when air or heat needs your attention.", tag: "test", icon: "/icon.svg" });
 }
 
 /** While the page is open and push is not in use, show each new (alert, level) once as a notification. */

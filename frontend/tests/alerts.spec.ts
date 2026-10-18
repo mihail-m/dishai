@@ -38,7 +38,7 @@ test("turning on notifications works without push keys and says what that means"
   await page.getByRole("button", { name: "Smoke" }).click(); // untick a type
   await page.getByRole("combobox", { name: "Minimum alert level" }).selectOption("warning");
   await page.getByRole("button", { name: "Turn on notifications" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "On while DishAI is open" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "On while dishai is open" })).toBeVisible();
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("dishai.alerts")!));
   expect(saved).toMatchObject({ enabled: true, level: "warning", mode: "page", kinds: ["pm", "heat", "dust", "transport"] });
   await page.getByRole("button", { name: "Turn off" }).click();

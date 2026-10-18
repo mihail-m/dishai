@@ -1,6 +1,6 @@
 {
-  "name": "DishAI",
-  "short_name": "DishAI",
+  "name": "dishai",
+  "short_name": "dishai",
   "description": "Air quality, heat and clean routes for Sofia, with alerts.",
   "start_url": "/",
   "display": "standalone",

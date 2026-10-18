@@ -116,10 +116,14 @@ export function networkStatic(n: NetworkResp, relative: boolean, selected: Choke
       getWidth: (d: Seg) => 1.5 + 9 * Math.sqrt(d.usage_clean / maxUse), widthUnits: "pixels", capRounded: true, jointRounded: true, pickable: false,
     } as never),
     new PathLayer<Hl>({
+      id: "net-choke-casing", data: cps.flatMap((c) => c.segments.map((p) => ({ path: p, sel: selected?.rank === c.rank }))),
+      getPath: (d: Hl) => d.path, getColor: [255, 255, 255, 230] as never, getWidth: (d: Hl) => (d.sel ? 11 : 7), widthUnits: "pixels", capRounded: true, jointRounded: true,
+      updateTriggers: { getWidth: selected?.rank },
+    } as never),
+    new PathLayer<Hl>({
       id: "net-choke", data: cps.flatMap((c) => c.segments.map((p) => ({ path: p, sel: selected?.rank === c.rank }))),
-      getPath: (d: Hl) => d.path, getColor: (d: Hl) => (d.sel ? [255, 255, 255, 255] : [214, 40, 140, 235]) as never,
-      getWidth: (d: Hl) => (d.sel ? 8 : 5), widthUnits: "pixels", capRounded: true, jointRounded: true,
-      updateTriggers: { getColor: selected?.rank, getWidth: selected?.rank },
+      getPath: (d: Hl) => d.path, getColor: [214, 40, 140, 255] as never, getWidth: (d: Hl) => (d.sel ? 6 : 4), widthUnits: "pixels", capRounded: true, jointRounded: true,
+      updateTriggers: { getWidth: selected?.rank },
     } as never),
     new ScatterplotLayer<Chokepoint>({
       id: "net-choke-dot", data: cps, getPosition: (c: Chokepoint) => [c.lon, c.lat], radiusUnits: "pixels", getRadius: 11,

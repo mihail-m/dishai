@@ -9,7 +9,6 @@ import { GOOGLE_KEY, preferredMapProvider, saveMapProvider, type MapProvider } f
 import { loadGeometry, type Geometry } from "./map/cai";
 import { caiLayer, locationLayers, referenceLayers, sensorLayer } from "./map/layers";
 import { districtAt, useLocation } from "./location";
-import Dashboard from "./components/Dashboard";
 import HealthView from "./views/HealthView";
 import MapLegend from "./components/MapLegend";
 import TimeBar, { type TimeBarMode } from "./components/TimeBar";
@@ -18,13 +17,14 @@ import { useTheme } from "./theme";
 import ExploreView, { LAYERS, type Layer } from "./views/ExploreView";
 import RouteView from "./views/RouteView";
 
-type Tab = "explore" | "route" | "me" | "city";
-const TABS: [Tab, string, keyof typeof Icon][] = [["explore", "Explore", "map"], ["route", "Route", "route"], ["me", "My health", "me"], ["city", "City insights", "city"]];
+type Tab = "explore" | "route" | "me";
+const TABS: [Tab, string, keyof typeof Icon][] = [["explore", "Explore", "map"], ["route", "Route", "route"], ["me", "My health", "me"]];
 const SCENARIOS: [Scenario, string, string][] = [
   ["live", "Live data", ""],
   ["winter_inversion", "Winter inversion", "Simulated January"],
   ["summer_heatwave", "Summer heatwave", "Simulated July"],
   ["birch_season", "Birch season", "Simulated April"],
+  ["serbia_wildfire", "Wildfire in Serbia", "Simulated August"],
 ];
 const PROVIDERS: [MapProvider, string][] = [["maplibre", "MapLibre · OpenFreeMap"], ["leaflet", "Leaflet · OSM"], ...(GOOGLE_KEY ? [["google", "Google Maps"] as [MapProvider, string]] : [])];
 
@@ -152,7 +152,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="logo"><Logo />DishAI</div>
+        <div className="logo"><Logo />dishai</div>
         <nav className="nav" aria-label="Views">
           {TABS.map(([id, label, ic]) => (
             <button key={id} className="nav-item" aria-current={tab === id ? "page" : undefined} onClick={() => go(id)}>{Icon[ic]}{label}</button>
@@ -207,11 +207,10 @@ export default function App() {
       </div>
 
       {tab === "me" && <main className="pageview"><HealthView scenario={scenario} districts={districts} district={district} setDistrict={setDistrict} /></main>}
-      {tab === "city" && <main className="pageview"><Dashboard scenario={scenario} active /></main>}
 
       <nav className="tabbar" aria-label="Views">
         {TABS.map(([id, label, ic]) => (
-          <button key={id} aria-current={tab === id ? "page" : undefined} onClick={() => go(id)}>{Icon[ic]}<span>{id === "city" ? "Insights" : label}</span></button>
+          <button key={id} aria-current={tab === id ? "page" : undefined} onClick={() => go(id)}>{Icon[ic]}<span>{label}</span></button>
         ))}
       </nav>
     </div>

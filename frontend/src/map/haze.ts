@@ -5,7 +5,7 @@ import type { NetworkResp } from "../types";
 const SUPER = 2; // the grain is drawn at this many times the resolution of the blurred raster
 const PX_M = 70; // metres per pixel of the haze raster: coarse on purpose, it should read as an area, not as streets
 const BLUR_M = 560; // how far a clean path spreads into its surroundings
-const GRAIN = 0.6; // 0 = smooth, 1 = every pixel randomly between nothing and full strength
+const GRAIN = 0; // 0 = smooth; any grain read as noise on the map
 const INK: [number, number, number] = [9, 66, 42]; // deep green
 const cache = new WeakMap<NetworkResp, { canvas: HTMLCanvasElement; bounds: [number, number, number, number] } | null>();
 
@@ -79,7 +79,7 @@ export function hazeLayer(n: NetworkResp): Layer | null {
             const v = Math.min(1, dv / ref), t = v * v * (3 - 2 * v); // smoothstep: soft edge, solid core
             const o = ((CH - 1 - cy) * CW + cx) * 4; // raster rows run south to north, the canvas top to bottom
             img.data[o] = INK[0]; img.data[o + 1] = INK[1]; img.data[o + 2] = INK[2];
-            img.data[o + 3] = 175 * t * (1 - GRAIN + GRAIN * hash(cx, cy));
+            img.data[o + 3] = 150 * t * (1 - GRAIN + GRAIN * hash(cx, cy));
           }
         }
         ctx.putImageData(img, 0, 0);
@@ -89,6 +89,5 @@ export function hazeLayer(n: NetworkResp): Layer | null {
     cache.set(n, built);
   }
   if (!built) return null;
-  // nearest-neighbour keeps the grain crisp when the raster is scaled up to the screen
-  return new BitmapLayer({ id: "clean-haze", image: built.canvas, bounds: built.bounds, pickable: false, textureParameters: { minFilter: "linear", magFilter: "nearest" } } as never);
+    return new BitmapLayer({ id: "clean-haze", image: built.canvas, bounds: built.bounds, pickable: false, textureParameters: { minFilter: "linear", magFilter: "linear" } } as never);
 }

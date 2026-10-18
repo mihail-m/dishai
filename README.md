@@ -1,4 +1,4 @@
-# DishAI (Sofia)
+# dishai (Sofia)
 
 From air-quality forecast to action. Predicts when pollution is trapped by a temperature inversion, scores **every
 street segment** with a Clean Air Index (CAI), plans lower-exposure walking routes, shows where Sofia's clean

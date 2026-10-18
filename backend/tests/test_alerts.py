@@ -167,6 +167,17 @@ def test_alerts_endpoint_shape_and_demo_scenarios(client):
     assert client.get("/api/alerts?scenario=nonsense").status_code in (400, 422)
 
 
+def test_serbia_wildfire_demo_raises_a_smoke_alert_through_the_real_fire_rule(client):
+    j = client.get("/api/alerts?scenario=serbia_wildfire").json()
+    fire = next(a for a in j["alerts"] if a["kind"] == "fire")
+    assert fire["level"] == "warning" and "Sofia" in fire["message"]  # the first letter only is capitalised: the city name keeps its capital
+    assert j["fire_threat"]["direction"] == "north-west" and j["fire_threat"]["count"] >= fires.MIN_DETECTIONS and not j["fire_threat"]["near"]
+    assert j["sources"]["fires"]["source"] == "scenario"
+    pm = next(a for a in j["alerts"] if a["kind"] == "pm")
+    assert any("HEPA" in x["title"] for x in pm["actions"])  # a smoke episode gets smoke advice
+    assert client.get("/api/plumes?scenario=serbia_wildfire").json()["plume"]["plume"]["kind"] == "smoke"
+
+
 def test_push_is_off_without_keys_and_never_leaks_the_private_key(client, monkeypatch):
     assert client.get("/api/push/key").json() == {"enabled": False, "public_key": None, "kinds": ["pm", "heat", "dust", "fire", "transport"], "levels": ["info", "watch", "warning"]}
     assert client.post("/api/push/subscribe", json={"subscription": GOOD}).status_code == 503

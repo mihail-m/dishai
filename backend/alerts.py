@@ -202,10 +202,10 @@ def fire_alert(threat: dict | None, now: str, plume: dict | None = None) -> dict
     how = "close to the city" if near else f"upwind in the 850 hPa flow (about {threat['arrival_h']:.0f} h away)"
     if sure:
         title = "Smoke is likely over the city" if lvl == "watch" else "Smoke is raising fine particles"
-        msg = f"{where.capitalize()}, {how}. CAMS also shows carbon monoxide or PM2.5 unusually high for the season" + (f" (PM2.5 around {pk:.0f} µg/m³)." if pk is not None else ".")
+        msg = f"{(where[0].upper() + where[1:])}, {how}. CAMS also shows carbon monoxide or PM2.5 unusually high for the season" + (f" (PM2.5 around {pk:.0f} µg/m³)." if pk is not None else ".")
     else:
         title = "Smoke may reach the city"
-        msg = f"{where.capitalize()}, {how}. Indicative: this says smoke may arrive, not how much."
+        msg = f"{(where[0].upper() + where[1:])}, {how}. Indicative: this says smoke may arrive, not how much."
     return _alert("fire", lvl, start, end, now, title, msg, peak={"value": pk, "unit": "µg/m³", "time": None} if sure and pk is not None else None, cause=["fire"],
                   source="NASA FIRMS VIIRS active fires + Open-Meteo 850 hPa wind" + (" + Copernicus CAMS" if sure else ""), confidence="model" if sure else "inferred", audience="sensitive" if lvl == "watch" else "everyone",
                   detail={"detections": threat["count"], "frp_mw": threat["frp_mw"], "nearest_km": threat["nearest_km"], "direction": threat["direction"], "arrival_h": threat["arrival_h"],

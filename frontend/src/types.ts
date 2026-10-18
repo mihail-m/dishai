@@ -1,5 +1,5 @@
 export type Level = "good" | "watch" | "warning";
-export type Scenario = "live" | "winter_inversion" | "summer_heatwave" | "birch_season";
+export type Scenario = "live" | "winter_inversion" | "summer_heatwave" | "birch_season" | "serbia_wildfire";
 export type Profile = "driver" | "wood_heater" | "vulnerable";
 export type Toggle = "pollen_allergy" | "asthma" | "heat_sensitive" | "outdoor_exercise" | "kids_or_elderly";
 export type Mode = "walk" | "bike";

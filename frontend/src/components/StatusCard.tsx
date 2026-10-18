@@ -11,6 +11,7 @@ const SCENARIO_SRC: Record<string, string> = {
   winter_inversion: "Demo: simulated winter inversion",
   summer_heatwave: "Demo: simulated summer heatwave",
   birch_season: "Demo: simulated birch pollen season",
+  serbia_wildfire: "Demo: simulated wildfire smoke from Serbia",
 };
 
 const WORDS: Record<Level, [string, string]> = {

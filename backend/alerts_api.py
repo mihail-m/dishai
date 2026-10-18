@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from . import alerts as alerts_mod
 from . import fires, green_ticket, plumes, push
 from .alerts import KINDS, LEVELS
+from .scenario import WILDFIRE_DETECTIONS, WILDFIRE_WIND
 from .score import WATCH_FROM
 
 log = logging.getLogger("inversion_watch")
@@ -63,10 +64,37 @@ def make_router(build_forecast, parse_scenario, scenario_query, cache) -> APIRou
         i = fc["now_index"]
         return any(h["score"] >= WATCH_FROM for h in fc["hours"][i : i + 24])
 
+    def wildfire_demo(fc: dict) -> tuple[dict | None, dict, dict]:
+        """The Serbia wildfire demo: the fire rule run on a fixed set of pretend detections, and a smoke plume read from the demo forecast."""
+        threat = fires.smoke_threat(WILDFIRE_DETECTIONS, WILDFIRE_WIND)
+        i = fc["now_index"]
+        pm = [h.get("pm25_model") if h.get("pm25_model") is not None else h["pm25"] for h in fc["hours"]]
+        win = pm[i : i + 36] or pm[-36:]
+        pk = max((sum(win[k : k + 3]) / len(win[k : k + 3]) for k in range(len(win))), default=0.0)
+        days: dict[str, list[dict]] = {}
+        for h, v in zip(fc["hours"][i:], pm[i:]):
+            days.setdefault(h["time"][:10], []).append({"pm25": v, "pm10": h["pm10"], "dust": h.get("dust") or 0.0})
+        clim = plumes.climate().get("8", {})  # what a usual August day looks like in the real CAMS history
+        outlook = []
+        for d, r in days.items():
+            pm25 = sum(x["pm25"] for x in r) / len(r)
+            pm10 = sum(x["pm10"] for x in r) / len(r)
+            outlook.append({"date": d, "pm25": round(pm25, 1), "pm10": round(pm10, 1), "usual_pm25": clim.get("pm25_day_p50"), "usual_pm10": clim.get("pm10_day_p50"),
+                            "worse_than_usual": pm25 > 15, "worse_by": "pm25" if pm25 > 15 else None, "dust_mean": 8.0, "dust_max": 8.0, "dust_peak_time": None, "dust_share": None})
+        plume = {"days": outlook, "hours": [], "yardstick": False, "plume": {
+            "kind": "smoke", "components": ["smoke"], "label": "Smoke from fires: fine particles",
+            "evidence": [f"{threat['count'] if threat else 0} fire detections upwind in eastern Serbia and the demo forecast shows PM2.5 unusually high for August"],
+            "dust_share": None, "dust_peak": 8.0, "pm25_peak_3h": round(pk, 1), "co_elevated": True, "pm25_elevated": True,
+            "aod_max": max((h.get("aod") or 0.0 for h in fc["hours"]), default=None) or None, "vertical": None, "window_hours": len(win)}}
+        return threat, {"enabled": True, "detections": len(WILDFIRE_DETECTIONS), "source": "scenario"}, plume
+
     async def compute(sc: str | None) -> dict:
         fc = await build_forecast(sc)
         plume = None
-        if sc:  # demo scenarios are replays: no live dust or fire feed
+        if sc == "serbia_wildfire":
+            threat, fsrc, plume = wildfire_demo(fc)
+            rows, dsrc = [], "scenario"
+        elif sc:  # demo scenarios are replays: no live dust or fire feed
             rows, dsrc, threat, fsrc = [], "scenario", None, {"enabled": False, "reason": "demo scenario"}
         else:
             (rows, dsrc), (threat, fsrc) = await asyncio.gather(cams_rows(), fire_threat())

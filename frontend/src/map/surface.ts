@@ -1,5 +1,5 @@
-import { BitmapLayer, GridCellLayer, ScatterplotLayer } from "@deck.gl/layers";
-import type { Layer } from "@deck.gl/core";
+import { BitmapLayer, ScatterplotLayer, SolidPolygonLayer } from "@deck.gl/layers";
+import type { Layer, PickingInfo } from "@deck.gl/core";
 import type { AreaPlace, AreasResp } from "../types";
 import { caiColor, relColor, relRange } from "./cai";
 import { areaRows, heatColor, type AreaRow } from "./layers";
@@ -242,10 +242,26 @@ export function pulseLayers(places: AreaPlace[], now: number, rgb: RGB = [196, 7
 
 export const prefersReducedMotion = reduced;
 
-/** Near-invisible grid so hover and tooltips still work per cell. */
+/**
+ * Hover and tooltips for the area surface. One faint rectangle over the whole city (a per-cell grid tinted only the cells that have streets, which showed
+ * as a patchwork of squares on the smooth surface); the cell under the pointer is found by distance and handed on as the picked object.
+ */
+class AreaPickLayer extends SolidPolygonLayer<{ ring: [number, number][] }> {
+  static layerName = "AreaPickLayer";
+  getPickingInfo({ info }: { info: PickingInfo }) {
+    const { rows, cellM } = this.props as unknown as { rows: AreaRow[]; cellM: number };
+    const hit = info.picked && info.coordinate ? nearestRow(rows, info.coordinate[0], info.coordinate[1], cellM) : null;
+    return { ...info, object: hit ?? undefined, picked: !!hit };
+  }
+}
+
 export function areaPickLayer(a: AreasResp, rows: AreaRow[]): Layer {
-  return new GridCellLayer<AreaRow>({
-    id: "areas", data: rows, getPosition: (r: AreaRow) => [r.lon, r.lat], cellSize: a.cell_m, coverage: 1, extruded: false, material: false,
-    getFillColor: [0, 0, 0, 4], pickable: true, updateTriggers: { getFillColor: [a.metric, a.time] },
+  const lat = rows.reduce((t, r) => t + r.lat, 0) / Math.max(1, rows.length);
+  const padX = (0.75 * a.cell_m) / (111320 * Math.cos((lat * Math.PI) / 180)), padY = (0.75 * a.cell_m) / 110574; // as far out as nearestRow reaches
+  const x0 = Math.min(...rows.map((r) => r.lon)) - padX, x1 = Math.max(...rows.map((r) => r.lon)) + padX;
+  const y0 = Math.min(...rows.map((r) => r.lat)) - padY, y1 = Math.max(...rows.map((r) => r.lat)) + padY;
+  return new AreaPickLayer({
+    id: "areas", data: [{ ring: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] }], getPolygon: (d: { ring: [number, number][] }) => d.ring,
+    getFillColor: [0, 0, 0, 1], pickable: true, rows, cellM: a.cell_m,
   } as never);
 }

@@ -62,7 +62,7 @@ export function NotificationSettings({ alerts }: { alerts: Alert[] }) {
     setPrefs(next);
     if (prefs.enabled) void run(() => updateNotifications(next));
   };
-  if (!notificationsSupported()) return <p className="faint m-0 text-xs">This browser cannot show notifications. On iPhone, add DishAI to the Home Screen first.</p>;
+  if (!notificationsSupported()) return <p className="faint m-0 text-xs">This browser cannot show notifications. On iPhone, add dishai to the Home Screen first.</p>;
   return (
     <div className="grid gap-2.5">
       <p className="muted m-0 text-[13px]">Get a message when air, heat, dust or smoke needs your attention. Nothing about you is stored: only the notification address of this browser and the choices below.</p>
@@ -85,7 +85,7 @@ export function NotificationSettings({ alerts }: { alerts: Alert[] }) {
       </div>
       {prefs.enabled && (
         <p className="faint m-0 text-xs" role="status">
-          {prefs.mode === "push" ? "On. Messages reach this device even when DishAI is closed." : "On while DishAI is open in this browser. Notifications with the page closed need the server's push keys (docs/ALERTS.md)."}
+          {prefs.mode === "push" ? "On. Messages reach this device even when dishai is closed." : "On while dishai is open in this browser. Notifications with the page closed need the server's push keys (docs/ALERTS.md)."}
         </p>
       )}
       {msg && <p className="m-0 text-xs" role="status" style={{ color: "var(--warn)" }}>{msg}</p>}
