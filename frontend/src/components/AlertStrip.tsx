@@ -40,7 +40,7 @@ function AlertCard({ a }: { a: Alert }) {
   );
 }
 
-function Notifications({ alerts }: { alerts: Alert[] }) {
+export function NotificationSettings({ alerts }: { alerts: Alert[] }) {
   const [prefs, setPrefs] = useNotifyPrefs();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -93,13 +93,13 @@ function Notifications({ alerts }: { alerts: Alert[] }) {
 }
 
 /** The things that need attention in the next 48 hours, most severe first, and the notification settings behind one line. */
-export default function AlertStrip({ alerts }: { alerts: Alert[] }) {
+export default function AlertStrip({ alerts, settings = true }: { alerts: Alert[]; settings?: boolean }) {
   const shown = [...alerts].sort((a, b) => rank(b.level) - rank(a.level)).slice(0, 4);
   return (
     <section aria-label="Alerts" className="grid gap-2">
       {shown.map((a) => <AlertCard key={`${a.id}:${a.level}`} a={a} />)}
       {alerts.length > shown.length && <p className="faint m-0 text-xs">{alerts.length - shown.length} more alert{alerts.length - shown.length > 1 ? "s" : ""} not shown.</p>}
-      <Acc title={<span className="inline-flex items-center gap-2">Notifications</span>}><Notifications alerts={alerts} /></Acc>
+      {settings && <Acc title="Notifications"><NotificationSettings alerts={alerts} /></Acc>}
     </section>
   );
 }
