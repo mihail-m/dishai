@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 def winter_inversion_hourly(day0: datetime) -> dict:
     """Return an Open-Meteo-shaped `hourly` dict starting at day0 00:00 (naive local time)."""
     times, blh, wind, t2m, t925, wind925, cloud, pm25, pm10, aqi, app, rad, rh = ([] for _ in range(13))
-    pm = 38.0
+    pm = 22.0
     for i in range(48):
         t = day0 + timedelta(hours=i)
         h = t.hour
@@ -23,8 +23,8 @@ def winter_inversion_hourly(day0: datetime) -> dict:
         rad.append(round(max(0.0, 180 * math.sin(math.pi * (h - 7) / 10)) if 7 <= h <= 17 else 0.0, 0))
         rh.append(int(80 + 12 * night))
         # PM accumulates while mixing is shallow, relaxes a little by day
-        pm += (5.0 * night - 1.2 * (1 - night)) * (1.0 if i < 30 else 0.6)
-        pm = max(25.0, pm)
+        pm += (2.6 * night - 1.2 * (1 - night)) * (1.0 if i < 30 else 0.6)
+        pm = max(16.0, pm)
         pm25.append(round(pm, 1))
         pm10.append(round(pm * 1.35 + 6, 1))
         aqi.append(int(min(250, 40 + pm * 1.1)))
@@ -190,40 +190,78 @@ SCENARIO_DAY = {"winter_inversion": (1, 15), "summer_heatwave": (7, 25), "birch_
 HOURLY = {"winter_inversion": winter_inversion_hourly, "summer_heatwave": summer_heatwave_hourly, "birch_season": birch_season_hourly, "serbia_wildfire": serbia_wildfire_hourly}
 # Applied to RAW sensor readings (before calibration to the reference scale, which roughly doubles them): winter turns the live
 # autumn readings into an episode, the other two keep clean air.
-SENSOR_SCALE = {"winter_inversion": (2.2, 28.0), "summer_heatwave": (0.8, 0.5), "birch_season": (0.9, 1.0), "serbia_wildfire": (2.0, 22.0)}
+SENSOR_SCALE = {"winter_inversion": (2.0, 14.0), "summer_heatwave": (0.8, 0.5), "birch_season": (0.9, 1.0), "serbia_wildfire": (2.0, 22.0)}
 
 
-# The winter demo also gets a geography, so the maps and the route planner have something to show. Real inversion episodes pool cold, stove-heated
-# air in the low eastern and central districts and leave the slopes of Vitosha, the north and the west, which stand above the lid, nearly clean. Each entry is (lat, lon, radius km, change):
-# a Gaussian bump multiplying the sensor readings. These are DEMO values, not measurements.
+# The winter demo also gets a geography, so the maps and the route planner have something to show. It follows what Sofia's winter episodes look like:
+# stove-heated and traffic-choked districts on the flat ground collect the smoke, while parks and the foot of Vitosha, above the inversion lid or
+# fed by cleaner air, stay much cleaner. Each entry is (name, lat, lon, radius km, change): a Gaussian bump multiplying the sensor readings.
+# Places are approximate and the numbers are DEMO values, not measurements.
 _DEMO_POOLS = {
     "winter_inversion": (
-        (42.690, 23.345, 1.8, +1.10),   # the smoke pool over Iztok, Poduyane and the centre-east
-        (42.700, 23.310, 1.4, +0.60),   # the old centre, boulevards in still air
-        (42.665, 23.395, 2.0, +0.40),   # stove districts of the south-east (Mladost side, Druzhba)
-        (42.665, 23.335, 2.2, -0.92),   # Lozenets and the Hladilnika slope: a cleaner way south of the centre
-        (42.640, 23.290, 3.0, -0.95),   # Vitosha foot: Boyana, Dragalevtsi, Simeonovo
-        (42.735, 23.330, 2.8, -0.90),   # the north: Gorna Banya side
-        (42.690, 23.270, 2.2, -0.88),   # the green corridor of the west (Borisova gradina side)
+        # --- polluted: dense, stove-heated or busy districts ---
+        ("Nadezhda", 42.736, 23.310, 1.7, +0.56),
+        ("Orlandovtsi and Obelya", 42.728, 23.262, 1.5, +0.45),
+        ("Fakulteta and Krasna polyana", 42.686, 23.287, 1.2, +0.59),
+        ("Poduyane and Iztok", 42.685, 23.363, 1.6, +0.52),
+        ("Slatina", 42.690, 23.382, 1.4, +0.45),
+        ("Druzhba and Iskar", 42.650, 23.405, 1.7, +0.39),
+        ("Lyulin", 42.718, 23.254, 1.8, +0.24),
+        ("Mladost", 42.656, 23.383, 1.5, +0.21),
+        ("the old centre and its boulevards", 42.699, 23.320, 1.2, +0.24),
+        # --- clean: parks and the slopes of Vitosha ---
+        ("Borisova gradina", 42.684, 23.344, 1.5, -0.82),
+        ("South Park (Yuzhen park)", 42.674, 23.309, 1.4, -0.82),
+        ("Lozenets", 42.665, 23.317, 1.5, -0.72),
+        ("Studentski grad and the Mladost park belt", 42.650, 23.345, 1.5, -0.72),
+        ("Boyana", 42.645, 23.264, 2.0, -0.93),
+        ("Dragalevtsi and Simeonovo", 42.628, 23.310, 2.4, -0.94),
+        ("Knyazhevo and the Lozen foothills", 42.655, 23.225, 2.0, -0.82),
+        ("Gorna Banya", 42.718, 23.218, 2.0, -0.82),
+        ("Vrana and the north-east park", 42.718, 23.395, 1.8, -0.80),
     ),
     # smoke comes in from the north-west: the west of the city sees it first and thickest, the south-east a little less
     "serbia_wildfire": (
-        (42.710, 23.200, 7.0, +0.30),
-        (42.650, 23.430, 6.0, -0.20),
+        ("the west, first in the path of the smoke", 42.710, 23.200, 7.0, +0.30),
+        ("the south-east", 42.650, 23.430, 6.0, -0.20),
     ),
 }
 
 
 def demo_geography(lat: float | None, lon: float | None, scenario: str) -> float:
-    """Multiplier (about 0.05 to 2.1) for a sensor at lat/lon in the demo scenario; 1.0 elsewhere or without a position."""
+    """Multiplier (about 0.05 to 2.1) for a sensor at lat/lon in the demo scenario; 1.0 elsewhere or without a position.
+    Polluted places add up; of the clean ones the strongest wins, so neighbouring parks do not pile into zero."""
     pools = _DEMO_POOLS.get(scenario)
     if not pools or lat is None or lon is None:
         return 1.0
-    f = 1.0
-    for plat, plon, rad, delta in pools:
+    dirty, clean = 0.0, 1.0
+    for _name, plat, plon, rad, delta in pools:
         d = math.hypot((lat - plat) * 111.0, (lon - plon) * 111.0 * math.cos(math.radians(plat)))
-        f += delta * math.exp(-0.5 * (d / rad) ** 2)
-    return max(0.05, f)
+        bump = delta * math.exp(-0.5 * (d / rad) ** 2)
+        if bump > 0:
+            dirty += bump
+        else:
+            clean = min(clean, 1.0 + bump)
+    return max(0.05, (1.0 + dirty) * clean)
+
+
+def has_geography(scenario: str | None) -> bool:
+    return bool(scenario) and scenario in _DEMO_POOLS
+
+
+def demo_geography_array(lat, lon, scenario: str):
+    """demo_geography for arrays of positions (the street midpoints): the same rule, evaluated for the whole network at once."""
+    import numpy as np
+    lat, lon = np.asarray(lat, dtype=float), np.asarray(lon, dtype=float)
+    dirty, clean = np.zeros_like(lat), np.ones_like(lat)
+    for _name, plat, plon, rad, delta in _DEMO_POOLS.get(scenario, ()):
+        d = np.hypot((lat - plat) * 111.0, (lon - plon) * 111.0 * np.cos(np.radians(plat)))
+        bump = delta * np.exp(-0.5 * (d / rad) ** 2)
+        if delta > 0:
+            dirty += bump
+        else:
+            clean = np.minimum(clean, 1.0 + bump)
+    return np.maximum(0.05, (1.0 + dirty) * clean).astype("float32")
 
 
 # Live sensor readings are re-scaled in the scenario so dots match the story.

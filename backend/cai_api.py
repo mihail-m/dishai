@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 
 from . import google_routes, traffic
 from .advice import _pollen_level
+from . import scenario as demo
 from .cai import config as C
 from .cai.features import Features, compute_features
 from .cai import heat
@@ -55,6 +56,10 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
                 static[("namer", mode)] = await asyncio.to_thread(Namer, static[("v", mode)][0], district_at)
         return static[("v", mode)]
 
+    def demo_scale(net: Net, sc: str | None):
+        """Demo scenarios with a geography (backend/scenario.py) scale the street PM field by place; live data never does."""
+        return demo.demo_geography_array(net.e_mid_lat, net.e_mid_lon, sc) if demo.has_geography(sc) else None
+
     async def get_model(scenario: str | None, mode: str = "walk", forecast_id: str | None = None) -> tuple[CaiModel, dict, Router, Net]:
         net, feats, router = await get_static(mode)
         async with locks["model"]:
@@ -64,14 +69,14 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
                     raise HTTPException(409, "Forecast snapshot expired. Refresh the forecast.")
                 if mode not in snapshot["models"]:
                     fc, sens = snapshot["forecast"], snapshot["sensors"]
-                    snapshot["models"][mode] = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens["sensors"])
+                    snapshot["models"][mode] = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens.get("model_sensors", sens["sensors"]), True, demo_scale(net, scenario))
                 return snapshot["models"][mode], snapshot["forecast"], router, net
             hit = models.get((scenario, mode))
             if hit and time.time() - hit[0] < MODEL_TTL:
                 return hit[2], hit[1], router, net
             fc = await build_forecast(scenario)
             sens = await build_sensors(scenario)
-            model = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens["sensors"])
+            model = await asyncio.to_thread(CaiModel, net, feats, fc["hours"], fc["now_index"], sens.get("model_sensors", sens["sensors"]), True, demo_scale(net, scenario))
             models[(scenario, mode)] = (time.time(), fc, model)
             return model, fc, router, net
 
@@ -103,7 +108,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
             net, feats, _ = await get_static()
 
             def prepare():
-                model = CaiModel(net, feats, fc["hours"], start, sens["sensors"])
+                model = CaiModel(net, feats, fc["hours"], start, sens.get("model_sensors", sens["sensors"]), True, demo_scale(net, sc))
                 values = []
                 for i in indices:
                     h = model.hour(i)
@@ -116,7 +121,7 @@ def make_router(build_forecast, build_sensors, parse_scenario, scenario_query, b
             model, values = await asyncio.to_thread(prepare)
             ident = uuid.uuid4().hex
             payload = {"id": ident, "forecast": {**fc, "hours": fc["hours"][start:start + n_win], "now_index": 0},
-                       "hours": indices, "values": values, "sensors": sens}
+                       "hours": indices, "values": values, "sensors": {k: v for k, v in sens.items() if k != "model_sensors"}}
             snapshots[ident] = {"created": time.time(), "forecast": fc, "sensors": sens, "models": {"walk": model}, "payload": payload}
             # Bound memory while allowing an old tab/refresh to finish safely.
             while len(snapshots) > 4:

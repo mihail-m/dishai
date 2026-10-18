@@ -25,7 +25,7 @@ from .cache import Cache
 from .cai import config as C
 from .cai import krige as krige_mod
 from .ml import calibration as calibration_mod
-from .scenario import HOURLY as SCENARIO_HOURLY, SCENARIO_DAY, scenario_pm25
+from .scenario import HOURLY as SCENARIO_HOURLY, SCENARIO_DAY, has_geography, scenario_pm25
 from .score import clamp, label_for, stagnation_score
 
 log = logging.getLogger("inversion_watch")
@@ -414,7 +414,7 @@ def sensor_offset(r: dict) -> dict:
             "pm25_adjusted": round(math.expm1(max(math.log1p(r["pm25"]) - off, 0.0)), 1)}
 
 
-async def build_airthings(scenario: str | None) -> tuple[list[dict], dict]:
+async def build_airthings(scenario: str | None, geography: bool = True) -> tuple[list[dict], dict]:
     """Sofia's AIRTHINGS pilot stations as extra sensors. Never raises: a missing or changed upstream just means none this time.
     Their values come already calibrated by the project, so they skip calibrate_records (Sensor.Community's correction)."""
     info = {"enabled": airthings.enabled(), "count": 0, "source": None, "attribution": airthings.ATTRIBUTION}
@@ -424,7 +424,8 @@ async def build_airthings(scenario: str | None) -> tuple[list[dict], dict]:
         recs, src = await cache.get("airthings", airthings.fetch_sensors, persist=False)  # memory only: the site states no licence
     except Exception:  # noqa: BLE001
         return [], {**info, "source": "unavailable"}
-    out = [{**r, "pm25": scenario_pm25(r["pm25"], scenario, r.get("lat"), r.get("lon")) if scenario else r["pm25"], "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs]
+    pos = (lambda r: (r.get("lat"), r.get("lon"))) if geography else (lambda r: (None, None))
+    out = [{**r, "pm25": scenario_pm25(r["pm25"], scenario, *pos(r)) if scenario else r["pm25"], "pm25_raw": r["pm25"], "pm10_raw": r.get("pm10")} for r in recs]
     out = [{**r, "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in out]
     return out, {**info, "count": len(out), "source": src}
 
@@ -444,6 +445,15 @@ async def build_sensors(scenario: str | None) -> dict:
     extra, at_info = await build_airthings(scenario)
     out += extra
     vals = [r["pm25"] for r in out]
+    model_sensors = None
+    if has_geography(scenario):
+        # the demo geography is applied to the street field itself (CaiModel.demo_scale), so the model gets the sensors without it
+        flat, _ = calibrate_records([{**r, "pm25": scenario_pm25(r["pm25"], scenario)} for r in recs], await current_conditions(scenario))
+        flat_extra, _ = await build_airthings(scenario, geography=False)
+        model_sensors = [{**r, "source": "sensor_community", "district": district_at(r["lon"], r["lat"]), **sensor_offset(r)} for r in flat] + flat_extra
+        if model_sensors and vals:  # same overall level as the sensors shown on the map, only without the place-by-place pattern
+            k = statistics.median(vals) / max(statistics.median(r["pm25"] for r in model_sensors), 1e-6)
+            model_sensors = [{**r, "pm25": round(r["pm25"] * k, 1), **({"pm25_adjusted": round(r["pm25_adjusted"] * k, 1)} if "pm25_adjusted" in r else {})} for r in model_sensors]
     return {
         "scenario": scenario,
         "simulated": bool(scenario),
@@ -457,12 +467,13 @@ async def build_sensors(scenario: str | None) -> dict:
                   if cal["calibrated"] else "Citizen sensors (Sensor.Community), NOT calibrated: they read roughly half of reference stations.")
                  + (f" Plus {at_info['count']} stations of Sofia's Airthings pilot network (hourly, already calibrated by the project)." if at_info["count"] else ""),
         "sensors": out,
+        **({"model_sensors": model_sensors} if model_sensors is not None else {}),
     }
 
 
 @app.get("/api/sensors")
 async def api_sensors(scenario: str | None = ScenarioQ):
-    return await build_sensors(Scenario(scenario))
+    return {k: v for k, v in (await build_sensors(Scenario(scenario))).items() if k != "model_sensors"}
 
 
 # ---------------------------------------------------------------------------------------------

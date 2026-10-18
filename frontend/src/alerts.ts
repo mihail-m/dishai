@@ -1,9 +1,9 @@
 import { createContext, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { Scenario } from "./types";
 
-export type AlertKind = "pm" | "heat" | "dust" | "fire" | "transport";
+export type AlertKind = "pm" | "heat" | "pollen" | "dust" | "fire" | "transport";
 export type AlertLevel = "info" | "watch" | "warning";
-export const KIND_LABEL: Record<AlertKind, string> = { pm: "Air quality", heat: "Heat", dust: "Dust", fire: "Smoke", transport: "Transport" };
+export const KIND_LABEL: Record<AlertKind, string> = { pm: "Air quality", heat: "Heat", pollen: "Pollen", dust: "Dust", fire: "Smoke", transport: "Transport" };
 export const LEVELS: AlertLevel[] = ["info", "watch", "warning"];
 export interface AlertAction { id: string; title: string; body: string }
 export interface Alert {
@@ -59,7 +59,7 @@ export function useAlerts(scenario: Scenario) {
 // ---- notification settings (this browser only) ---------------------------------------------------------------------------------------------
 export interface NotifyPrefs { enabled: boolean; kinds: AlertKind[]; level: AlertLevel; mode: "push" | "page" }
 const PREFS_KEY = "dishai.alerts", SEEN_KEY = "dishai.alerts.seen";
-const DEFAULT: NotifyPrefs = { enabled: false, kinds: ["pm", "heat", "dust", "fire", "transport"], level: "watch", mode: "page" };
+const DEFAULT: NotifyPrefs = { enabled: false, kinds: ["pm", "heat", "pollen", "dust", "fire", "transport"], level: "watch", mode: "page" };
 
 export function loadNotifyPrefs(): NotifyPrefs {
   try { return { ...DEFAULT, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") }; } catch { return DEFAULT; }

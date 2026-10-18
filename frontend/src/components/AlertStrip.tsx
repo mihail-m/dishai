@@ -10,7 +10,7 @@ const TONE: Record<AlertLevel, { bg: string; fg: string; label: string }> = {
 };
 const CONF: Record<Alert["confidence"], string> = { model: "Model forecast", forecast: "Weather forecast", inferred: "Inferred, indicative" };
 const CAUSE: Record<string, string> = { dust: "desert dust", fire: "smoke from fires", local: "local heating and traffic in still air" };
-const ICON: Record<AlertKind, keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock", transport: "route" };
+const ICON: Record<AlertKind, keyof typeof Icon> = { pm: "window", heat: "thermo", pollen: "flower", dust: "fan", fire: "clock", transport: "route" };
 const LEVEL_WORD: Record<AlertLevel, string> = { info: "Any alert", watch: "Watch and warning", warning: "Warnings only" };
 
 function AlertCard({ a }: { a: Alert }) {

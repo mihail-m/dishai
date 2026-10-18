@@ -76,10 +76,13 @@ def test_quiet_air_and_sparse_areas_never_trip_the_rule():
     assert drop_isolated_outliers(sparse)[1] == []
 
 
-def test_winter_demo_has_a_dirty_pool_and_cleaner_ground_around_it():
+def test_winter_demo_collects_smoke_in_the_dense_districts_and_keeps_parks_and_the_mountain_foot_clean():
     from backend.scenario import demo_geography, scenario_pm25
-    assert demo_geography(42.690, 23.345, "winter_inversion") > 1.4      # the smoke pool
-    assert demo_geography(42.665, 23.335, "winter_inversion") < 0.5      # the cleaner way south of the centre
+    assert demo_geography(42.736, 23.310, "winter_inversion") > 1.4      # Nadezhda
+    assert demo_geography(42.686, 23.287, "winter_inversion") > 1.2      # Fakulteta
+    assert demo_geography(42.684, 23.344, "winter_inversion") < 0.7      # Borisova gradina
+    assert demo_geography(42.674, 23.309, "winter_inversion") < 0.7      # South Park
+    assert demo_geography(42.628, 23.310, "winter_inversion") < 0.2      # Dragalevtsi, the foot of Vitosha
     assert demo_geography(42.69, 23.34, "summer_heatwave") == 1.0         # other scenarios keep their uniform air
     assert demo_geography(None, None, "winter_inversion") == 1.0          # no position, no change
-    assert scenario_pm25(4.0, "winter_inversion", 42.690, 23.345) > scenario_pm25(4.0, "winter_inversion", 42.665, 23.335) * 1.5
+    assert scenario_pm25(4.0, "winter_inversion", 42.736, 23.310) > scenario_pm25(4.0, "winter_inversion", 42.684, 23.344) * 2.5

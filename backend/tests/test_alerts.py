@@ -178,8 +178,31 @@ def test_serbia_wildfire_demo_raises_a_smoke_alert_through_the_real_fire_rule(cl
     assert client.get("/api/plumes?scenario=serbia_wildfire").json()["plume"]["plume"]["kind"] == "smoke"
 
 
+def _pollen_hours(values, species="birch"):
+    return [{"time": f"2026-04-15T{h:02d}:00", "t2m": 15.0, "pollen": {species: v}} for h, v in enumerate(values)]
+
+
+def test_pollen_alert_levels_follow_the_advice_bands_and_need_two_hours():
+    quiet = alerts.pollen_alerts(_pollen_hours([0.0] * 24), 6, "2026-04-15T06:00")
+    assert quiet == []  # no pollen in the feed (out of season): no alert
+    one_hour = alerts.pollen_alerts(_pollen_hours([0] * 11 + [40] + [0] * 12), 6, "2026-04-15T06:00")
+    assert one_hour == []  # a single moderate hour is not an episode
+    mod = alerts.pollen_alerts(_pollen_hours([0] * 10 + [20, 30, 25] + [0] * 11), 6, "2026-04-15T06:00")
+    assert len(mod) == 1 and mod[0]["level"] == "watch" and mod[0]["kind"] == "pollen" and mod[0]["audience"] == "sensitive"
+    high = alerts.pollen_alerts(_pollen_hours([0] * 10 + [60, 120, 100] + [0] * 11), 6, "2026-04-15T06:00")
+    assert high[0]["level"] == "warning" and "birch" in high[0]["title"].lower() and high[0]["detail"]["types"][0]["type"] == "birch"
+    assert any("medicine" in a["title"].lower() for a in high[0]["actions"])
+
+
+def test_birch_season_demo_raises_a_pollen_alert_and_other_demos_do_not(client):
+    pollen = [a for a in client.get("/api/alerts?scenario=birch_season").json()["alerts"] if a["kind"] == "pollen"]
+    assert pollen and pollen[0]["level"] == "warning" and {t["type"] for t in pollen[0]["detail"]["types"]} >= {"birch", "alder"}
+    for sc in ("winter_inversion", "serbia_wildfire", "summer_heatwave"):
+        assert not [a for a in client.get(f"/api/alerts?scenario={sc}").json()["alerts"] if a["kind"] == "pollen"]
+
+
 def test_push_is_off_without_keys_and_never_leaks_the_private_key(client, monkeypatch):
-    assert client.get("/api/push/key").json() == {"enabled": False, "public_key": None, "kinds": ["pm", "heat", "dust", "fire", "transport"], "levels": ["info", "watch", "warning"]}
+    assert client.get("/api/push/key").json() == {"enabled": False, "public_key": None, "kinds": ["pm", "heat", "pollen", "dust", "fire", "transport"], "levels": ["info", "watch", "warning"]}
     assert client.post("/api/push/subscribe", json={"subscription": GOOD}).status_code == 503
     monkeypatch.setenv("VAPID_PUBLIC_KEY", "PUBLIC")
     monkeypatch.setenv("VAPID_PRIVATE_KEY", "SECRET")

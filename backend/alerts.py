@@ -1,4 +1,4 @@
-"""One list of things the user should know about in the next 48 hours: pollution episodes, heat, mineral dust and smoke from fires.
+"""One list of things the user should know about in the next 48 hours: pollution episodes, heat, pollen, mineral dust and smoke from fires.
 
 Every kind answers the same questions (what, when, how bad, how sure, what to do), so the banner, the suggestions and the push
 notifications all read the same objects instead of each re-deriving them. The alert id is stable (kind + start day), the level can escalate;
@@ -8,6 +8,9 @@ Sources, and what each can honestly claim:
   pm    the city PM2.5 episode forecast (backend/alert.py): the learned model, back-tested in docs/PM_MODEL.md. CAMS, which feeds that model,
         already carries fire and dust emissions, so a smoke or dust episode raises this alert too; the other kinds below say WHY.
   heat  the city feels-like forecast against the advice bands (backend/advice.py HEAT_BANDS).
+  pollen  CAMS pollen forecast per species (Open-Meteo, modelled at ~11 km, not counted by a sampler) against the moderate and high bands in
+        backend/advice.py POLLEN_BANDS. Moderate is a watch, high a warning. Only exists while a species is in season: outside it the feed is empty and so is
+        this alert. Each alert lists the species, so the page can show it first to people who react to those.
   dust  CAMS mineral dust (Copernicus Atmosphere Monitoring Service, via Open-Meteo, no key), taken as published: the level comes from the dust forecast
         itself (thresholds from the history of the field); the message adds CAMS's own daily PM10 and the dust share of it (backend/plumes.py).
   fire  active-fire detections (NASA FIRMS, VIIRS, keyless regional files) near or upwind of Sofia at 850 hPa. Says smoke may arrive, not how much; it
@@ -19,14 +22,16 @@ Tested and dropped: a "smoke" rule from CAMS aerosol optical depth and carbon mo
 """
 from datetime import datetime, timedelta
 
-from .advice import HEAT_BANDS
+from .advice import HEAT_BANDS, POLLEN_BANDS, POLLEN_LABEL, _pollen_level
 from .cai import config as C
 
 LEVELS = ("info", "watch", "warning")
-KINDS = ("pm", "heat", "dust", "fire", "transport")
+KINDS = ("pm", "heat", "pollen", "dust", "fire", "transport")
 DUST_WATCH, DUST_WARNING = 20.0, 40.0  # ug/m3, CAMS dust
 DUST_MIN_HOURS = 2
 HEAT_MIN_HOURS = 2
+POLLEN_MIN_HOURS = 2
+POLLEN_MERGE_GAP_H = 4  # pollen hours this close together are one episode (counts dip over lunch, then come back)
 HORIZON_H = 48
 
 
@@ -76,6 +81,16 @@ ACTIONS = {
         "watch": [("shade", "Plan outdoor tasks for the morning or evening", "Keep to the shade in the hot hours."),
                   ("water", "Drink water and wear light clothes", "")],
         "info": [("water", "Warm day: drink water", "Heat-sensitive people should limit exertion in the afternoon.")],
+    },
+    "pollen": {
+        "warning": [("windows", "Keep windows closed through the pollen hours", "Counts are usually highest from late morning to evening on dry, windy days. Air the home early, or after rain."),
+                    ("wash", "Shower and change after being outside", "Pollen collects in hair and clothes: wash your hair before bed and keep outdoor clothes out of the bedroom."),
+                    ("meds", "Take your usual hay fever medicine as your doctor advises", "Starting before the exposure works better than after the symptoms."),
+                    ("exercise", "Plan outdoor exercise for after rain, or early or late", "Counts drop after rain and in the evening."),
+                    ("car", "Keep car windows closed and recirculate the air", "")],
+        "watch": [("windows", "Air the home early, then keep windows closed", "Pollen rises through the morning."),
+                  ("wash", "Rinse off or change clothes after a long time outside", ""),
+                  ("meds", "Hay fever: have your usual medicine to hand", "")],
     },
     "dust": {
         "warning": [("windows", "Keep windows closed in the dust hours", "Desert dust adds coarse particles that can aggravate asthma and hay fever."),
@@ -155,6 +170,42 @@ def heat_alerts(hours: list[dict], now_idx: int, now: str) -> list[dict]:
         out.append(_alert("heat", lvl, start, end, now, f"{word}: feels like {peak:.0f} °C", f"Peak {peak:.0f} °C around {sl[peak_i]['time'][11:16]}, {_when(start, end, now)}.",
                           peak={"value": round(peak, 1), "unit": "°C", "time": sl[peak_i]["time"]}, source="Open-Meteo forecast, feels-like temperature",
                           confidence="forecast", audience="sensitive" if lvl == "info" else "everyone"))
+    return out
+
+
+# ---- pollen ---------------------------------------------------------------------------------------------------------------------------------
+def pollen_alerts(hours: list[dict], now_idx: int, now: str) -> list[dict]:
+    """One alert per episode of at least POLLEN_MIN_HOURS hours in which some species is at or above its moderate band. High is a warning, moderate a watch."""
+    sl = hours[now_idx : now_idx + HORIZON_H]
+    lvl = []  # per hour: {species: (level, grains)} for the species at or above moderate
+    for h in sl:
+        lvl.append({k: (_pollen_level(k, v), v) for k, v in (h.get("pollen") or {}).items() if v is not None and k in POLLEN_BANDS and _pollen_level(k, v) >= 2})
+    runs: list[list[int]] = []
+    for a, b in _runs([bool(x) for x in lvl]):
+        if runs and a - runs[-1][1] <= POLLEN_MERGE_GAP_H:
+            runs[-1][1] = b
+        else:
+            runs.append([a, b])
+    out = []
+    for a, b in runs:
+        if sum(bool(lvl[i]) for i in range(a, b + 1)) < POLLEN_MIN_HOURS:
+            continue
+        best: dict[str, tuple[int, float, str]] = {}  # species -> (level, peak grains, time of the peak)
+        for i in range(a, b + 1):
+            for k, (lv, g) in lvl[i].items():
+                if k not in best or g > best[k][1]:
+                    best[k] = (lv, g, sl[i]["time"])
+        order = sorted(best, key=lambda k: (-best[k][0], -best[k][1]))
+        top = order[0]
+        level = "warning" if best[top][0] >= 3 else "watch"
+        names = " and ".join(POLLEN_LABEL[k].lower() for k in order[:2]) + (" and more" if len(order) > 2 else "")
+        start, end = sl[a]["time"], _end_time(sl[b]["time"])
+        parts = [f"{POLLEN_LABEL[k]} up to {best[k][1]:.0f} grains/m³ around {best[k][2][11:16]}" for k in order[:3]]
+        out.append(_alert("pollen", level, start, end, now, f"{'High' if level == 'warning' else 'Moderate'} {names} pollen",
+                          f"{'; '.join(parts)}, {_when(start, end, now)}. Modelled for the whole city, not counted by a sampler.",
+                          peak={"value": round(best[top][1], 1), "unit": "grains/m³", "time": best[top][2]}, cause=["pollen"],
+                          source="Copernicus CAMS European air quality forecast via Open-Meteo (modelled pollen)", confidence="model", audience="sensitive",
+                          detail={"types": [{"type": k, "label": POLLEN_LABEL[k], "grains": round(best[k][1], 1), "level": "high" if best[k][0] >= 3 else "moderate", "time": best[k][2]} for k in order]}))
     return out
 
 
@@ -279,6 +330,7 @@ def build_alerts(fc: dict, dust_series: list[dict] | None = None, fire_threat: d
     if (a := pm_alert(fc, now)) is not None:
         out.append(a)
     out += heat_alerts(hours, fc["now_index"], now)
+    out += pollen_alerts(hours, fc["now_index"], now)
     out += dust_alerts(dust_series or [], now, (plume or {}).get("days"))
     if (a := fire_alert(fire_threat, now, (plume or {}).get("plume"))) is not None:
         out.append(a)

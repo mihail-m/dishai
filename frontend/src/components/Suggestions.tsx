@@ -70,7 +70,7 @@ export function suggest({ pm, score, fc, hourIndex, located, better }: Input): S
   return out;
 }
 
-const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock", transport: "route" };
+const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", pollen: "flower", dust: "fan", fire: "clock", transport: "route" };
 const LEAD_H = 12;
 
 /** The first thing to do about each alert that is under way or starts within 12 hours; these lead the list. */

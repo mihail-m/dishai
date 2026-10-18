@@ -62,6 +62,7 @@ interface Verdict { tone: Tone; headline: string; line: string }
 const HEADLINE: Record<Alert["kind"], Record<"warning" | "watch", string>> = {
   pm: { warning: "Poor air: limit time outside", watch: "Air may turn poor" },
   heat: { warning: "Dangerous heat today", watch: "Hot day: take care" },
+  pollen: { warning: "High pollen today", watch: "Pollen is up" },
   dust: { warning: "Heavy dust in the air", watch: "Dust in the air" },
   fire: { warning: "Smoke in the air", watch: "Smoke may reach the city" },
   transport: { warning: "Leave the car at home", watch: "Green ticket: ride public transport" },
@@ -120,7 +121,7 @@ function PlanItem({ title, body, tone, icon }: { title: string; body: string; to
   );
 }
 const CARD_ICON: Record<string, keyof typeof Icon> = { heat: "thermo", heat_shelter: "thermo", pollen: "leaf", hold_fire: "fan", stay_in: "window", ventilate: "window", shift_trips: "clock", activity: "walk" };
-const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", dust: "fan", fire: "clock", transport: "route" };
+const ALERT_ICON: Record<Alert["kind"], keyof typeof Icon> = { pm: "window", heat: "thermo", pollen: "flower", dust: "fan", fire: "clock", transport: "route" };
 
 interface Props { scenario: Scenario; districts: DistrictsFC | null; district: string | null; setDistrict: (d: string) => void; onPrefs?: (toggles: Toggle[], species: string[]) => void }
 
@@ -132,8 +133,14 @@ export default function ForMeView({ scenario, districts, district, setDistrict, 
   const [airs, setAirs] = useState<AreasResp | null>(null);
   const [heats, setHeats] = useState<AreasResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const { alerts } = useAlerts(scenario);
+  const { alerts: allAlerts } = useAlerts(scenario);
   const geo = useLocation();
+  // someone who named the pollen they react to is not woken by a pollen alert for other plants
+  const alerts = useMemo(() => allAlerts.filter((a) => {
+    if (a.kind !== "pollen" || !prefs.toggles.includes("pollen_allergy") || !prefs.species.length) return true;
+    const types = (a.detail as { types?: { type: string }[] } | undefined)?.types ?? [];
+    return types.some((t) => prefs.species.includes(t.type));
+  }), [allAlerts, prefs.toggles, prefs.species]);
   const names = useMemo(() => districts?.features.map((f) => f.properties.name).sort() ?? [], [districts]);
 
   useEffect(() => { savePrefs(prefs); onPrefs?.(prefs.toggles, prefs.species); }, [prefs]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -244,7 +251,7 @@ export default function ForMeView({ scenario, districts, district, setDistrict, 
         )}
       </section>
 
-      <Acc title="Alerts and notifications"><NotificationSettings alerts={alerts} /></Acc>
+      <Acc title="Alerts and notifications"><NotificationSettings alerts={allAlerts} /></Acc>
 
       {programmes.length > 0 && adv && (
         <Acc title="City programmes you may qualify for">

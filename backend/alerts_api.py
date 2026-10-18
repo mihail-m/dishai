@@ -21,7 +21,7 @@ TEST_COOLDOWN_S = 60
 class SubscribeIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subscription: dict
-    kinds: list[Literal["pm", "heat", "dust", "fire", "transport"]] = []
+    kinds: list[Literal["pm", "heat", "pollen", "dust", "fire", "transport"]] = []
     min_level: Literal["info", "watch", "warning"] = "watch"
 
 

@@ -117,8 +117,10 @@ def ctx_month(time: str) -> int | None:
 class CaiModel:
     """Everything needed to score any edge for any forecast hour, from one sensor snapshot."""
 
-    def __init__(self, net: Net, feats: Features, hours: list[dict], now_idx: int, sensors: list[dict], ml: "PmModel | None | bool" = True):
+    def __init__(self, net: Net, feats: Features, hours: list[dict], now_idx: int, sensors: list[dict], ml: "PmModel | None | bool" = True,
+                 demo_scale: "np.ndarray | None" = None):
         self.net, self.feats = net, feats
+        self.demo_scale = demo_scale  # demo scenarios only: a per-street multiplier on the PM field (see backend/scenario.py)
         self.hours = hours
         self.ml: PmModel | None = (PmModel.load() if C.USE_ML else None) if ml is True else (ml or None)
         self.static = static_matrix(feats) if self.ml else None
@@ -228,6 +230,8 @@ class CaiModel:
         else:
             B = self._background(ctx)
             pm = np.maximum(predict_pm(B, self.R(i)), 0.0).astype("float32")
+        if self.demo_scale is not None:
+            pm = (pm * self.demo_scale).astype("float32")
         air = 1.0 - air_score(pm) / 100.0
         cb = ((1 - ctx.g) * air + ctx.g * f.H).astype("float32")
         cai = np.round(100 * (1 - cb)).astype("uint8")
