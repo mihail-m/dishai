@@ -25,7 +25,7 @@ test.beforeEach(async ({ page }) => {
 
 test("one verdict first, then what to do, the day and the setup", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByRole("button", { name: "My health", exact: true }).first().click();
   const verdict = page.getByRole("status", { name: "Right now" });
   await expect(verdict.getByRole("heading", { name: "Dangerous heat today" })).toBeVisible();
   const plan = page.getByRole("region", { name: "What to do" });
@@ -43,7 +43,7 @@ test("one verdict first, then what to do, the day and the setup", async ({ page 
 test("choices are saved on this device and old saved choices still load", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("dishai.foryou", JSON.stringify({ profile: "vulnerable", toggles: ["asthma", "pollen_allergy"], species: ["birch"] })));
   await page.goto("/");
-  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByRole("button", { name: "My health", exact: true }).first().click();
   await expect(page.getByRole("button", { name: "I am older or health-sensitive" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Asthma" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Birch" })).toHaveAttribute("aria-pressed", "true");
@@ -58,7 +58,7 @@ test("a position fix selects the district it falls in", async ({ page, context }
   await context.grantPermissions(["geolocation"]);
   await context.setGeolocation({ latitude: 42.63, longitude: 23.32 }); // inside the second polygon
   await page.goto("/");
-  await page.getByRole("button", { name: "For me", exact: true }).first().click();
+  await page.getByRole("button", { name: "My health", exact: true }).first().click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sredets");
   await page.getByRole("button", { name: "Use my location" }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Lozenets");

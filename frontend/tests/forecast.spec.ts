@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 test("the default map shows neighbourhood cells, streets are an indicative option", async ({ page }) => {
   await page.getByRole("button", { name: "Neighbourhoods" }).click();
   await expect(page.getByRole("button", { name: "Neighbourhoods" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText(/Each square is about 250 m/)).toBeVisible();
+  await expect(page.getByText(/Hover or tap the map to see the air quality score/)).toBeVisible();
   await page.getByRole("button", { name: "Streets", exact: true }).click();
   await expect(page.getByText(/Street colours are indicative/)).toBeVisible();
 });

@@ -150,6 +150,21 @@ def test_route_endpoint_without_google_key(client, monkeypatch):
     assert r["routes"]["cleanest"]["time_min"] <= r["routes"]["fastest"]["time_min"] * 1.3 + 1e-6
 
 
+def test_pollen_aware_route_trades_greenery_for_pollen(client, monkeypatch):
+    monkeypatch.delenv("GOOGLE_ROUTES_SERVER_KEY", raising=False)
+    q = "/api/route?from=42.6934,23.3331&to=42.7120,23.3230&lambda=2&include_google=false&scenario=birch_season"
+    plain = client.get(q).json()
+    allergic = client.get(q + "&allergy=true&species=birch").json()
+    assert plain["allergy"] is None and allergic["allergy"]["level"] >= 1 and allergic["allergy"]["species"] == ["birch"]
+    assert allergic["confidence"] is None  # the PM-based "clearly cleaner" test does not describe an allergy-weighted choice
+    for r in (plain, allergic):
+        assert all(0 <= v["mean_green_pct"] <= 100 for v in r["routes"].values())
+    # with birch pollen up, the pollen-aware cleanest route has no more greenery than the plain cleanest one
+    assert allergic["routes"]["cleanest"]["mean_green_pct"] <= plain["routes"]["cleanest"]["mean_green_pct"] + 1e-6
+    quiet = client.get(q.replace("birch_season", "winter_inversion") + "&allergy=true").json()
+    assert quiet["allergy"]["level"] == 0  # no pollen, no change of weighting
+
+
 def test_route_validation_errors(client):
     assert client.get("/api/route?from=abc&to=42.7,23.3").status_code == 422
     assert client.get("/api/route?from=95,23&to=42.7,23.3").status_code == 422

@@ -42,6 +42,7 @@ def winter_inversion_hourly(day0: datetime) -> dict:
         "apparent_temperature": app,
         "shortwave_radiation": rad,
         "relative_humidity_2m": rh,
+        "uv_index": [round(1.2 * max(0.0, math.sin(math.pi * (t.hour - 8) / 8)) if 8 <= t.hour <= 16 else 0.0, 1) for t in (day0 + timedelta(hours=i) for i in range(48))],
     }
 
 
@@ -94,6 +95,9 @@ def summer_heatwave_hourly(day0: datetime) -> dict:
             "pm2_5": round(pm, 1),
             "pm10": round(pm * 1.6 + 6, 1),
             "european_aqi": int(35 + pm),
+            # strong sun, an afternoon ozone build-up, and a Saharan dust plume arriving on the second day
+            "uv_index": round(10.5 * sun, 1), "ozone": round(55 + 105 * sun * (1.1 if day2 else 1.0), 1),
+            "dust": round(18.0 + (70.0 * sun if day2 else 0.0), 1), "aerosol_optical_depth": round(0.15 + (0.35 if day2 else 0.0), 2),
             **{f"{k}_pollen": (round(4.0 * math.sin(math.pi * (h - 6) / 8), 1) if k == "grass" and 6 <= h <= 14 else 0.0) for k in _POLLEN},
         }
 
@@ -124,6 +128,7 @@ def birch_season_hourly(day0: datetime) -> dict:
             "pm2_5": round(pm, 1),
             "pm10": round(pm * 1.5 + 4, 1),
             "european_aqi": int(25 + pm),
+            "uv_index": round(5.5 * sun, 1), "ozone": round(60 + 35 * sun, 1), "dust": 12.0, "aerosol_optical_depth": 0.12,
             "birch_pollen": round(190 * k * curve, 1),
             "alder_pollen": round(28 * k * curve, 1),
             "grass_pollen": round(1.5 * k * curve, 1),
@@ -133,6 +138,8 @@ def birch_season_hourly(day0: datetime) -> dict:
     return _pack(day0, point)
 
 
+# The date each demo pretends to be, so the season outlook matches the story: (month, day)
+SCENARIO_DAY = {"winter_inversion": (1, 15), "summer_heatwave": (7, 25), "birch_season": (4, 15)}
 HOURLY = {"winter_inversion": winter_inversion_hourly, "summer_heatwave": summer_heatwave_hourly, "birch_season": birch_season_hourly}
 # Applied to RAW sensor readings (before calibration to the reference scale, which roughly doubles them): winter turns the live
 # autumn readings into an episode, the other two keep clean air.

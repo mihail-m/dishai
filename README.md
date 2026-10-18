@@ -88,11 +88,11 @@ set `PLAYWRIGHT_CHANNEL=chrome` before running the tests.
 | Screen | What it shows | Plan measure it supports |
 |---|---|---|
 | **Explore** | One panel with a plain-language status card (verdict, PM2.5, next-24-hour outlook) and three layers. **Air quality**: neighbourhood squares (or indicative streets, "Why this colour?" breakdown), suggestions for where you are (open the windows, take a walk, run the air purifier), based on the air around your location when you share it (kept in the tab, never stored or sent). **Heat**: feels-like temperature of every area for the selected hour, 48 hours ahead (city forecast plus a learned local offset, [docs/HEAT.md](docs/HEAT.md)), coolest and warmest areas. **Alerts** at the top of the panel (PM2.5 episode, heat, dust, smoke) with causes and what to do, and notification settings ([docs/ALERTS.md](docs/ALERTS.md)). **Clean paths**: clean channels and busy streets with poor air with suggested measures, pedestrians or cyclists. The time bar at the bottom is the forecast chart: PM2.5 or air trapping on Air quality, feels-like temperature on Heat, and a slim control on Clean paths and Route. Official stations, validation and forecast charts behind accordions | A.3.4 early warning, A.3.3 self-cleaning potential of the air, A.4.3, A.4.4, A.4.7, C.1.1 |
-| **Route** | Fastest / balanced / cleanest walk or ride, Faster-Cleaner slider, time, exposure dose, Google baseline and snapped route when keyed, "Open in Google Maps" | PUGM green ticket (leave the car), A.3.4 |
-| **For me** | One verdict for where you are (your location or district) with air score and local feels-like, a "what to do today" plan led by the active alerts, a 24-hour strip with the best window, optional profile and health choices (saved in the browser), alert notification settings, and the city programmes (zone lookup, C.3.2 eligibility wizard, anonymous lead) behind one line | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
+| **Route** | Pick a start and an end: the cleanest walk against the fastest, time, average PM2.5, "Open in Google Maps". No settings. | PUGM green ticket (leave the car), A.3.4 |
+| **My health** | One verdict for where you are (your location or district) with air score and local feels-like, a "what to do today" plan led by the active alerts, a 24-hour strip with the best window, optional profile and health choices (saved in the browser), alert notification settings, and the city programmes (zone lookup, C.3.2 eligibility wizard, anonymous lead) behind one line. Below that, the pollen and allergy section: Pollen forecast per plant (alder, birch, grass, mugwort, olive, ragweed): 4 daily peaks and an hourly line, the typical season calendar (10-day bins from model history, with today marked), UV index, ozone and mineral (Saharan) dust, Google plant detail when keyed, and an anonymous daily symptom check-in that is compared with the model's pollen level. Choosing the pollen you react to puts those plants first, drives the pollen cards in the advice above (with food cross-reaction and "season starts in N days" cards) | PUGM green ticket, C.1.1, C.3.2, A.5.4, A.3.4, A.3.3 |
 | **City insights** (for the municipality and planners) | Hotspot districts, C.3.2 leads, street chokepoints (street level), street-washing list (**sample street names**) | C.3.2, A.4.7, A.3.4, A.4.3, A.4.4, C.1.1 |
 
-The **Live menu** (top right) holds the **Live / Winter inversion / Summer heatwave / Birch season** switch, Refresh forecast and the map style. The demo scenarios (the last two drive the heat and pollen cards on *For me*) replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
+The **Live menu** (top right) holds the **Live / Winter inversion / Summer heatwave / Birch season** switch, Refresh forecast and the map style. The demo scenarios (the last two drive the heat and pollen cards on *My health*) replays a hand-built January inversion (48 h, PM2.5 rising past 100 µg/m³), so the
 interesting case shows even in October. In demo mode sensor values are simulated from live positions and the validation is disabled.
 
 ## How it works
@@ -177,6 +177,17 @@ measured traffic is shown on the map but is not used in the PM2.5 number (docs/T
 Sentinel-2 L2A assets on Planetary Computer carry **no** scale/offset metadata, so `ndvi.py` applies the ESA rule for processing baseline ≥ 04.00
 (reflectance = (DN − 1000) / 10000). Satellite layers are summer snapshots, not live.
 
+### Pollen and allergy data
+
+| Input | Source | Notes |
+|---|---|---|
+| Pollen, UV, ozone, dust | CAMS European air quality forecast via Open-Meteo (keyless; `uv_index`, `dust`, `ozone`, `aerosol_optical_depth` and six pollen species, hourly, 4 days) | Modelled at ~11 km for the whole city, **not trap counts**. Pollen is only published during the European pollen season. Open-Meteo asks for attribution, and a key for commercial use. |
+| Typical season | The same model's history for Sofia, 2022 to 2025 (`make pollen-calendar` -> `data/pollen_calendar.json`) | 36 ten-day bins per plant and a typical start and end (days at the CAMS season threshold, 5th to 95th percentile, median over years). A year counts for a plant only when the feed covers the months where it flowers. Olive does not reach the threshold in Sofia. |
+| Plant detail | Google Pollen API (same server key as Routes; enable the Pollen API for it) | Optional. Adds hazel, ash, oak, pine and cottonwood, index per plant and cross-reaction notes. **Pollen is listed under Google's Pro and Enterprise pricing tiers: check the cost before enabling.** Held in memory for an hour. |
+| Symptom check-ins | Users, anonymous | `data/symptoms.jsonl` (git-ignored): date, district, severity, the model's pollen level. No identifier, so a person can report more than once. A level needs 20 reports before a share is shown. |
+
+No open measured pollen data for Sofia was found (the European Aeroallergen Network only shares with data contributors; see `docs/POLLEN_OUTREACH.md`). The UV bands are WHO's, the ozone anchors are the WHO peak-season guideline (100 µg/m³) and the EU information threshold (180 µg/m³); the pollen bands and the dust bands (50 and 100 µg/m³) are hand-set and indicative. **Pollen-aware routing is experimental**: for an allergic user the burden of a street grows by `POLLEN_GREEN_WEIGHT` (0.3, an assumption in `backend/cai/config.py`) × pollen level × greenery, and greenery is only a proxy for pollen sources.
+
 ## Reference stations and a sensor-quality finding
 
 The README used to say the municipal stations report no PM2.5. That is true of the WAQI feed only: Bulgaria reports hourly PM2.5 (Hipodruma) and PM10
@@ -195,7 +206,8 @@ GATE's digital-twin station API (`citylab.gate-ai.eu`) was returning 502 when ch
 
 ## API
 
-`/api/forecast` `/api/sensors` `/api/districts` `/api/advice` `/api/leads` `/api/dashboard` (v1) ·
+`/api/forecast` `/api/sensors` `/api/districts` `/api/advice` (`toggles=`, and `species=` with the pollen_allergy toggle) `/api/leads` `/api/dashboard` (v1) ·
+`/api/pollen` (per-plant forecast, UV / ozone / dust, season status) `/api/pollen/calendar` `POST /api/symptoms` `/api/symptoms/summary` ·
 `/api/cai?hour=&bbox=` (segment GeoJSON + decomposition) `/api/cai/areas?metric=air|heat&mode=walk|bike&hour=&scale=absolute|relative` (area cells; heat is feels-like °C per hour) `/api/alerts` (what needs attention in the next 48 h) `/api/push/key` `/api/push/subscribe` `/api/push/unsubscribe` `/api/push/test` (web push) `/api/cai/geometry` (binary) `/api/cai/values` `/api/cai/edge` ·
 `/api/route?from=lat,lng&to=lat,lng&lambda=&hour=&mode=walk|bike` (with a `confidence` block: is any alternative distinguishable from the fastest route?) `/api/network?hour=&mode=` `/api/validation` (calibration, spatial and back-test summaries under `trust`) `/api/reference`. All accept `scenario=winter_inversion|summer_heatwave|birch_season`.
 
@@ -219,6 +231,7 @@ returns the full upstream series, used internally for daily validation and exist
 * Plan-spec `clamp(PM/60)` **saturates** whenever background PM2.5 exceeds 60 µg/m³ (every street gets CAI ≈ 0). The map keeps the spec but offers a
   *Relative* view (5th-95th percentile stretch); routing uses the unclamped burden. In a heavy inversion the street choice changes a cross-city
   walk's exposure by only about 5 % for ≈5 % more time; the background dominates.
+* **Pollen is modelled, not measured.** The six-plant forecast and the season calendar are CAMS model output for all of Sofia at ~11 km; nothing here compares them with a local trap yet (the symptom check-in is the first step towards that). The pollen bands, dust bands and the pollen-aware route weight are approximations or assumptions.
 * Routes are as good as OSM pedestrian data; expect missing crossings and private paths. No user location is stored.
 * Sensors drift, and in Sofia they read **low** (about half of the reference station), less so in humid air; the calibration was fitted on **one** Sofia reference station and then checked against 52 EEA stations in 29 European cities (a fit that never saw Sofia is within 3 % of the Sofia one; calibrated values above 50 µg/m³ read 5 % low on average elsewhere), and the calibrated city value is typically off by about 37 %. Zone polygons are illustrative. The C.3.2 grant ("up to about 10,000 EUR") comes from the plan and may change.
 * Street names in the "wash first" list are sample data. Chokepoint measures are suggestions mapped to the plan, not engineering assessments.

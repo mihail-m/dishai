@@ -69,13 +69,14 @@ def _pollen_level(kind: str, grains: float) -> int:
     return 3 if grains >= high else 2 if grains >= mod else 1 if grains >= 1 else 0
 
 
-def pollen_summary(hours: list[dict]) -> dict:
-    """Peak pollen per type over the given hours. available=False when the feed has no pollen values at all."""
+def pollen_summary(hours: list[dict], only: frozenset[str] | set[str] | None = None) -> dict:
+    """Peak pollen per type over the given hours. available=False when the feed has no pollen values at all.
+    `only` limits it to the user's own trigger species."""
     peaks: dict[str, tuple[float, str]] = {}
     seen = False
     for h in hours:
         for k, v in (h.get("pollen") or {}).items():
-            if v is None or k not in POLLEN_BANDS:
+            if v is None or k not in POLLEN_BANDS or (only and k not in only):
                 continue
             seen = True
             if v > peaks.get(k, (0.0, ""))[0]:
@@ -91,14 +92,14 @@ def pollen_summary(hours: list[dict]) -> dict:
     return {"available": True, "level": top["level"] if top else "none", "types": types[:3], "peak_hhmm": top["peak_hhmm"] if top else None}
 
 
-def activity_window(hours: list[dict], scores: list[float], pollen_allergy: bool) -> dict | None:
+def activity_window(hours: list[dict], scores: list[float], pollen_allergy: bool, only: frozenset[str] | set[str] | None = None) -> dict | None:
     """Best two-hour slot between 06:00 and 21:00 for being outside: low stagnation, low heat, low pollen if allergic."""
     pen = []
     for h, sc in zip(hours, scores):
         app = h.get("apparent") if h.get("apparent") is not None else h["t2m"]
         p = sc + 4.0 * max(0.0, app - 24.0)
         if pollen_allergy and h.get("pollen"):
-            p += 12.0 * max((_pollen_level(k, v) for k, v in h["pollen"].items() if v is not None and k in POLLEN_BANDS), default=0)
+            p += 12.0 * max((_pollen_level(k, v) for k, v in h["pollen"].items() if v is not None and k in POLLEN_BANDS and (not only or k in only)), default=0)
         pen.append(p)
     cands = [i for i in range(len(hours) - 1) if 6 <= int(hours[i]["time"][11:13]) <= 19]
     if not cands:
@@ -109,12 +110,17 @@ def activity_window(hours: list[dict], scores: list[float], pollen_allergy: bool
     return {"start_hhmm": start[11:16], "end_hhmm": f"{end_h % 24:02d}:00", "penalty": round((pen[i] + pen[i + 1]) / 2, 1)}
 
 
-def conditions(hours: list[dict], scores: list[float], pollen_allergy: bool = False) -> dict:
-    """What the cards need besides the stagnation level: heat, pollen and the best time to be outside."""
+def conditions(hours: list[dict], scores: list[float], pollen_allergy: bool = False, species: tuple[str, ...] | list[str] = ()) -> dict:
+    """What the cards need besides the stagnation level: heat, pollen, UV / ozone / dust and the best time to be outside.
+    For an allergic user who named trigger species, pollen and the outdoor slot count only those species."""
+    from . import pollen as pollen_mod  # pollen imports this module's constants
+
+    only = frozenset(s for s in species if s in POLLEN_BANDS) if pollen_allergy else frozenset()
     return {
         "heat": heat_summary(hours),
-        "pollen": pollen_summary(hours),
-        "activity": activity_window(hours, scores, pollen_allergy),
+        "pollen": {**pollen_summary(hours, only or None), "triggers": sorted(only)},
+        "activity": activity_window(hours, scores, pollen_allergy, only or None),
+        "environment": pollen_mod.environment_summary(hours),
     }
 
 
@@ -249,6 +255,78 @@ def _profile_cards(profile: str, level: str, alert: dict | None, best: dict | No
     return cards[:4]
 
 
+def _season_cards(season: list[dict], triggers: set[str], pollen: dict, pol: int) -> list[dict]:
+    """For allergic users: when the next trigger season usually starts, and which foods the active species may cross-react with."""
+    from . import pollen as pollen_mod
+
+    mine = [s for s in season if not triggers or s["type"] in triggers]
+    cards = []
+    soon = sorted((s for s in mine if s["status"] == "upcoming" and s["in_days"] <= 45), key=lambda s: s["in_days"])
+    active = [s for s in mine if s["status"] == "in_season"]
+    if soon and pol < 2:
+        s = soon[0]
+        cards.append({
+            "id": "pollen_season",
+            "title": f"{POLLEN_LABEL[s['type']]} season usually starts in about {s['in_days']} days" if s["in_days"] > 1 else f"{POLLEN_LABEL[s['type']]} season usually starts about now",
+            "body": f"In the model history for Sofia (2022 to 2025) {POLLEN_LABEL[s['type']].lower()} pollen typically reaches the season threshold around {s['start']} "
+                    f"and fades by {s['end']}. Start your usual medication when your doctor advises, a little before the season. Dates are modelled and vary by year.",
+            "measure": None, "severity": "info",
+        })
+    elif active and pol == 0:
+        names = ", ".join(POLLEN_LABEL[s["type"]].lower() for s in active)
+        cards.append({
+            "id": "pollen_season",
+            "title": f"In season for {names}, but the forecast is quiet",
+            "body": "It is the usual season, yet the model shows little pollen in the next 24 h. Rain, cool weather or a modelling gap can do that: stay watchful if you react.",
+            "measure": None, "severity": "info",
+        })
+    now_types = [t["type"] for t in pollen.get("types", []) if triggers == set() or t["type"] in triggers][:2]
+    if now_types:
+        foods = []
+        for k in now_types:
+            foods.append(f"{POLLEN_LABEL[k]}: {', '.join(pollen_mod.SPECIES[k]['foods'][:6])}")
+        cards.append({
+            "id": "cross_reaction",
+            "title": "Some foods can itch while this pollen is up",
+            "body": "Some people with pollen allergy get an itchy mouth or throat from certain raw fruit, vegetables and nuts (oral allergy syndrome). Often reported with "
+                    + "; ".join(foods) + ". Cooking usually removes it. Not everyone is affected; ask your allergist.",
+            "measure": None, "severity": "info",
+        })
+    return cards
+
+
+def _environment_cards(env: dict, toggles: frozenset[str], asthma: bool, carer: bool, sensitive: bool) -> list[dict]:
+    from . import pollen as pollen_mod
+
+    cards = []
+    uv, oz, du = env.get("uv"), env.get("ozone"), env.get("dust")
+    outdoors = "outdoor_exercise" in toggles
+    if uv and (uv["level"] >= 2 or (uv["level"] >= 1 and (outdoors or carer or sensitive))):
+        lv = pollen_mod.UV_LEVELS[uv["level"]]
+        cards.append({
+            "id": "uv", "measure": None, "severity": "action" if uv["level"] >= 3 else "info",
+            "title": f"UV index {uv['peak']:.0f} ({lv}) around {uv['peak_hhmm']}",
+            "body": "Use shade around midday, a hat and sunscreen, and sunglasses. " + ("Keep children and babies out of direct sun in the middle of the day. " if carer else "")
+                    + "WHO advises sun protection from UV 3.",
+        })
+    if oz and (oz["level"] >= 2 or (oz["level"] >= 1 and (asthma or outdoors or carer))):
+        lv = pollen_mod.OZONE_LEVELS[oz["level"]]
+        cards.append({
+            "id": "ozone", "measure": None, "severity": "action" if oz["level"] >= 2 else "info",
+            "title": f"Ozone {lv}: peak {oz['peak']:.0f} µg/m³ around {oz['peak_hhmm']}",
+            "body": "Ozone irritates the airways and builds up on sunny afternoons. Plan hard exercise for the morning or evening, and keep a reliever inhaler to hand if you have asthma. "
+                    "The PM2.5 air score does not include ozone.",
+        })
+    if du and (du["level"] >= 2 or (du["level"] >= 1 and (asthma or carer or "pollen_allergy" in toggles))):
+        cards.append({
+            "id": "dust", "measure": None, "severity": "action" if du["level"] >= 2 else "info",
+            "title": f"Mineral dust {pollen_mod.DUST_LEVELS[du['level']]}: up to {du['peak']:.0f} µg/m³ around {du['peak_hhmm']}",
+            "body": "Desert dust (often Saharan) is being carried over the region. It adds coarse particles that can aggravate asthma and hay fever. "
+                    "Keep windows closed in the worst hours, and wet-clean surfaces rather than dry-sweeping.",
+        })
+    return cards
+
+
 def _heat_window(heat: dict) -> str:
     return f"{heat['start_hhmm']} to {heat['end_hhmm']}" if heat["start_hhmm"] else "the afternoon"
 
@@ -311,7 +389,8 @@ def _personal_cards(
     asthma = "asthma" in toggles
     names = ", ".join(t["label"].lower() for t in pollen["types"])
     if pol >= 3 or ((allergic or asthma) and pol >= 1):
-        tips = f"Mainly {names}, highest around {pollen['peak_hhmm']}."
+        tips = f"{'For your triggers: ' if pollen.get('triggers') else ''}mainly {names}, highest around {pollen['peak_hhmm']}."
+        tips = tips[0].upper() + tips[1:]
         if pol >= 2:
             tips += " Keep windows closed around then, shower and change clothes after being out, and use your usual allergy medication as your doctor advised."
         else:
@@ -337,6 +416,14 @@ def _personal_cards(
                 "severity": "info",
             }
         )
+
+    # --- pollen season outlook and food cross-reactions: only for people who said they are allergic
+    triggers = set(pollen.get("triggers") or [])
+    if allergic:
+        cards.extend(_season_cards(cond.get("season") or [], triggers, pollen, pol))
+
+    # --- UV, ozone, mineral dust: from the same CAMS feed as the pollen
+    cards.extend(_environment_cards(cond.get("environment") or {}, toggles, asthma, carer, sensitive))
 
     # --- construction dust: context for sensitive users in the busiest districts. Not modelled in the air score.
     cons = cond.get("construction")

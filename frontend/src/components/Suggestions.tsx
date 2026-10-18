@@ -3,6 +3,7 @@ import { AlertsContext, rank, type Alert } from "../alerts";
 import type { AreasResp, Forecast } from "../types";
 import { PM_WARNING, PM_WATCH, hhmm } from "../api";
 import { distanceKm, type LocStatus, type Place } from "../location";
+import { caiCss } from "../map/cai";
 import { Icon } from "./ui";
 
 type Tone = "good" | "watch" | "warn" | "info";
@@ -121,10 +122,16 @@ export default function Suggestions({ areas, fc, hourIndex, status, place, distr
         {status === "ok" && <button className="text-xs font-bold" style={{ color: "var(--accent)" }} onClick={onStop}>Stop sharing</button>}
       </div>
       {status === "ok" && place ? (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full" style={{ background: "var(--brand-soft)", color: "var(--accent)" }}>{Icon.pin}</span>
-          <span className="min-w-0"><b>{district ?? "Your location"}</b>
-            <span className="muted">{here ? ` · air quality score ${Math.round(here.score)} here` : " · outside the mapped streets, showing city-wide air"}</span></span>
+        <div className="flex items-center gap-3 rounded-2xl p-3" style={{ background: "var(--surface-2)" }}>
+          {here ? (
+            <span className="grid h-16 w-16 shrink-0 place-items-center rounded-full text-[28px] font-extrabold leading-none tabular-nums" style={{ background: "var(--surface)", border: `5px solid ${caiCss(here.score)}` }} aria-hidden="true">{Math.round(here.score)}</span>
+          ) : (
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full" style={{ background: "var(--brand-soft)", color: "var(--accent)" }}>{Icon.pin}</span>
+          )}
+          <span className="min-w-0 leading-snug">
+            <b className="block text-base">{district ?? "Your location"}</b>
+            <span className="muted text-sm">{here ? <>Air quality score <b style={{ color: "var(--ink)" }}>{Math.round(here.score)}</b> out of 100 here · higher is cleaner</> : "Outside the mapped streets, showing city-wide air"}</span>
+          </span>
         </div>
       ) : (
         <div className="rounded-2xl p-3" style={{ background: "var(--surface-2)" }}>

@@ -74,9 +74,16 @@ async def _pollen(c: httpx.AsyncClient, lat: float, lng: float, days: int = 5) -
         for t in d.get("pollenTypeInfo", []):
             ix = t.get("indexInfo") or {}
             types[t["code"]] = {"name": t.get("displayName"), "in_season": bool(t.get("inSeason")), "value": ix.get("value"), "category": ix.get("category"),
-                                "advice": (t.get("healthRecommendations") or [None])[0]}
-        plants = [{"name": p.get("displayName"), "type": (p.get("plantDescription") or {}).get("type"), "value": (p.get("indexInfo") or {}).get("value"),
-                   "category": (p.get("indexInfo") or {}).get("category")} for p in d.get("plantInfo", []) if p.get("inSeason") and p.get("indexInfo")]
+                                "advice": (t.get("healthRecommendations") or [None])[0], "advice_all": (t.get("healthRecommendations") or [])[:4]}
+        # per plant: Google also covers hazel, ash, oak, pine and cottonwood, which the CAMS feed does not
+        plants = []
+        for p in d.get("plantInfo", []):
+            if not (p.get("inSeason") and p.get("indexInfo")):
+                continue
+            desc = p.get("plantDescription") or {}
+            plants.append({"code": p.get("code"), "name": p.get("displayName"), "type": desc.get("type"), "value": (p.get("indexInfo") or {}).get("value"),
+                           "category": (p.get("indexInfo") or {}).get("category"), "family": desc.get("family"), "season": desc.get("season"),
+                           "cross_reaction": desc.get("crossReaction"), "advice": ((p.get("indexInfo") or {}).get("indexDescription"))})
         out.append({"date": f"{dd.get('year')}-{dd.get('month'):02d}-{dd.get('day'):02d}", "types": types, "plants": plants})
     return out
 
