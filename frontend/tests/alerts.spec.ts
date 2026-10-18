@@ -51,3 +51,14 @@ test("no alerts means no banner, only the quiet notification settings", async ({
   await expect(page.getByRole("region", { name: "Alerts" }).getByRole("article")).toHaveCount(0);
   await expect(page.getByText("Notifications", { exact: true })).toBeVisible();
 });
+
+test("alerts are requested once, not on every render", async ({ page }) => {
+  let n = 0;
+  await page.route("**/api/alerts*", (route) => { n++; return route.fulfill({ json: { generated_at: "2026-10-17T12:00", scenario: null, alerts: [], sources: {}, push: { enabled: false } } }); });
+  await page.goto("/");
+  await expect(page.locator("#hour")).toBeEnabled();
+  for (let i = 0; i < 6; i++) await page.locator("#hour").fill(String(i));
+  await page.getByRole("button", { name: "Heat", exact: true }).click();
+  await page.getByRole("button", { name: "Air quality", exact: true }).click();
+  expect(n).toBe(1);
+});

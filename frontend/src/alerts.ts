@@ -1,4 +1,4 @@
-import { createContext, useEffect, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { Scenario } from "./types";
 
 export type AlertKind = "pm" | "heat" | "dust" | "fire";
@@ -21,16 +21,17 @@ export const rank = (l: AlertLevel) => LEVELS.indexOf(l);
 export const AlertsContext = createContext<Alert[]>([]);
 
 // ---- one shared poll per scenario ----------------------------------------------------------------------------------------------------------
-interface Slot { data: AlertsResp | null; error: string | null; listeners: Set<() => void>; timer: ReturnType<typeof setInterval> | null }
+interface Slot { data: AlertsResp | null; error: string | null; at: number; listeners: Set<() => void>; timer: ReturnType<typeof setInterval> | null }
+const FRESH_MS = 60_000;
 const slots = new Map<string, Slot>();
-const slotOf = (s: Scenario): Slot => slots.get(s) ?? (slots.set(s, { data: null, error: null, listeners: new Set(), timer: null }).get(s)!);
+const slotOf = (s: Scenario): Slot => slots.get(s) ?? (slots.set(s, { data: null, error: null, at: 0, listeners: new Set(), timer: null }).get(s)!);
 
 async function pull(s: Scenario) {
   const slot = slotOf(s);
   try {
     const r = await fetch(`/api/alerts${s === "live" ? "" : `?scenario=${s}`}`, { cache: "no-store" });
     if (!r.ok) throw new Error(String(r.status));
-    slot.data = await r.json(); slot.error = null;
+    slot.data = await r.json(); slot.error = null; slot.at = Date.now();
   } catch (e) { slot.error = String(e); }
   slot.listeners.forEach((f) => f());
 }
@@ -38,11 +39,15 @@ async function pull(s: Scenario) {
 /** Alerts for the next 48 hours, refreshed every 5 minutes; every component shares one request. */
 export function useAlerts(scenario: Scenario) {
   const slot = slotOf(scenario);
-  const sub = (f: () => void) => {
+  // the subscription must keep its identity between renders, or React re-subscribes (and would re-request) every time
+  const sub = useCallback((f: () => void) => {
     slot.listeners.add(f);
-    if (slot.listeners.size === 1) { void pull(scenario); slot.timer = setInterval(() => void pull(scenario), 5 * 60 * 1000); }
+    if (slot.listeners.size === 1) {
+      if (Date.now() - slot.at > FRESH_MS) void pull(scenario);
+      slot.timer = setInterval(() => void pull(scenario), 5 * 60 * 1000);
+    }
     return () => { slot.listeners.delete(f); if (!slot.listeners.size && slot.timer) { clearInterval(slot.timer); slot.timer = null; } };
-  };
+  }, [slot, scenario]);
   const data = useSyncExternalStore(sub, () => slot.data);
   const error = useSyncExternalStore(sub, () => slot.error);
   return { data, alerts: data?.alerts ?? [], error, loading: !data && !error };
