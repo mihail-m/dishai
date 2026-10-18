@@ -1,12 +1,9 @@
-import mapData from './data/sofia-map.json';
-import type { BestWindow, Coordinate, DataMode, ForecastData, ForecastHour, Place, RouteData, RouteId, RouteOption, Sensor } from './types';
+import { DEMO_TRIP, getDemoRouteOptions, resolveDemoPlace } from './route-model';
+import { parseStreetValues } from './map-air';
+import type { BestWindow, Coordinate, DataMode, ForecastData, ForecastHour, RouteData, RouteId, RouteOption, RoutePlan, Sensor } from './types';
 
-export type { BestWindow, Coordinate, DataMode, ForecastData, ForecastHour, Place, RouteData, RouteId, RouteOption, Sensor } from './types';
-
-export const DEMO_TRIP: { from: Place; to: Place } = {
-  from: { label: 'Prince’s Garden', coordinates: [23.333122, 42.6915547] },
-  to: { label: 'City Garden', coordinates: [23.3249083, 42.6955847] },
-};
+export type { BestWindow, Coordinate, DataMode, ForecastData, ForecastHour, Place, RouteData, RouteId, RouteOption, RoutePlan, Sensor } from './types';
+export { DEMO_TRIP, DEMO_MAP_BOUNDS, ROUTE_PLACES, searchRoutePlaces, resolveDemoPlace } from './route-model';
 
 const forecastCache = new Map<DataMode, ForecastData>();
 const forecastCachedAt = new Map<DataMode, number>();
@@ -115,7 +112,7 @@ export function parseForecastWindow(payload: unknown): ForecastData {
   return { id: payload.id, mode: 'live', generatedAt: forecast.generated_at, source: forecast.source,
     note: [forecast.source === 'fixture' ? 'The backend is using a saved offline fixture; this is not a current live forecast.' : '',
       typeof forecast.note === 'string' ? forecast.note : '', 'Lower and elevated compare hours within this forecast; they are not health ratings or an official air-quality index.'].filter(Boolean).join(' '),
-    hours, bestWindow: chooseBestWindow(hours), sensors };
+    hours, bestWindow: chooseBestWindow(hours), sensors, streetValues: parseStreetValues(values) };
 }
 
 async function request(path: string, signal?: AbortSignal, refresh = false): Promise<unknown> {
@@ -149,19 +146,6 @@ export async function loadForecast({ mode, force = false, signal }: { mode: Data
   return forecast;
 }
 
-interface RouteFeature { properties: { kind?: string; route?: string; lengthMeters?: number; walkMinutes?: number }; geometry: { type: string; coordinates: unknown } }
-const demoFeatures = (mapData as unknown as { features: RouteFeature[] }).features;
-
-function demoRoute(id: RouteId, pm25: number, reversed: boolean): RouteOption {
-  const feature = demoFeatures.find((item) => item.properties.kind === 'route' && item.properties.route === (id === 'clean' ? 'low' : 'fast'));
-  if (!feature || feature.geometry.type !== 'LineString') throw new Error('The bundled demo route is missing.');
-  const polyline = (feature.geometry.coordinates as Coordinate[]).map(([lon, lat]): Coordinate => [lon, lat]);
-  return { id, title: id === 'fast' ? 'Direct route' : 'Lower exposure',
-    minutes: feature.properties.walkMinutes ?? 0, distanceKm: (feature.properties.lengthMeters ?? 0) / 1000,
-    meanPm25: round(pm25 * (id === 'clean' ? 0.72 : 1.15)),
-    doseChangePct: 0, polyline: reversed ? polyline.reverse() : polyline };
-}
-
 function parseRouteOption(value: unknown, id: RouteId): RouteOption {
   if (!isRecord(value) || !Array.isArray(value.polyline) || value.polyline.length < 2
     || nonnegativeOrNull(value.time_min) === null || nonnegativeOrNull(value.distance_m) === null
@@ -171,34 +155,36 @@ function parseRouteOption(value: unknown, id: RouteId): RouteOption {
       || Math.abs(point[0] as number) > 180 || Math.abs(point[1] as number) > 90) throw new Error('The service returned invalid route geometry.');
     return [point[0] as number, point[1] as number];
   });
-  return { id, title: id === 'fast' ? 'Direct route' : 'Lower exposure', minutes: value.time_min as number,
+  return { id, title: id === 'fast' ? 'Fastest' : id === 'balanced' ? 'Balanced' : 'Cleanest', minutes: value.time_min as number,
     distanceKm: (value.distance_m as number) / 1000, meanPm25: value.mean_pm25 as number,
     doseChangePct: value.dose_change_pct as number, polyline };
 }
 
-export interface RouteRequest { mode: DataMode; hour: number; forecastId?: string; signal?: AbortSignal; reversed?: boolean }
+export interface RouteRequest { mode: DataMode; hour: number; forecastId?: string; signal?: AbortSignal; reversed?: boolean; plan?: RoutePlan }
 
-export async function loadRoutes({ mode, hour, forecastId, signal, reversed = false }: RouteRequest): Promise<RouteData> {
+export async function loadRoutes({ mode, hour, forecastId, signal, reversed = false, plan = DEMO_TRIP }: RouteRequest): Promise<RouteData> {
   abortIfNeeded(signal);
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) throw new Error('Select an hour within the 24-hour forecast.');
   const forecast = forecastCache.get(mode) ?? await loadForecast({ mode, signal });
   if (forecastId && forecastId !== forecast.id) throw new Error('The forecast has changed. Update the routes using the latest forecast.');
-  const key = `${mode}:${forecast.id}:${hour}:${reversed}`;
+  const requestedFrom = reversed ? plan.to : plan.from;
+  const requestedTo = reversed ? plan.from : plan.to;
+  const validatePlace = (place: RoutePlan['from']) => {
+    if (!place || !Array.isArray(place.coordinates) || place.coordinates.length !== 2 || !place.coordinates.every(Number.isFinite)
+      || Math.abs(place.coordinates[0]) > 180 || Math.abs(place.coordinates[1]) > 90) throw new Error('Choose valid starting and destination locations.');
+    return mode === 'demo' ? resolveDemoPlace(place.coordinates, place.label) : { ...place, coordinates: [...place.coordinates] as Coordinate };
+  };
+  const from = validatePlace(requestedFrom), to = validatePlace(requestedTo);
+  const key = `${mode}:${forecast.id}:${hour}:${JSON.stringify([from, to])}`;
   const cached = routeCache.get(key);
   if (cached) return cached;
   const selectedHour = forecast.hours[hour];
-  const from = reversed ? DEMO_TRIP.to : DEMO_TRIP.from;
-  const to = reversed ? DEMO_TRIP.from : DEMO_TRIP.to;
   let result: RouteData;
   if (mode === 'demo') {
-    const fast = demoRoute('fast', selectedHour.pm25 ?? 14.2, reversed);
-    const clean = demoRoute('clean', selectedHour.pm25 ?? 14.2, reversed);
-    const baseline = fast.meanPm25 * fast.minutes;
-    clean.doseChangePct = baseline > 0 ? round(100 * (clean.meanPm25 * clean.minutes / baseline - 1)) : 0;
     result = { mode, hour, time: selectedHour.time, from, to,
-      routes: { fast, clean },
+      routes: getDemoRouteOptions({ from, to }, selectedHour.pm25 ?? 14.2),
       confidence: { cleanerExists: null, message: 'Illustrative exposure comparison.' },
-      note: 'Demo routes follow OpenStreetMap geometry. Exposure values and the reduction are illustrative, not measured or model-validated.' };
+      note: 'Demo routes follow the local OpenStreetMap street network; selected points snap to nearby connected paths. Exposure values use illustrative street-class factors, not measured or model-validated pollution. Alternatives can overlap where the network has limited choices.' };
   } else {
     // Existing backend accepts latitude,longitude; map data and public mobile types use longitude,latitude.
     const query = new URLSearchParams({ from: `${from.coordinates[1]},${from.coordinates[0]}`, to: `${to.coordinates[1]},${to.coordinates[0]}`,
@@ -207,14 +193,21 @@ export async function loadRoutes({ mode, hour, forecastId, signal, reversed = fa
     if (!isRecord(payload) || !isRecord(payload.routes) || payload.hour !== selectedHour.backendHour || payload.time !== selectedHour.time) throw new Error('The route response does not match the selected forecast hour. Refresh and try again.');
     const confidence = isRecord(payload.confidence) ? payload.confidence : null;
     const confidenceRoutes = confidence && isRecord(confidence.routes) ? confidence.routes : null;
-    const cleanConfidence = confidenceRoutes && isRecord(confidenceRoutes.cleanest) ? confidenceRoutes.cleanest : null;
-    const cleanerExists = typeof cleanConfidence?.distinguishable === 'boolean'
-      ? cleanConfidence.distinguishable && typeof cleanConfidence.diff_pct === 'number' && cleanConfidence.diff_pct < 0
-      : typeof confidence?.cleaner_exists === 'boolean' ? confidence.cleaner_exists : null;
+    const routeImprovement = (name: 'balanced' | 'cleanest') => {
+      const routeConfidence = confidenceRoutes && isRecord(confidenceRoutes[name]) ? confidenceRoutes[name] : null;
+      return typeof routeConfidence?.distinguishable === 'boolean'
+        ? routeConfidence.distinguishable && typeof routeConfidence.diff_pct === 'number' && routeConfidence.diff_pct < 0
+        : name === 'cleanest' && typeof confidence?.cleaner_exists === 'boolean' ? confidence.cleaner_exists : null;
+    };
+    const cleanerExists = routeImprovement('cleanest');
     const clean = parseRouteOption(payload.routes.cleanest, 'clean');
+    const balanced = parseRouteOption(payload.routes.balanced, 'balanced');
+    clean.cleanerExists = cleanerExists;
+    balanced.cleanerExists = routeImprovement('balanced');
     // A lower model estimate alone is not evidence of a distinguishable improvement.
     if (cleanerExists === false || clean.doseChangePct >= 0) clean.title = 'Alternative route';
-    result = { mode, hour, time: selectedHour.time, from, to, routes: { fast: parseRouteOption(payload.routes.fastest, 'fast'), clean },
+    if (balanced.cleanerExists === false || balanced.doseChangePct >= 0) balanced.title = 'Alternative route';
+    result = { mode, hour, time: selectedHour.time, from, to, routes: { fast: parseRouteOption(payload.routes.fastest, 'fast'), balanced, clean },
       confidence: { cleanerExists, message: typeof confidence?.message === 'string' ? confidence.message : null },
       note: typeof payload.note === 'string' ? payload.note : 'Indicative route comparison using modelled PM2.5.' };
   }
@@ -225,8 +218,8 @@ export async function loadRoutes({ mode, hour, forecastId, signal, reversed = fa
 }
 
 /** Optional route preloading; all forecast values are already local before this starts. */
-export async function preloadRoutes({ forecast, signal, reversed = false, onProgress }: {
-  forecast: ForecastData; signal?: AbortSignal; reversed?: boolean; onProgress?: (loaded: number, total: number) => void;
+export async function preloadRoutes({ forecast, signal, reversed = false, plan = DEMO_TRIP, onProgress }: {
+  forecast: ForecastData; signal?: AbortSignal; reversed?: boolean; plan?: RoutePlan; onProgress?: (loaded: number, total: number) => void;
 }): Promise<RouteData[]> {
   abortIfNeeded(signal);
   const results: RouteData[] = new Array(forecast.hours.length);
@@ -238,7 +231,7 @@ export async function preloadRoutes({ forecast, signal, reversed = false, onProg
     while (next < forecast.hours.length && failure === undefined) {
       const index = next++;
       try {
-        results[index] = await loadRoutes({ mode: forecast.mode, hour: index, forecastId: forecast.id, signal, reversed });
+        results[index] = await loadRoutes({ mode: forecast.mode, hour: index, forecastId: forecast.id, signal, reversed, plan });
         abortIfNeeded(signal);
         onProgress?.(++loaded, forecast.hours.length);
       }

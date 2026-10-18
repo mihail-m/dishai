@@ -3,17 +3,20 @@ import { Capacitor } from '@capacitor/core';
 import {
   ArrowDown, ArrowRight, ArrowUpRight, AudioLines, Check, CheckCheck,
   ChevronDown, ChevronRight, CloudSun, Compass, Expand, Footprints, House, Info, Layers2,
-  Leaf, LoaderCircle, MapPin, Maximize2, Minimize2, Navigation, PanelTop,
-  Play, RefreshCw, Route, ShieldCheck, SlidersHorizontal, Sparkles, Sun, Sunrise,
+  LoaderCircle, MapPin, Maximize2, Minimize2, Navigation, PanelTop,
+  Play, Radio, RefreshCw, Route, ShieldCheck, SlidersHorizontal, Sparkles, Sun, Sunrise,
   Timer, Waves, Wind, X,
 } from 'lucide-react';
-import { loadForecast, preloadRoutes, formatTime, windowEndTime } from './data';
-import type { DataMode, ForecastData, ForecastHour, RouteData, RouteId } from './types';
+import { loadForecast, preloadRoutes, formatTime, windowEndTime, DEMO_TRIP, resolveDemoPlace } from './data';
+import type { Coordinate, DataMode, ForecastData, ForecastHour, Place, RouteData, RouteId, RoutePlan } from './types';
 import ForecastChart from './components/ForecastChart';
 import RouteMap from './components/RouteMap';
+import PlacePicker from './components/PlacePicker';
+import DepartureWheel from './components/DepartureWheel';
+import { DEMO_SENSORS, loadStreetAir, type StreetAirData } from './map-air';
 
 type Tab = 'today' | 'routes' | 'insights';
-type Sheet = 'settings' | 'air' | 'window' | 'break' | null;
+type Sheet = 'settings' | 'air' | 'window' | 'break' | 'layers' | null;
 type SavedPlan = { kind: 'window' | 'break'; time: string; end: string; duration?: number; mode: DataMode };
 const native = Capacitor.isNativePlatform();
 const safeRead = <T,>(key: string, fallback: T): T => { try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback; } catch { return fallback; } };
@@ -47,26 +50,38 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const previousRefresh = useRef(0);
-  const [routes, setRoutes] = useState<{ id: string; reversed: boolean; data: RouteData[] } | null>(null);
+  const [routes, setRoutes] = useState<{ id: string; planKey: string; data: RouteData[] } | null>(null);
   const [routeProgress, setRouteProgress] = useState(0);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [routeRetry, setRouteRetry] = useState(0);
   const [selectedRoute, setSelectedRoute] = useState<RouteId>('clean');
-  const [reversed, setReversed] = useState(false);
-  const [overlay, setOverlay] = useState(true);
+  const [plan, setPlan] = useState<RoutePlan>(DEMO_TRIP);
+  const planKey = `${plan.from.coordinates.join(',')}:${plan.to.coordinates.join(',')}`;
+  const [editingPlace, setEditingPlace] = useState<'from' | 'to' | null>(null);
+  const [pickingPlace, setPickingPlace] = useState<'from' | 'to' | null>(null);
+  const [streetsVisible, setStreetsVisible] = useState(false);
+  const [sensorsVisible, setSensorsVisible] = useState(false);
+  const [streetAir, setStreetAir] = useState<StreetAirData | null>(null);
+  const [streetLoading, setStreetLoading] = useState(false);
+  const [streetError, setStreetError] = useState<string | null>(null);
+  const [streetRetry, setStreetRetry] = useState(0);
   const [routePreview, setRoutePreview] = useState(false);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [focus, setFocus] = useState(new URLSearchParams(location.search).has('focus'));
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scroller = useRef<HTMLDivElement>(null);
+  const routeSheet = useRef<HTMLElement>(null);
+  const [mapBottomInset, setMapBottomInset] = useState(450);
   const [savedPlan, setSavedPlan] = useState<SavedPlan | null>(() => safeRead('airpath-mobile-plan', null));
   const [breakDuration, setBreakDuration] = useState(30);
   const [tour, setTour] = useState(false);
   const [tourStep, setTourStep] = useState(0);
-  const currentRoutes = forecast && routes?.id === forecast.id && routes.reversed === reversed ? routes.data[hourIndex] : null;
+  const currentRoutes = forecast && routes?.id === forecast.id && routes.planKey === planKey ? routes.data[hourIndex] : null;
   const routesReady = !!currentRoutes && routes?.data.length === 24;
   const chosen = currentRoutes?.routes[selectedRoute];
+  const currentStreetAir = streetAir?.forecastId === forecast?.id && streetAir?.mode === mode ? streetAir : null;
+  const mapSensors = mode === 'demo' ? DEMO_SENSORS : forecast?.sensors ?? [];
   const best = forecast?.bestWindow;
   const bestStart = best ? forecast?.hours[best.startIndex] : null;
   const bestEnd = best ? forecast?.hours[best.endIndex] : null;
@@ -99,17 +114,58 @@ export default function App() {
 
   useEffect(() => {
     if (!forecast || (mode === 'live' && tab !== 'routes')) return;
-    if (routes?.id === forecast.id && routes.reversed === reversed && routes.data.length === 24) { setRouteError(null); return; }
+    if (routes?.id === forecast.id && routes.planKey === planKey && routes.data.length === 24) { setRouteError(null); return; }
     const controller = new AbortController();
     setRouteError(null); setRouteProgress(0);
-    preloadRoutes({ forecast, reversed, signal: controller.signal, onProgress: (loaded: number) => setRouteProgress(loaded) })
-      .then(data => { if (!controller.signal.aborted) setRoutes({ id: forecast.id, reversed, data }); })
+    preloadRoutes({ forecast, plan, signal: controller.signal, onProgress: (loaded: number) => { if (!controller.signal.aborted) setRouteProgress(loaded); } })
+      .then(data => { if (!controller.signal.aborted) setRoutes({ id: forecast.id, planKey, data }); })
       .catch(reason => { if (!controller.signal.aborted) setRouteError(reason instanceof Error ? reason.message : 'Route comparison is unavailable.'); });
     return () => controller.abort();
-  }, [forecast, mode, tab, reversed, routeRetry]);
+  }, [forecast, mode, tab, planKey, routeRetry]);
 
-  function go(next: Tab) { setTab(next); setRoutePreview(false); scroller.current?.scrollTo({ top: 0, behavior: 'instant' }); }
-  function changeMode(next: DataMode) { setMode(next); safeSave('airpath-mobile-mode', next); setHourIndex(0); setSheet(null); setTour(false); }
+  useEffect(() => {
+    if (!forecast || !streetsVisible || tab !== 'routes') { setStreetLoading(false); return; }
+    if (streetAir?.forecastId === forecast.id && streetAir.mode === mode) { setStreetLoading(false); setStreetError(null); return; }
+    const controller = new AbortController();
+    setStreetLoading(true); setStreetError(null);
+    loadStreetAir(forecast, controller.signal)
+      .then(data => { if (!controller.signal.aborted) setStreetAir(data); })
+      .catch(reason => { if (!controller.signal.aborted) setStreetError(reason instanceof Error ? reason.message : 'Street colors are unavailable.'); })
+      .finally(() => { if (!controller.signal.aborted) setStreetLoading(false); });
+    return () => controller.abort();
+  }, [forecast, mode, tab, streetsVisible, streetRetry]);
+
+  useEffect(() => {
+    const element = routeSheet.current;
+    if (!element || tab !== 'routes') return;
+    const observer = new ResizeObserver(() => {
+      const bottom = scroller.current?.getBoundingClientRect().bottom;
+      if (bottom !== undefined) setMapBottomInset(Math.ceil(bottom - element.getBoundingClientRect().top + 16));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [tab, routePreview, pickingPlace, forecast]);
+
+  function go(next: Tab) { setTab(next); setRoutePreview(false); setPickingPlace(null); setEditingPlace(null); scroller.current?.scrollTo({ top: 0, behavior: 'instant' }); }
+  function changeMode(next: DataMode) { setMode(next); safeSave('airpath-mobile-mode', next); setHourIndex(0); setSheet(null); setTour(false); setPickingPlace(null); setEditingPlace(null); if (next === 'demo') setPlan(DEMO_TRIP); }
+  function choosePlace(endpoint: 'from' | 'to', place: Place) {
+    try {
+      const next = mode === 'demo' ? resolveDemoPlace(place.coordinates, place.label) : place;
+      const other = plan[endpoint === 'from' ? 'to' : 'from'];
+      if (next.coordinates.every((value, index) => Math.abs(value - other.coordinates[index]) < 0.00005)) {
+        setEditingPlace(null); notify('Choose a different starting point and destination.'); return;
+      }
+      setPlan(previous => ({ ...previous, [endpoint]: next }));
+      setRouteError(null); setEditingPlace(null); setPickingPlace(null); setRoutePreview(false);
+    } catch (reason) { setEditingPlace(null); notify(reason instanceof Error ? reason.message : 'Choose a nearby street on the map.'); }
+  }
+  function chooseMapPoint(coordinates: Coordinate) {
+    if (!pickingPlace) return;
+    const label = `${coordinates[1].toFixed(4)}, ${coordinates[0].toFixed(4)}`;
+    try {
+      choosePlace(pickingPlace, mode === 'demo' ? resolveDemoPlace(coordinates) : { label, coordinates });
+    } catch (reason) { notify(reason instanceof Error ? reason.message : 'Choose a nearby street on the map.'); }
+  }
   function savePlan(kind: SavedPlan['kind']) {
     if (!bestStart || !bestEnd) return;
     const next: SavedPlan = { kind, time: bestStart.time, end: windowEndTime(bestEnd.time), mode, ...(kind === 'break' ? { duration: breakDuration } : {}) };
@@ -162,25 +218,36 @@ export default function App() {
           <p className={`data-footnote ${mode === 'live' && forecast.source === 'fixture' ? 'source-warning' : ''}`}>{mode === 'demo' ? 'Demo scenario · illustrative forecast & estimates' : forecast.source === 'fixture' ? 'Saved offline data · not a current live forecast' : `${forecast.source} · updated ${calendarLabel(forecast.generatedAt)} ${formatTime(forecast.generatedAt)}`}</p>
         </main>}
         {forecast && tab === 'routes' && <main className={`routes-page page-enter ${routePreview ? 'route-is-previewing' : ''}`}>
-          <div className="map-stage"><RouteMap selectedRoute={selectedRoute} routes={currentRoutes} selectedHour={hourIndex} pollutionVisible={overlay} mode={mode} sensors={forecast.sensors} compact={!routePreview} onSelectRoute={setSelectedRoute}/>
-            <div className="map-title"><span className="overline">A LITTLE LESS EXPOSURE</span><h1>Enjoy the journey.</h1></div>
-            <div className="map-tools"><button className={overlay ? 'active' : ''} onClick={() => setOverlay(value => !value)} aria-label="Show air quality overlay" aria-pressed={overlay}><Layers2 size={19}/></button><button onClick={() => setRoutePreview(value => !value)} aria-label={routePreview ? 'Expand route details' : 'Expand map'}><Expand size={19}/></button></div>
-            <div className="map-key"><span className="key-dot"/>{overlay ? mode === 'demo' ? 'Illustrative air layer' : forecast.source === 'fixture' ? 'Saved sensor readings' : 'Latest sensor readings' : 'Walking routes'}</div>
+          <div className={`map-stage ${pickingPlace ? 'map-is-picking' : ''}`}><RouteMap selectedRoute={selectedRoute} routes={currentRoutes} selectedHour={hourIndex} streetsVisible={streetsVisible} sensorsVisible={sensorsVisible} streetAir={currentStreetAir} mode={mode} sensors={mapSensors} compact={!routePreview && !pickingPlace} topInset={pickingPlace ? 65 : streetsVisible || sensorsVisible ? 235 : 190} bottomInset={pickingPlace ? 205 : mapBottomInset} onSelectRoute={setSelectedRoute} picking={pickingPlace} onPickPlace={chooseMapPoint}/>
+            {!pickingPlace && <div className="departure-dock"><DepartureWheel hours={forecast.hours} selected={hourIndex} onSelect={setHourIndex} disabled={!routesReady} routeHours={routesReady ? routes!.data : undefined} selectedRoute={selectedRoute} onRefresh={() => setRefresh(n => n + 1)} refreshing={loading}/></div>}
+            <div className="map-layer-toggles" aria-label="Air quality map layers">
+              <button className={streetsVisible ? 'active' : ''} onClick={() => setStreetsVisible(value => !value)} aria-label="Street air quality colors" aria-pressed={streetsVisible}><Layers2 size={15}/><span>Streets</span><i/></button>
+              <button className={sensorsVisible ? 'active' : ''} onClick={() => setSensorsVisible(value => !value)} aria-label="Air quality sensors" aria-pressed={sensorsVisible}><Radio size={15}/><span>Sensors</span><i/></button>
+              <button className="layer-info" aria-label="About map layers" onClick={() => setSheet('layers')}><Info size={16}/></button>
+            </div>
+            <div className="map-tools"><button onClick={() => setRoutePreview(value => !value)} aria-label={routePreview ? 'Expand route details' : 'Expand map'}><Expand size={19}/></button></div>
+            {(streetsVisible || sensorsVisible) && <div className="map-air-legend">
+              {streetsVisible && currentStreetAir && <span><i className="street-score-ramp"/>Street score · low → high</span>}
+              {sensorsVisible && <span><i className="sensor-legend-dot"/>{mode === 'demo' ? 'Sample sensors' : forecast.source === 'fixture' ? 'Saved observations' : 'Latest observations'}{mapSensors.length === 0 ? ' · none available' : ''}</span>}
+              {mode === 'demo' && <small>Illustrative air data</small>}
+            </div>}
+            {streetsVisible && streetLoading && <div className="map-layer-notice" role="status"><LoaderCircle size={13} className="spin"/> Preparing 24 hours of street colors…</div>}
+            {streetsVisible && streetError && <div className="map-layer-notice map-layer-error" role="alert"><span>{streetError}</span><button onClick={() => setStreetRetry(n => n + 1)}>Retry street colors</button></div>}
           </div>
-          <section className="route-sheet glass">
+          {pickingPlace ? <section className="map-pick-card glass" aria-live="polite"><MapPin size={22}/><div><strong>Choose your {pickingPlace === 'from' ? 'starting point' : 'destination'}</strong><p>Tap a street on the map.{mode === 'demo' && ' Demo coverage: central Sofia.'}</p></div><button className="icon-button" onClick={() => setPickingPlace(null)} aria-label="Cancel map selection"><X size={18}/></button></section> : <section className="route-sheet glass" ref={routeSheet}>
             <button className="route-sheet-handle" aria-label={routePreview ? 'Expand route details' : 'Collapse route details'} onClick={() => setRoutePreview(value => !value)}><span/></button>
-            <div className="trip-line"><span className="trip-markers"><span/><i/><MapPin size={15}/></span><div><span>{reversed ? 'City Garden' : 'Prince’s Garden'}</span><strong>{reversed ? 'Prince’s Garden' : 'City Garden'}</strong></div><button className="icon-button" onClick={() => { setReversed(value => !value); setRoutePreview(false); }} aria-label="Reverse walking route"><ArrowDown size={18}/><ArrowUpRight size={14}/></button></div>
+            <div className="trip-line"><span className="trip-markers"><span/><i/><MapPin size={15}/></span><div className="trip-addresses"><button onClick={() => setEditingPlace('from')} aria-label={`Change starting address: ${plan.from.label}`}><span className="trip-field-label">FROM</span><span>{plan.from.label}</span><ChevronRight size={13}/></button><button onClick={() => setEditingPlace('to')} aria-label={`Change destination address: ${plan.to.label}`}><span className="trip-field-label">TO</span><strong>{plan.to.label}</strong><ChevronRight size={13}/></button></div><button className="icon-button" onClick={() => { setPlan(previous => ({ from: previous.to, to: previous.from })); setRoutePreview(false); }} aria-label="Reverse walking route"><ArrowDown size={18}/><ArrowUpRight size={14}/></button></div>
             <div className="route-time-row"><span><Footprints size={14}/> Walking</span><span>{selectedTime} departure</span></div>
             {!routePreview && <>
               {routeError ? <div className="route-error" role="alert"><p>{routeError}</p><button onClick={() => setRouteRetry(n => n + 1)}>Retry routes</button></div> : !routesReady ? <div className="route-loading" role="status"><LoaderCircle size={18} className="spin"/><span>Preparing your routes<small>{routeProgress}/24 hours ready</small></span></div> : <>
-                <div className="route-options">{(['fast', 'clean'] as RouteId[]).map(id => { const option = currentRoutes!.routes[id]; return <button key={id} className={`route-option ${selectedRoute === id ? 'is-selected' : ''}`} onClick={() => setSelectedRoute(id)} aria-pressed={selectedRoute === id}><span className="route-option-name">{id === 'clean' ? <Leaf size={14}/> : <Timer size={14}/>} {id === 'clean' ? option.title : 'Fastest'}{selectedRoute === id && <Check size={13}/>}</span><strong>{Math.round(option.minutes)}<span>min</span></strong><span className="route-option-distance">{option.distanceKm.toFixed(1)} km · walk</span></button>; })}</div>
-                <div className="exposure-insight"><span className="insight-symbol"><Waves size={19}/></span><p>{selectedRoute === 'clean' && chosen && chosen.doseChangePct < 0 ? <><strong>{currentRoutes?.confidence?.cleanerExists === false ? 'A similar exposure estimate' : `${Math.round(Math.abs(chosen.doseChangePct))}% less estimated exposure`}</strong><span>{mode === 'demo' ? 'Illustrative comparison for this demo' : currentRoutes?.confidence?.cleanerExists === false ? 'Difference is within model uncertainty' : 'Compared with the fastest route'}</span></> : selectedRoute === 'clean' ? <><strong>No lower exposure predicted</strong><span>Compare the time and distance of each option.</span></> : <><strong>The shortest time to your destination</strong><span>Compare the alternative to explore the trade-off</span></>}</p></div>
+                <div className="route-options" aria-label="Walking route alternatives">{(['fast', 'balanced', 'clean'] as RouteId[]).map(id => { const option = currentRoutes!.routes[id]; return <button key={id} className={`route-option route-option--${id} ${selectedRoute === id ? 'is-selected' : ''}`} onClick={() => setSelectedRoute(id)} aria-pressed={selectedRoute === id}><span className="route-option-name"><i/>{id === 'fast' ? 'Fastest' : id === 'balanced' ? 'Balanced' : 'Cleanest'}</span><strong>{Math.round(option.minutes)}<span>min</span></strong><span className="route-option-distance">{option.distanceKm.toFixed(1)} km</span><span className="route-option-exposure">{id === 'fast' ? 'Baseline' : `${option.doseChangePct > 0 ? '+' : ''}${Math.round(option.doseChangePct)}% exposure`}</span></button>; })}</div>
+                <div className="exposure-insight"><span className="insight-symbol"><Waves size={19}/></span><p>{selectedRoute !== 'fast' && chosen && chosen.doseChangePct < 0 ? <><strong>{chosen.cleanerExists === false ? 'A similar exposure estimate' : `${Math.round(Math.abs(chosen.doseChangePct))}% less estimated exposure`}</strong><span>{mode === 'demo' ? 'Illustrative comparison for this demo' : chosen.cleanerExists === false ? 'Difference is within model uncertainty' : chosen.cleanerExists == null ? 'Model estimate · confidence unavailable' : 'Compared with the fastest route'}</span></> : selectedRoute !== 'fast' ? <><strong>No lower exposure predicted</strong><span>Compare the time and distance of each option.</span></> : <><strong>The shortest time to your destination</strong><span>Compare time and estimated exposure.</span></>}</p></div>
               </>}
-              <div className="route-slider"><label htmlFor="route-departure">Departure <strong>{hour?.label}</strong></label><input id="route-departure" aria-label="Route departure hour" type="range" min="0" max="23" value={hourIndex} disabled={!routesReady} onChange={e => setHourIndex(Number(e.target.value))}/></div>
               <button className="primary-button" disabled={!routesReady} onClick={() => setRoutePreview(true)}><Navigation size={17}/> Preview this route<ArrowRight size={17}/></button>
             </>}
             {routePreview && <button className="map-preview-return" onClick={() => setRoutePreview(false)}>View route comparison <ChevronDown size={16}/></button>}
-          </section>
+            {!routePreview && <div className="route-source"><span>{mode === 'demo' ? 'Illustrative exposure · real street routes' : 'Model estimates · routes may overlap'}</span><button onClick={() => { setPlan(DEMO_TRIP); setSelectedRoute('clean'); }} aria-label="Reset to the longer demo trip">Reset trip</button></div>}
+          </section>}
         </main>}
         {forecast && tab === 'insights' && <main className="insights-page page-enter">
           <div className="welcome"><div><p className="overline">MAKE IT PART OF YOUR DAY</p><h1>Small shifts.<br/><span>Fresh perspective.</span></h1></div><span className="insights-sun"><Sunrise size={34}/></span></div>
@@ -198,7 +265,9 @@ export default function App() {
     </div>
     {!native && <aside className="presentation-side"><span className="side-line"/><span>DESIGNED AROUND<br/>YOUR EVERYDAY.</span><div className="palette-dots"><i/><i/><i/><i/></div></aside>}
     {tour && <div className="demo-director"><div><small>DEMO WALKTHROUGH · {tourStep + 1}/5</small><strong>{tourTitles[tourStep]}</strong></div><button className="tour-next" onClick={advanceTour}>{tourStep === 4 ? 'Finish' : 'Next'}<ArrowRight size={16}/></button><button className="tour-close" onClick={() => setTour(false)} aria-label="Close walkthrough"><X size={16}/></button></div>}
+    {editingPlace && <PlacePicker endpoint={editingPlace} current={plan[editingPlace]} mode={mode} onSelect={place => choosePlace(editingPlace, place)} onClose={() => setEditingPlace(null)} onPickMap={() => { setPickingPlace(editingPlace); setEditingPlace(null); }}/>}
     {sheet === 'settings' && <Modal title="Your AirPath" onClose={() => setSheet(null)}><p className="sheet-intro">A clearer outlook, wherever your day takes you.</p><p className="field-label">DATA SOURCE</p><div className="mode-options"><button aria-pressed={mode === 'demo'} onClick={() => changeMode('demo')}><Sparkles size={23}/><span><strong>Explore the demo</strong><small>A complete day in Sofia. Ready offline.</small></span>{mode === 'demo' && <Check size={18}/>}</button><button aria-pressed={mode === 'live'} onClick={() => changeMode('live')}><AudioLines size={23}/><span><strong>Connect to AirPath</strong><small>Use forecasts from your running service.</small></span>{mode === 'live' && <Check size={18}/>}</button></div><div className="settings-note"><Info size={17}/><p>Demo readings and exposure comparisons are illustrative. Connected mode uses the project’s existing forecasting and routing services.</p></div><button className="primary-button" onClick={() => { setSheet(null); startTour(); }}><Play size={16}/> Take the demo tour</button></Modal>}
+    {sheet === 'layers' && <Modal title="Your map, in more detail" onClose={() => setSheet(null)}><h3>Street colors</h3><p className="sheet-copy">Colors follow the departure hour selected above the map. A higher AirPath street score appears greener; lower scores appear warmer. In Connected mode, this is the same model used by the web map, combining air quality and heat. It is not an official air-quality index.</p><div className="layer-scale"><span>0 · Lower</span><i className="street-score-ramp"/><span>100 · Higher</span></div><h3>Sensor readings</h3><p className="sheet-copy">Tap a sensor for its PM2.5 reading and observation time. These readings stay fixed when you move into the future; they are observations, not predictions.</p><p className="small-note">{mode === 'demo' ? 'Demo street colors and sensor readings are illustrative. Both map layers start off.' : forecast?.source === 'fixture' ? 'This forecast uses saved data. Sensor readings are saved observations.' : 'Street estimates and community sensor readings can differ because their location and timing differ.'}</p><button className="primary-button" onClick={() => setSheet(null)}>Back to the map</button></Modal>}
     {sheet === 'air' && <Modal title="A little more clarity" onClose={() => setSheet(null)}><div className="reading-detail"><Orb hour={hourIndex} small/><span>Fine particles · PM2.5<strong>{pm(hour?.pm25)}<small>µg/m³</small></strong><span>{hour?.label} · {qualityDetail(hour)}</span></span></div><h3>What am I looking at?</h3><p className="sheet-copy">PM2.5 describes tiny particles in the air. This reading is the estimated concentration outside. A lower number means fewer particles.</p><h3>Put the trend first.</h3><p className="sheet-copy">The 24-hour outlook helps you compare times of day. The labels are simple app indicators, not an official air-quality index or a personal health assessment.</p><div className="source-note"><ShieldCheck size={16}/><span>{mode === 'demo' ? 'Illustrative demo data' : forecast?.source}</span></div><button className="primary-button" onClick={() => setSheet(null)}>Back to my outlook <ArrowRight size={17}/></button></Modal>}
     {sheet === 'window' && <Modal title="A fresher space" onClose={() => setSheet(null)}><div className="window-sheet-hero"><span><PanelTop size={26}/></span><small>SUGGESTED VENTILATION WINDOW</small><strong>{windowText}</strong></div><h3>Why this moment?</h3><p className="sheet-copy">This window has one of the lowest average PM2.5 levels in your next 24 hours. It’s a useful starting point when deciding when to air your space.</p><div className="window-metrics"><span>Forecast average<strong>{best ? pm(best.meanPm25) : '—'}<small>µg/m³ PM2.5</small></strong></span><span>Based on<strong>24<small>hourly forecasts</small></strong></span></div><p className="small-note">Outdoor forecasts don’t measure your indoor air. Consider nearby traffic, weather, and your own circumstances.</p><button className="primary-button" disabled={!best} onClick={() => savePlan('window')}><Check size={17}/> Save to my day</button><button className="text-button" onClick={() => { setSheet(null); go('today'); if (best) setHourIndex(best.startIndex); }}>See it in the forecast <ArrowUpRight size={15}/></button></Modal>}
     {sheet === 'break' && <Modal title="A moment outside" onClose={() => setSheet(null)}><div className="break-illustration"><Footprints size={38}/><Sun size={28}/></div><p className="sheet-intro">Make room for an outdoor break during a lower-pollution part of the day.</p><p className="field-label">HOW MUCH TIME DO YOU HAVE?</p><div className="duration-options">{[15, 30, 60].map(duration => <button key={duration} onClick={() => setBreakDuration(duration)} aria-pressed={breakDuration === duration}>{duration}<span>minutes</span></button>)}</div><div className="break-time"><span>Suggested start</span><strong>{bestStart?.label ?? '—'}</strong></div><button className="primary-button" disabled={!best} onClick={() => savePlan('break')}><Check size={17}/> Add to my day</button></Modal>}

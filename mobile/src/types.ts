@@ -1,5 +1,5 @@
 export type DataMode = 'demo' | 'live';
-export type RouteId = 'fast' | 'clean';
+export type RouteId = 'fast' | 'balanced' | 'clean';
 /** All map coordinates use GeoJSON order: longitude, latitude. */
 export type Coordinate = [number, number];
 
@@ -40,11 +40,18 @@ export interface ForecastData {
   hours: ForecastHour[];
   bestWindow: BestWindow | null;
   sensors: Sensor[];
+  /** Snapshot-bound street scores, in the static /api/cai/geometry edge order. */
+  streetValues?: Uint8Array[];
 }
 
 export interface Place {
   label: string;
   coordinates: Coordinate;
+}
+
+export interface RoutePlan {
+  from: Place;
+  to: Place;
 }
 
 export interface RouteOption {
@@ -56,6 +63,8 @@ export interface RouteOption {
   /** Negative means less estimated exposure than the fastest route. */
   doseChangePct: number;
   polyline: Coordinate[];
+  /** Whether the backend distinguishes an improvement from its uncertainty. */
+  cleanerExists?: boolean | null;
 }
 
 export interface RouteData {
@@ -64,7 +73,7 @@ export interface RouteData {
   time: string;
   from: Place;
   to: Place;
-  routes: { fast: RouteOption; clean: RouteOption };
+  routes: Record<RouteId, RouteOption>;
   confidence: { cleanerExists: boolean | null; message: string | null };
   note: string;
 }

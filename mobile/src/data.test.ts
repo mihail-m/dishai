@@ -103,17 +103,68 @@ describe('route data', () => {
     expect(routes).toHaveLength(24);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(routes[0].routes.fast.polyline.length).toBeGreaterThan(20);
+    expect(routes[0].routes.fast.distanceKm).toBeGreaterThan(2);
+    expect(Object.keys(routes[0].routes)).toEqual(['fast', 'balanced', 'clean']);
+    expect(new Set(Object.values(routes[0].routes).map((option) => JSON.stringify(option.polyline))).size).toBe(3);
     expect(routes[0].routes.clean.polyline[0]).toEqual(DEMO_TRIP.from.coordinates);
     expect(routes[0].confidence.cleanerExists).toBeNull();
     expect(routes[0].note).toContain('illustrative');
     for (const { routes: options } of routes) {
-      const calculated = 100 * (options.clean.meanPm25 * options.clean.minutes / (options.fast.meanPm25 * options.fast.minutes) - 1);
-      expect(options.clean.doseChangePct).toBeCloseTo(calculated, 1);
+      expect(options.clean.distanceKm).toBeGreaterThan(options.balanced.distanceKm);
+      expect(options.balanced.distanceKm).toBeGreaterThanOrEqual(options.fast.distanceKm);
+      expect(options.clean.doseChangePct).toBeLessThan(options.balanced.doseChangePct);
+      expect(options.balanced.doseChangePct).toBeLessThan(0);
+      for (const option of [options.balanced, options.clean]) {
+        const calculated = 100 * (option.meanPm25 * option.minutes / (options.fast.meanPm25 * options.fast.minutes) - 1);
+        expect(option.doseChangePct).toBeCloseTo(calculated, 1);
+      }
     }
     expect(onProgress).toHaveBeenLastCalledWith(24, 24);
     const reversed = await loadRoutes({ mode: 'demo', hour: 0, reversed: true });
     expect(reversed.from).toEqual(DEMO_TRIP.to);
     expect(reversed.routes.clean.polyline[0]).toEqual(DEMO_TRIP.to.coordinates);
+  });
+
+  it('routes changed endpoints over actual connected OSM segments and keeps their forecast caches separate', async () => {
+    const { loadForecast, loadRoutes, preloadRoutes, resolveDemoPlace, DEMO_TRIP } = await import('./data');
+    const { default: map } = await import('./data/sofia-map.json');
+    const segments = new Set<string>();
+    for (const feature of map.features.filter((feature) => feature.properties.kind === 'road')) {
+      const points = feature.geometry.coordinates as number[][];
+      for (let index = 1; index < points.length; index++) {
+        segments.add(`${points[index - 1]}/${points[index]}`);
+        segments.add(`${points[index]}/${points[index - 1]}`);
+      }
+    }
+    const original = await loadRoutes({ mode: 'demo', hour: 0 });
+    const plan = { from: DEMO_TRIP.from, to: resolveDemoPlace([23.3213, 42.70035], 'Central Market Hall') };
+    const forecast = await loadForecast({ mode: 'demo' });
+    const changed = await preloadRoutes({ forecast, plan });
+    expect(changed).toHaveLength(24);
+    expect(changed[0].routes.fast.polyline).not.toEqual(original.routes.fast.polyline);
+    for (const hour of changed) {
+      expect(hour.to).toEqual(plan.to);
+      for (const option of Object.values(hour.routes)) {
+        expect(option.polyline[0]).toEqual(plan.from.coordinates);
+        expect(option.polyline.at(-1)).toEqual(plan.to.coordinates);
+        for (let index = 1; index < option.polyline.length; index++) {
+          expect(segments.has(`${option.polyline[index - 1]}/${option.polyline[index]}`)).toBe(true);
+        }
+      }
+    }
+    expect(await loadRoutes({ mode: 'demo', hour: 0 })).toBe(original);
+  });
+
+  it('searches local English and Bulgarian places offline and rejects invalid map selections', async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    const { searchRoutePlaces, resolveDemoPlace, loadRoutes, DEMO_TRIP } = await import('./data');
+    expect(searchRoutePlaces('central market')[0].label).toBe('Central Market Hall');
+    expect(searchRoutePlaces('Княжеска')[0]).toEqual(DEMO_TRIP.from);
+    expect(searchRoutePlaces('Pirotska')).toContainEqual(DEMO_TRIP.to);
+    expect(resolveDemoPlace([23.3149941, 42.7004183]).label).not.toBe('Selected location');
+    expect(() => resolveDemoPlace([23.4, 42.8])).toThrow('central Sofia');
+    await expect(loadRoutes({ mode: 'demo', hour: 0, plan: { from: DEMO_TRIP.from, to: DEMO_TRIP.from } })).rejects.toThrow('35 metres');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('stops progress callbacks after an aborted preload, including already cached routes', async () => {
@@ -130,8 +181,8 @@ describe('route data', () => {
     const wire = wireForecast();
     const route = { time_min: 15, distance_m: 1170, mean_pm25: 11, dose_change_pct: -12,
       polyline: [[23.333122, 42.6915547], [23.3249083, 42.6955847]] };
-    const response = { hour: 38, time: wire.forecast.hours[5].time, routes: { fastest: { ...route, dose_change_pct: 0 }, cleanest: route },
-      confidence: { cleaner_exists: false, message: 'Within model uncertainty.' }, note: 'Modelled PM2.5.' };
+    const response = { hour: 38, time: wire.forecast.hours[5].time, routes: { fastest: { ...route, dose_change_pct: 0 }, balanced: { ...route, dose_change_pct: -7 }, cleanest: route },
+      confidence: { cleaner_exists: false, routes: { balanced: { distinguishable: true, diff_pct: -7 }, cleanest: { distinguishable: false, diff_pct: -12 } }, message: 'Within model uncertainty.' }, note: 'Modelled PM2.5.' };
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(wire)))
       .mockResolvedValueOnce(new Response(JSON.stringify(response)));
     vi.stubGlobal('fetch', fetchMock);
@@ -144,8 +195,28 @@ describe('route data', () => {
     expect(query.get('forecast_id')).toBe('test-snapshot');
     expect(query.get('include_google')).toBe('false');
     expect(result.routes.clean.title).toBe('Alternative route');
+    expect(result.routes.balanced).toMatchObject({ title: 'Balanced', doseChangePct: -7, cleanerExists: true });
     expect(result.confidence.cleanerExists).toBe(false);
     expect(result.routes.clean.polyline[0]).toEqual([23.333122, 42.6915547]);
+  });
+
+  it('sends edited endpoints to the connected backend without snapping them to the demo graph', async () => {
+    const wire = wireForecast();
+    const route = { time_min: 35, distance_m: 2800, mean_pm25: 11, dose_change_pct: -12,
+      polyline: [[23.34, 42.68], [23.30, 42.71]] };
+    const response = { hour: 33, time: wire.forecast.hours[0].time, routes: { fastest: { ...route, dose_change_pct: 0 }, balanced: route, cleanest: route }, confidence: {} };
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(wire))).mockResolvedValueOnce(new Response(JSON.stringify(response)));
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadRoutes } = await import('./data');
+    const plan = { from: { label: 'My start', coordinates: [23.34, 42.68] as [number, number] }, to: { label: 'My destination', coordinates: [23.30, 42.71] as [number, number] } };
+    const result = await loadRoutes({ mode: 'live', hour: 0, plan });
+    const query = new URL(fetchMock.mock.calls[1][0], 'http://test').searchParams;
+    expect(query.get('from')).toBe('42.68,23.34');
+    expect(query.get('to')).toBe('42.71,23.3');
+    expect(result.from).toEqual(plan.from);
+    expect(result.to).toEqual(plan.to);
+    expect(result.routes.balanced.cleanerExists).toBeNull();
+    expect(result.routes.clean.cleanerExists).toBeNull();
   });
 
   it('does not replace a live service failure with demo data', async () => {

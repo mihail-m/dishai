@@ -8,13 +8,29 @@ From the repository root, double-click **Start Mobile.cmd** on Windows or **Star
 
 The first launch needs internet to prepare dependencies. The launcher reuses a compatible Node.js installation or downloads a checksummed Node.js 22 runtime inside the existing `.local/` folder. It does not install global packages. Following a Windows-to-Mac copy, if Finder reports that the command is not executable, run `chmod +x "Start Mobile.command"` once from the repository root.
 
+If macOS opens the file in VS Code, right-click **Start Mobile.command** and choose **Open With → Terminal**. To run it regardless of the file association or executable permission, open Terminal, type `bash ` (including the space), drag **Start Mobile.command** into the Terminal window, and press Return. Use the `.command` file on macOS; `.cmd` is the Windows launcher.
+
 The browser presentation is an interactive phone preview, not an Android Emulator. Sample forecast and route data are available without the backend. The source selector explicitly distinguishes **Demo** from **Connected** mode. Failed live requests show an error with retry and an option to return to the demo; they never silently relabel sample data as live.
 
 If a double-click does not open the browser, use `http://127.0.0.1:5180` directly. Windows startup writes diagnostics to `.local/mobile-launch.log`. The launcher waits for the browser-opening command and tries an installed Chrome or Edge if the default HTTP association fails. Startup errors keep the launcher window open.
 
 ### Present the concept
 
-Start with **Today**, move the 24-hour slider, and open the air-quality explanation. Compare the two routes, then open a suggested ventilation window or outdoor break and choose **Save to my day**. Saved plans persist locally in this browser or emulator. The app settings also contain **Take the demo tour**, which walks through a repeatable presentation sequence. The forecast refresh button fetches a complete new 24-hour outlook; the slider uses the data already loaded.
+Start with **Today**, move the 24-hour slider, and open the air-quality explanation. Compare **Fastest**, **Balanced**, and **Cleanest**, then open a suggested ventilation window or outdoor break and choose **Save to my day**. Saved plans persist locally in this browser or emulator. The app settings also contain **Take the demo tour**, which walks through a repeatable presentation sequence. The forecast refresh button fetches a complete new 24-hour outlook; the slider uses the data already loaded.
+
+### Change the route
+
+Tap either address in **Routes** to search local streets and landmarks in English or Bulgarian, or choose **Choose on map** and tap a street. Reverse swaps both endpoints; **Reset trip** restores the longer Prince’s Garden → Pirotska Street demo (about 2.1–2.4 km). The three alternatives follow actual bundled OpenStreetMap streets. Tap a route card or path to select it, and **Expand map** to see more of the journey.
+
+The **Leave at** wheel stays above the map, including in the expanded view. Swipe through all 24 departure hours or use its arrows; **Lowest** selects the hour with the lowest estimated route PM2.5. The refresh button loads a new complete forecast. Hour changes use the preloaded forecast and routes without requesting new data.
+
+Demo routing works offline within central Sofia (23.313–23.334 longitude, 42.688–42.702 latitude). Selected points snap to nearby connected paths; unsupported points show a clear message. The comparison uses illustrative street-class exposure factors, not measured pollution. Short or constrained trips may share the same roads. Each new trip preloads its 24 forecast hours before enabling the departure wheel.
+
+**Streets** and **Sensors** are independent map toggles, both off by default. Street colors follow the selected departure hour. Sensor markers show fixed observations with their time and PM2.5 reading; future hours do not turn observations into predictions. Demo colors and sensors are labelled illustrative. In Connected mode, street scores come from the same forecast snapshot as the routes; the street geometry loads once when first enabled. The AirPath street score combines air quality and heat, with greener meaning a higher score; it is not an official air-quality index. **About map layers** explains the legend and data source.
+
+Connected mode sends the selected endpoints to the existing `/api/route` service and displays its fastest, balanced, and cleanest results with their own confidence information. It uses OpenStreetMap tiles for wider map coverage. The existing web app and backend API are unchanged.
+
+For optional street-number address lookup, configure a Nominatim-compatible **search endpoint** in `VITE_GEOCODER_URL`. No public geocoder is enabled by default. Pick a service whose terms cover the demo; public [Nominatim usage rules](https://operations.osmfoundation.org/policies/nominatim/) apply if you deliberately choose that service. Search is explicit-submit only, scoped to Sofia, cached, and requests are spaced by at least 1.1 seconds within the app. Multiple deployed clients require a shared rate limit at your service. A runtime `localStorage['airpath-geocoder-url']` override allows changing providers without rebuilding; credentials must stay on a server, not in the mobile build.
 
 ## Develop
 
